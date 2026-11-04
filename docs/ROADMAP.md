@@ -1,0 +1,170 @@
+# Roadmap — JPEG Glitch Editor
+
+**Status:** proposed sequence; reorder only after recording the reason.  
+**Delivery style:** vertical slices with acceptance criteria. Each item should become a small issue/PR.
+
+## Working rules
+
+- Keep each issue small enough to review independently.
+- Every milestone ends with a runnable application and demonstrable acceptance checks.
+- Do not start advanced entropy-stream work before coefficient editing and export are reliable.
+- Record scope changes in `docs/DECISIONS.md`.
+- Treat support for a JPEG process as a product claim that requires fixtures and tests.
+
+## Milestone 0 — Repository and engineering foundation
+
+### Tasks
+- [ ] Initialize TypeScript application and package scripts.
+- [ ] Add formatting, linting, type checking, and unit-test runner.
+- [ ] Add CI for install, lint, typecheck, tests, and production build.
+- [ ] Add `AGENTS.md`, `PRODUCT.md`, and architecture docs.
+- [ ] Define error/result conventions and logging policy.
+- [ ] Create a small fixture corpus with licensing/provenance notes.
+
+### Acceptance
+- Clean checkout can install, test, and build using documented commands.
+- CI runs on every pull request.
+- No image is uploaded to a server.
+
+## Milestone 1 — Import and JPEG Inspector
+
+### Tasks
+- [ ] File picker and drag-and-drop import.
+- [ ] Preserve exact source bytes and calculate a content digest.
+- [ ] Parse and display marker sequence and segment boundaries.
+- [ ] Display dimensions, process, precision, components, sampling factors, and table assignments.
+- [ ] Decode and display a preview.
+- [ ] Report unsupported/malformed JPEGs clearly.
+- [ ] Add block and MCU geometry overlays where geometry is known.
+
+### Acceptance
+- Open known-good baseline JPEG fixtures.
+- Inspector output matches independently verified fixture metadata.
+- Original bytes remain unchanged after inspection.
+- Unsupported formats fail visibly and safely.
+
+## Milestone 2 — Coefficient access prototype
+
+### Tasks
+- [ ] Evaluate candidate codec/WASM options for coefficient read/write access.
+- [ ] Document licensing, bundle size, browser compatibility, and JPEG process support.
+- [ ] Build a small prototype that reads quantized coefficient arrays.
+- [ ] Map component/block coordinates to image and MCU coordinates.
+- [ ] Inspect one selected block's 64 coefficients.
+- [ ] Compare results against an independent reference implementation.
+
+### Acceptance
+- Chosen codec can read coefficient data for the explicitly supported JPEG subset.
+- Coordinate mapping is tested for grayscale and common subsampling modes.
+- No production codec choice is made without a written decision record.
+
+## Milestone 3 — Document model and operation history
+
+### Tasks
+- [ ] Define immutable original asset and editable document representations.
+- [ ] Define versioned operation schema and registry.
+- [ ] Implement operation stack, undo/redo, enable/disable, delete, and parameter editing.
+- [ ] Add selection and mask representation.
+- [ ] Add deterministic seeded random utility.
+- [ ] Handle stale asynchronous preview results.
+
+### Acceptance
+- Operations can be replayed deterministically from the original document.
+- Undo/redo restores the exact prior editable state.
+- Reordering recomputes downstream operations and does not assume commutativity.
+- Original bytes are always recoverable.
+
+## Milestone 4 — First DCT editing vertical slice
+
+### Tasks
+- [ ] Add canvas navigation and block overlay.
+- [ ] Add brush mask and block-aware selection.
+- [ ] Implement one simple DCT operation (e.g. zero or scale selected coefficients).
+- [ ] Add component and frequency-band selection.
+- [ ] Preview by encoding/decoding through the selected codec.
+- [ ] Export and reopen the resulting JPEG.
+
+### Acceptance
+- User can import a supported JPEG, paint a mask, apply a DCT operation, compare before/after, undo/redo, and export.
+- Export opens in an independent decoder.
+- UI explicitly identifies the result as re-encoded.
+
+## Milestone 5 — Quantization and block operations
+
+### Tasks
+- [ ] Build 8×8 quantization matrix inspector/editor.
+- [ ] Define and implement quantization edit semantics.
+- [ ] Add controlled re-quantization/re-encoding.
+- [ ] Add block duplicate/swap/repeat with compatibility checks.
+- [ ] Add DC-only and AC-only operations.
+- [ ] Add Y/Cb/Cr component controls.
+
+### Acceptance
+- Table edits never masquerade as direct recovery of discarded information.
+- Coefficient/table behavior is documented and covered by tests.
+- Incompatible block operations are rejected with actionable explanations.
+
+## Milestone 6 — Two-image DCT transplant
+
+### Tasks
+- [ ] Add source and target document workflow.
+- [ ] Add source/target region selection.
+- [ ] Transplant DCT blocks and separately DC/AC data.
+- [ ] Check component layout, sampling, block geometry, quantization assignments, scan/process compatibility.
+- [ ] Preview and commit transplant as a reversible operation.
+
+### Acceptance
+- Compatible transplants produce a valid export.
+- Incompatible cases are rejected or converted only through an explicitly documented path.
+- No arbitrary byte copy is described as a block/MCU transplant.
+
+## Milestone 7 — Experimental stream and byte lab
+
+### Tasks
+- [ ] Add marker/scan and restart-marker inspector.
+- [ ] Add isolated raw-byte sandbox with protected structural regions by default.
+- [ ] Add bit/byte corruption with deterministic seeds.
+- [ ] Prototype entropy-stream editing/transplant only with bitstream-aware handling.
+- [ ] Add decoder recovery diagnostics and failure preview.
+- [ ] Keep original asset immutable.
+
+### Acceptance
+- Experimental actions cannot overwrite original bytes.
+- Decoder failures are expected, contained, and clearly explained.
+- Any claimed stream-level operation has dedicated fixtures and bitstream tests.
+
+## Milestone 8 — Project persistence and polish
+
+### Tasks
+- [ ] Define project file format and schema version.
+- [ ] Save/reopen operation stack, masks, parameters, and source asset or relink metadata.
+- [ ] Add autosave/recovery if appropriate.
+- [ ] Add keyboard shortcuts and accessibility pass.
+- [ ] Profile large images and optimize only measured bottlenecks.
+- [ ] Browser compatibility and security review.
+
+### Acceptance
+- Project reopens with the same operation stack and reproducible result.
+- Large-file processing reports progress and remains responsive.
+- No source asset is silently lost.
+
+## First 10 issues to create
+
+1. Scaffold TypeScript app, scripts, lint, typecheck, tests, CI.
+2. Add JPEG fixture corpus and provenance manifest.
+3. Implement safe marker scanner for supported JPEG subset.
+4. Display parsed JPEG metadata in an inspector panel.
+5. Add preview decode through a replaceable codec adapter.
+6. Add block geometry model and coordinate mapping tests.
+7. Spike coefficient access in candidate codecs.
+8. Write codec decision record with benchmark and limitations.
+9. Define document and operation TypeScript contracts.
+10. Implement first deterministic coefficient operation in a test harness.
+
+## Explicitly deferred
+
+- Full progressive JPEG editing until scan model is designed.
+- Arithmetic-coded JPEG unless a concrete codec and test plan support it.
+- Arbitrary entropy stream transplant before bitstream-aware prototype passes.
+- GPU acceleration before profiling.
+- Mobile-first UI and Photoshop feature parity.
