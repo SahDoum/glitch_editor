@@ -41,6 +41,20 @@ The selected stack follows `docs/ARCHITECTURE.md`:
 
 Direct dependency versions are pinned in `package.json` and the complete dependency graph is locked in `package-lock.json`. The `minimatch` override pins the patched 11.0.1 release throughout the development toolchain. Reassess bundle/runtime cost and JPEG codec licensing before introducing any image-processing dependency.
 
+The Milestone 2 coefficient reader links the pinned
+`@ai-ecoverse/wasm-libjpeg-turbo` static WebAssembly library at build time. It
+is a development dependency; the browser receives only the generated,
+read-only coefficient bridge module. Regenerating that module additionally
+requires Emscripten 4.0.23 (`emcc`) and can be done with `npm run
+build:jpeg-codec`. The Emscripten SDK is not installed by the normal project
+install. The command writes `public/codec/libjpeg-coefficients.js` and
+`public/codec/libjpeg-coefficients.wasm`; include these generated assets in
+production output. The editor remains usable without the generated codec, but
+coefficient inspection reports that the module must be built instead of
+substituting a pixel-only preview. The bridge uses libjpeg-turbo under its
+IJG/BSD-3-Clause/Zlib licenses; product documentation must include: “This
+software is based in part on the work of the Independent JPEG Group.”
+
 ## Fixture corpus
 
 `tests/fixtures/` contains tiny, programmatically generated JPEG patterns only. They are synthetic test data, not photographs. The fixture manifest records generation provenance, dimensions, expected process, license, and SHA-256 digest. The source patterns are original geometric/color fields and are released under CC0-1.0; ImageMagick is only the generation tool and is not a runtime dependency.

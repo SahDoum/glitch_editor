@@ -14,6 +14,7 @@
 ## Milestone 0 — Repository and engineering foundation (complete)
 
 ### Tasks
+
 - [x] Initialize TypeScript application and package scripts.
 - [x] Add formatting, linting, type checking, and unit-test runner.
 - [x] Add CI for install, lint, typecheck, tests, and production build.
@@ -22,6 +23,7 @@
 - [x] Create a small fixture corpus with licensing/provenance notes.
 
 ### Acceptance
+
 - Clean checkout can install, test, and build using documented commands.
 - CI runs on every pull request.
 - No image is uploaded to a server.
@@ -29,6 +31,7 @@
 ## Milestone 1 — Import and JPEG Inspector (complete)
 
 ### Tasks
+
 - [x] File picker and drag-and-drop import.
 - [x] Preserve exact source bytes and calculate a content digest.
 - [x] Parse and display marker sequence and segment boundaries.
@@ -38,6 +41,7 @@
 - [x] Add block and MCU geometry overlays where geometry is known.
 
 ### Acceptance
+
 - [x] Open known-good baseline JPEG fixtures.
 - [x] Inspector output matches fixture metadata verified against the fixture manifest and ImageMagick.
 - [x] Original bytes remain unchanged after inspection.
@@ -53,21 +57,33 @@ Web Worker.
 ## Milestone 2 — Coefficient access prototype
 
 ### Tasks
-- [ ] Evaluate candidate codec/WASM options for coefficient read/write access.
-- [ ] Document licensing, bundle size, browser compatibility, and JPEG process support.
-- [ ] Build a small prototype that reads quantized coefficient arrays.
-- [ ] Map component/block coordinates to image and MCU coordinates.
-- [ ] Inspect one selected block's 64 coefficients.
-- [ ] Compare results against an independent reference implementation.
+
+- [x] Evaluate candidate codec/WASM options for coefficient read/write access.
+- [x] Document licensing, package size, browser compatibility, and JPEG process support.
+- [x] Build a small prototype that reads quantized coefficient arrays.
+- [x] Map component/block coordinates to image and MCU coordinates.
+- [x] Inspect one selected block's 64 coefficients.
+- [x] Compare results against an independent reference implementation for the native C bridge.
 
 ### Acceptance
+
 - Chosen codec can read coefficient data for the explicitly supported JPEG subset.
 - Coordinate mapping is tested for grayscale and common subsampling modes.
 - No production codec choice is made without a written decision record.
 
+The read-only libjpeg-turbo C bridge, worker adapter, block inspector UI, and
+coordinate mapping are implemented. The native bridge matched `jpegio` 0.2.8
+for all 37 coefficient blocks across five synthetic fixtures. The Emscripten
+4.0.23 WebAssembly module was built and exercised in a browser; the worker
+successfully opened a baseline 4:2:0 fixture and displayed its selected 8×8
+coefficient block. The generated JS and WASM are 33,281 and 105,948 bytes
+respectively (10,657 and 41,405 bytes with gzip). See `docs/DECISIONS.md`
+ADR-003 and `docs/DEVELOPMENT.md` for the local build procedure.
+
 ## Milestone 3 — Document model and operation history
 
 ### Tasks
+
 - [ ] Define immutable original asset and editable document representations.
 - [ ] Define versioned operation schema and registry.
 - [ ] Implement operation stack, undo/redo, enable/disable, delete, and parameter editing.
@@ -76,6 +92,7 @@ Web Worker.
 - [ ] Handle stale asynchronous preview results.
 
 ### Acceptance
+
 - Operations can be replayed deterministically from the original document.
 - Undo/redo restores the exact prior editable state.
 - Reordering recomputes downstream operations and does not assume commutativity.
@@ -84,6 +101,7 @@ Web Worker.
 ## Milestone 4 — First DCT editing vertical slice
 
 ### Tasks
+
 - [ ] Add canvas navigation and block overlay.
 - [ ] Add brush mask and block-aware selection.
 - [ ] Implement one simple DCT operation (e.g. zero or scale selected coefficients).
@@ -92,6 +110,7 @@ Web Worker.
 - [ ] Export and reopen the resulting JPEG.
 
 ### Acceptance
+
 - User can import a supported JPEG, paint a mask, apply a DCT operation, compare before/after, undo/redo, and export.
 - Export opens in an independent decoder.
 - UI explicitly identifies the result as re-encoded.
@@ -99,6 +118,7 @@ Web Worker.
 ## Milestone 5 — Quantization and block operations
 
 ### Tasks
+
 - [ ] Build 8×8 quantization matrix inspector/editor.
 - [ ] Define and implement quantization edit semantics.
 - [ ] Add controlled re-quantization/re-encoding.
@@ -107,6 +127,7 @@ Web Worker.
 - [ ] Add Y/Cb/Cr component controls.
 
 ### Acceptance
+
 - Table edits never masquerade as direct recovery of discarded information.
 - Coefficient/table behavior is documented and covered by tests.
 - Incompatible block operations are rejected with actionable explanations.
@@ -114,6 +135,7 @@ Web Worker.
 ## Milestone 6 — Two-image DCT transplant
 
 ### Tasks
+
 - [ ] Add source and target document workflow.
 - [ ] Add source/target region selection.
 - [ ] Transplant DCT blocks and separately DC/AC data.
@@ -121,6 +143,7 @@ Web Worker.
 - [ ] Preview and commit transplant as a reversible operation.
 
 ### Acceptance
+
 - Compatible transplants produce a valid export.
 - Incompatible cases are rejected or converted only through an explicitly documented path.
 - No arbitrary byte copy is described as a block/MCU transplant.
@@ -128,6 +151,7 @@ Web Worker.
 ## Milestone 7 — Experimental stream and byte lab
 
 ### Tasks
+
 - [ ] Add marker/scan and restart-marker inspector.
 - [ ] Add isolated raw-byte sandbox with protected structural regions by default.
 - [ ] Add bit/byte corruption with deterministic seeds.
@@ -136,6 +160,7 @@ Web Worker.
 - [ ] Keep original asset immutable.
 
 ### Acceptance
+
 - Experimental actions cannot overwrite original bytes.
 - Decoder failures are expected, contained, and clearly explained.
 - Any claimed stream-level operation has dedicated fixtures and bitstream tests.
@@ -143,6 +168,7 @@ Web Worker.
 ## Milestone 8 — Project persistence and polish
 
 ### Tasks
+
 - [ ] Define project file format and schema version.
 - [ ] Save/reopen operation stack, masks, parameters, and source asset or relink metadata.
 - [ ] Add autosave/recovery if appropriate.
@@ -151,6 +177,7 @@ Web Worker.
 - [ ] Browser compatibility and security review.
 
 ### Acceptance
+
 - Project reopens with the same operation stack and reproducible result.
 - Large-file processing reports progress and remains responsive.
 - No source asset is silently lost.

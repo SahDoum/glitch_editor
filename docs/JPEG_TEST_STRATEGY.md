@@ -15,6 +15,7 @@
 ## 2. Test layers
 
 ### Unit tests
+
 - Marker parsing and segment-length validation.
 - Frame/component/table parsing.
 - Sampling-factor and MCU geometry calculations.
@@ -27,6 +28,7 @@
 - Worker message validation and stale-result rejection.
 
 ### Integration tests
+
 - Import → inspect → preview.
 - Import → coefficient decode → operation → encode → independent decode.
 - Mask → DCT operation → undo → redo.
@@ -35,6 +37,7 @@
 - Save project → reopen → replay operations.
 
 ### Golden/reference tests
+
 - Compare parsed metadata against known expected values.
 - Compare coefficient arrays against a trusted reference tool/library.
 - Compare encoded output properties, not necessarily byte-for-byte output, unless encoder determinism is guaranteed.
@@ -42,6 +45,7 @@
 - Store expected diagnostics for malformed and unsupported files.
 
 ### End-to-end browser tests
+
 - Drag/drop and file-picker import.
 - Canvas zoom/pan and overlays.
 - Tool parameter editing and preview.
@@ -53,23 +57,24 @@
 
 Maintain a small, documented fixture set. Include at least:
 
-| Fixture | Why it exists |
-|---|---|
-| Baseline sequential, color 4:2:0 | Common camera/photo case |
-| Baseline sequential, color 4:4:4 | No chroma subsampling |
-| Grayscale JPEG | Single-component path |
-| 4:2:2 JPEG | Different MCU geometry |
-| 4:4:4 JPEG | One block per component sampling unit |
-| Odd width/height | Edge MCU and padding behavior |
-| Very small image | Boundary conditions |
-| High-detail image | Coefficient distribution |
-| Progressive JPEG | Capability boundary and later support |
-| Restart markers | Scan segmentation and recovery |
-| Truncated segment | Parser robustness |
-| Corrupt entropy data | Decoder failure handling |
-| Missing/invalid table reference | Validation and error handling |
+| Fixture                          | Why it exists                         |
+| -------------------------------- | ------------------------------------- |
+| Baseline sequential, color 4:2:0 | Common camera/photo case              |
+| Baseline sequential, color 4:4:4 | No chroma subsampling                 |
+| Grayscale JPEG                   | Single-component path                 |
+| 4:2:2 JPEG                       | Different MCU geometry                |
+| 4:4:4 JPEG                       | One block per component sampling unit |
+| Odd width/height                 | Edge MCU and padding behavior         |
+| Very small image                 | Boundary conditions                   |
+| High-detail image                | Coefficient distribution              |
+| Progressive JPEG                 | Capability boundary and later support |
+| Restart markers                  | Scan segmentation and recovery        |
+| Truncated segment                | Parser robustness                     |
+| Corrupt entropy data             | Decoder failure handling              |
+| Missing/invalid table reference  | Validation and error handling         |
 
 Each fixture should have a manifest entry containing:
+
 - filename and digest;
 - source/provenance and license;
 - expected JPEG process;
@@ -91,11 +96,22 @@ are 50 MiB per JPEG file, 40 megapixels per frame, and 10,000 marker entries.
 Parser tests cover the pixel and marker limits; import tests verify oversized
 files are rejected before reading.
 
+The Milestone 2 coefficient prototype reads only 8-bit baseline sequential
+Huffman JPEGs with one interleaved scan and one or three components. Its
+libjpeg-turbo WebAssembly bridge rejects coefficient arrays exceeding 128 MiB.
+It reads quantized coefficients in natural 8×8 block order; it does not edit or
+re-encode them. Coordinate mapping is tested for grayscale and 4:2:0, 4:2:2,
+and 4:4:4 sampling, including odd image dimensions and the distinction between
+visible coefficient blocks and MCU padding. The native C bridge's coefficient
+blocks were cross-checked against `jpegio` 0.2.8 on the synthetic fixture set;
+the generated WebAssembly module still requires its own runtime validation.
+
 Do not use unlicensed photographs in a public test corpus. Tiny synthetic images are preferred for deterministic tests.
 
 ## 4. Independent validation
 
 Use at least one independent JPEG implementation to:
+
 - decode exported files;
 - inspect dimensions and color components;
 - confirm the output is structurally valid;
@@ -106,6 +122,7 @@ The production codec must not be its own only oracle. A successful decode by one
 ## 5. JPEG parser tests
 
 Test:
+
 - SOI and EOI handling;
 - marker fill bytes and marker boundaries;
 - segment lengths including minimum and truncated lengths;
@@ -119,6 +136,7 @@ Test:
 - unknown markers and malformed ordering.
 
 Fuzz parser inputs with bounded sizes and assert:
+
 - no crash;
 - no out-of-bounds read;
 - no unbounded allocation;
@@ -127,6 +145,7 @@ Fuzz parser inputs with bounded sizes and assert:
 ## 6. Coefficient and geometry tests
 
 For each supported sampling mode:
+
 - verify component block dimensions;
 - verify MCU dimensions and blocks per MCU;
 - test edge/padded blocks for odd dimensions;
@@ -139,6 +158,7 @@ Use small synthetic images where expected coefficients can be reasoned about and
 ## 7. Quantization tests
 
 Verify:
+
 - 64 table entries and valid value ranges for the chosen JPEG process;
 - correct zigzag/natural-order mapping at parser/encoder boundaries;
 - table selectors and component assignments;
@@ -151,6 +171,7 @@ Test extreme but legal values and reject invalid values.
 ## 8. Operation engine tests
 
 For every operation:
+
 - parameter schema rejects invalid inputs;
 - operation does not mutate original bytes;
 - same seed + same input + same parameters yields same output;
@@ -164,6 +185,7 @@ Test operation failure midway and verify document remains recoverable.
 ## 9. Export tests
 
 For normal coefficient/re-encoding workflows:
+
 - exported bytes begin/end with expected JPEG structure;
 - independent decoder opens the file;
 - dimensions/components match expected policy;
@@ -171,6 +193,7 @@ For normal coefficient/re-encoding workflows:
 - export status accurately says re-encoded or stream-preserved.
 
 For raw-byte/entropy experiments:
+
 - output may be invalid by design;
 - original bytes remain byte-for-byte identical;
 - failure is isolated and diagnostics are recorded;
@@ -179,6 +202,7 @@ For raw-byte/entropy experiments:
 ## 10. Performance and robustness
 
 Track:
+
 - import and parse time by file size;
 - coefficient decode/encode time;
 - preview latency;
@@ -190,6 +214,7 @@ Set initial budgets after measuring representative fixtures on target browsers a
 ## 11. Release gates
 
 A milestone is not complete unless:
+
 - all unit and integration tests pass;
 - supported fixture matrix passes;
 - independent decoder validation passes for valid exports;

@@ -22,6 +22,48 @@
       "description": "Small synthetic RGB color-block pattern with 4:2:0 sampling."
     },
     {
+      "file": "synthetic-color-422.jpg",
+      "sha256": "0d07441f1e07ba0459534d11dc857762cf5dfd30346c0a5d00e07c8a1d0f3277",
+      "process": "baseline sequential DCT Huffman",
+      "precision": 8,
+      "width": 16,
+      "height": 16,
+      "components": 3,
+      "samplingFactors": ["2x1", "1x1", "1x1"],
+      "restartInterval": 0,
+      "scanCount": 1,
+      "supported": true,
+      "description": "Small synthetic RGB pattern with 4:2:2 sampling."
+    },
+    {
+      "file": "synthetic-color-444.jpg",
+      "sha256": "81927288fce7c7ee581a88cb39265628bdc6b23473291945b15a48f363c548fc",
+      "process": "baseline sequential DCT Huffman",
+      "precision": 8,
+      "width": 16,
+      "height": 16,
+      "components": 3,
+      "samplingFactors": ["1x1", "1x1", "1x1"],
+      "restartInterval": 0,
+      "scanCount": 1,
+      "supported": true,
+      "description": "Small synthetic RGB pattern with 4:4:4 sampling."
+    },
+    {
+      "file": "synthetic-color-odd-420.jpg",
+      "sha256": "08faa6fcab38905b3be37ddde573b1d33021c8a5f155c5cef90632de3a76b2ea",
+      "process": "baseline sequential DCT Huffman",
+      "precision": 8,
+      "width": 17,
+      "height": 9,
+      "components": 3,
+      "samplingFactors": ["2x2", "1x1", "1x1"],
+      "restartInterval": 0,
+      "scanCount": 1,
+      "supported": true,
+      "description": "Small synthetic RGB pattern with odd dimensions and 4:2:0 sampling."
+    },
+    {
       "file": "synthetic-grayscale.jpg",
       "sha256": "33507ea57bab7d578d5812784f6d99b9a026f1869f28a71acacc44564df61543",
       "process": "baseline sequential DCT Huffman",

@@ -48,24 +48,31 @@ Document Model         Operation Engine
 ```
 
 ### `ui/`
+
 Canvas, panels, tool controls, dialogs, keyboard shortcuts, overlays. UI must not parse JPEG markers or mutate coefficient arrays directly.
 
 ### `application/`
+
 Coordinates import, document lifecycle, selection, operation dispatch, preview requests, export, and error presentation.
 
 ### `document/`
+
 Owns immutable source assets, document metadata, current editable representation, masks/selections, operation stack, and revision identifiers.
 
 ### `jpeg/`
+
 JPEG-specific interfaces and adapters: marker parser, frame/scan metadata, coefficient access, encoding, validation, and codec capability reporting.
 
 ### `operations/`
+
 Typed, versioned operations. Each operation declares its input domain, parameters, compatibility requirements, deterministic behavior, and execution strategy.
 
 ### `workers/`
+
 Worker entry points and message protocol. CPU-heavy work must not block pointer interaction or canvas rendering.
 
 ### `project/`
+
 Project serialization, schema migration, local persistence, and asset packaging.
 
 ## 3. Core representations
@@ -92,7 +99,7 @@ interface JpegEngine {
   decodeCoefficients(bytes: Uint8Array): Promise<CoefficientDocument>;
   encodeCoefficients(
     document: CoefficientDocument,
-    options: EncodeOptions
+    options: EncodeOptions,
   ): Promise<Uint8Array>;
   validate(bytes: Uint8Array): Promise<JpegValidation>;
   capabilities(): JpegCapabilities;
@@ -100,6 +107,11 @@ interface JpegEngine {
 ```
 
 These signatures are illustrative; refine them after a codec spike. Do not promise coefficient access, progressive support, or lossless behavior until verified against the chosen implementation.
+
+The Milestone 2 prototype uses a narrow libjpeg-turbo WebAssembly C bridge
+inside a dedicated worker to expose one selected 8×8 quantized coefficient
+block. The bridge is read-only and bounded to 128 MiB of coefficient arrays.
+It is not an encoder or a production codec commitment.
 
 ### JPEG process support
 
@@ -131,6 +143,7 @@ interface OperationRecord<P = unknown> {
 ```
 
 Operation definitions should provide:
+
 - schema validation for parameters;
 - supported representation/domain;
 - compatibility checks;
@@ -152,6 +165,7 @@ Do not assume operations commute. Reordering requires recomputation of downstrea
 7. Export invokes a documented encoding path and validates the resulting JPEG.
 
 The UI must distinguish:
+
 - original preview;
 - current computed preview;
 - approximate/stale preview;
@@ -215,6 +229,7 @@ A small Python/C++ prototype may be used to validate JPEG algorithms and compare
 ## 10. Architectural decision records
 
 Record significant choices in `docs/DECISIONS.md` or individual ADRs. At minimum decide:
+
 1. codec and coefficient API;
 2. baseline-only vs progressive support in MVP;
 3. canonical coefficient representation;

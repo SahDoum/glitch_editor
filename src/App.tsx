@@ -5,7 +5,16 @@ import {
   type ChangeEvent,
   type DragEvent,
 } from "react";
+import {
+  createJpegCoefficientReader,
+  type JpegCoefficientReader,
+} from "./application/coefficient-reader";
 import { importJpeg, type ImportedJpeg } from "./application/import-jpeg";
+import {
+  getJpegComponentBlockGrid,
+  mapJpegBlockCoordinate,
+  type JpegBlockCoordinate,
+} from "./jpeg/block-geometry";
 import type { JpegInspection } from "./jpeg/inspect";
 
 const MARKER_LIMIT = 250;
@@ -110,22 +119,29 @@ function MetadataInspector({ inspection }: { inspection: JpegInspection }) {
       <section className="inspector-section">
         <div className="section-kicker">FRAME COMPONENTS</div>
         <ul className="component-list">
-          {inspection.components.map((component) => (
-            <li key={component.id}>
-              <span className="component-id">ID {component.id}</span>
-              <span>
-                Sampling {component.horizontalSampling}×
-                {component.verticalSampling}
-              </span>
-              <span>
-                DQT {component.quantizationTable} · DHT DC
-                {component.dcHuffmanTable}/AC{component.acHuffmanTable}
-              </span>
-              <span className="component-geometry">
-                {component.blockColumns} × {component.blockRows} blocks
-              </span>
-            </li>
-          ))}
+          {inspection.components.map((component) => {
+            const blockGrid = getJpegComponentBlockGrid(
+              inspection,
+              component.id,
+            );
+            return (
+              <li key={component.id}>
+                <span className="component-id">ID {component.id}</span>
+                <span>
+                  Sampling {component.horizontalSampling}×
+                  {component.verticalSampling}
+                </span>
+                <span>
+                  DQT {component.quantizationTable} · DHT DC
+                  {component.dcHuffmanTable}/AC{component.acHuffmanTable}
+                </span>
+                <span className="component-geometry">
+                  {blockGrid?.columns} × {blockGrid?.rows} image blocks · MCU
+                  capacity {component.blockColumns} × {component.blockRows}
+                </span>
+              </li>
+            );
+          })}
         </ul>
       </section>
 
@@ -207,6 +223,239 @@ function MetadataInspector({ inspection }: { inspection: JpegInspection }) {
         ))}
       </section>
     </aside>
+  );
+}
+
+function CoefficientInspector({
+  bytes,
+  inspection,
+}: {
+  bytes: Uint8Array;
+  inspection: JpegInspection;
+}) {
+  const componentOptions = inspection.components;
+  const [componentId, setComponentId] = useState(componentOptions[0]?.id ?? 0);
+  const [blockX, setBlockX] = useState("0");
+  const [blockY, setBlockY] = useState("0");
+  const [values, setValues] = useState<number[] | null>(null);
+  const [mapping, setMapping] = useState<JpegBlockCoordinate | null>(null);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const reader = useRef<JpegCoefficientReader | null>(null);
+  const requestId = useRef(0);
+
+  useEffect(
+    () => () => {
+      requestId.current += 1;
+      reader.current?.close();
+      reader.current = null;
+    },
+    [bytes],
+  );
+
+  const selectedComponent =
+    componentOptions.find((component) => component.id === componentId) ??
+    componentOptions[0];
+  const selectedBlockGrid = selectedComponent
+    ? getJpegComponentBlockGrid(inspection, selectedComponent.id)
+    : null;
+
+  function clearSelection() {
+    requestId.current += 1;
+    setValues(null);
+    setMapping(null);
+    setErrorMessage("");
+    setIsLoading(false);
+  }
+
+  async function inspectSelectedBlock() {
+    if (!selectedComponent || !blockX.trim() || !blockY.trim()) {
+      setErrorMessage("Enter a component and valid DCT block coordinates.");
+      return;
+    }
+
+    const x = Number(blockX);
+    const y = Number(blockY);
+    const coordinate = mapJpegBlockCoordinate(
+      inspection,
+      selectedComponent.id,
+      x,
+      y,
+    );
+    if (!coordinate.ok) {
+      setErrorMessage(coordinate.error.message);
+      return;
+    }
+
+    const currentRequest = ++requestId.current;
+    setIsLoading(true);
+    setErrorMessage("");
+    setValues(null);
+    setMapping(null);
+
+    if (!reader.current) {
+      const created = createJpegCoefficientReader();
+      if (!created.ok) {
+        setErrorMessage(created.error.message);
+        setIsLoading(false);
+        return;
+      }
+      reader.current = created.value;
+    }
+
+    try {
+      const opened = await reader.current.open(bytes);
+      if (currentRequest !== requestId.current) return;
+      if (!opened.ok) {
+        reader.current.close();
+        reader.current = null;
+        setErrorMessage(opened.error.message);
+        return;
+      }
+
+      const componentIndex = componentOptions.findIndex(
+        (component) => component.id === selectedComponent.id,
+      );
+      const result = await reader.current.readBlock(componentIndex, x, y);
+      if (currentRequest !== requestId.current) return;
+      if (!result.ok) {
+        setErrorMessage(result.error.message);
+        return;
+      }
+      setValues(result.value);
+      setMapping(coordinate.value);
+    } catch {
+      if (currentRequest === requestId.current) {
+        setErrorMessage(
+          "Coefficient inspection stopped unexpectedly. The original JPEG remains unchanged.",
+        );
+      }
+    } finally {
+      if (currentRequest === requestId.current) setIsLoading(false);
+    }
+  }
+
+  return (
+    <section className="inspector-section coefficient-inspector">
+      <div className="section-kicker">QUANTIZED DCT COEFFICIENTS</div>
+      <h2>Inspect one block</h2>
+      <p className="coefficient-description">
+        Read-only JPEG-domain inspection through libjpeg-turbo WebAssembly. This
+        reads quantized coefficients, not decoded pixel values.
+      </p>
+      <label className="coefficient-field">
+        <span>Component</span>
+        <select
+          value={selectedComponent?.id ?? ""}
+          onChange={(event) => {
+            setComponentId(Number(event.currentTarget.value));
+            clearSelection();
+          }}
+        >
+          {componentOptions.map((component, index) => (
+            <option key={component.id} value={component.id}>
+              ID {component.id} · {component.horizontalSampling}×
+              {component.verticalSampling} sampling · component {index}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="coefficient-coordinate-fields">
+        <label className="coefficient-field">
+          <span>Block X</span>
+          <input
+            type="number"
+            min="0"
+            max={Math.max(0, (selectedBlockGrid?.columns ?? 1) - 1)}
+            step="1"
+            value={blockX}
+            onChange={(event) => {
+              setBlockX(event.currentTarget.value);
+              clearSelection();
+            }}
+          />
+        </label>
+        <label className="coefficient-field">
+          <span>Block Y</span>
+          <input
+            type="number"
+            min="0"
+            max={Math.max(0, (selectedBlockGrid?.rows ?? 1) - 1)}
+            step="1"
+            value={blockY}
+            onChange={(event) => {
+              setBlockY(event.currentTarget.value);
+              clearSelection();
+            }}
+          />
+        </label>
+      </div>
+      <button
+        className="coefficient-read-button"
+        type="button"
+        disabled={isLoading}
+        onClick={() => void inspectSelectedBlock()}
+      >
+        {isLoading ? "Reading coefficients…" : "Read selected block"}
+      </button>
+      {errorMessage && (
+        <p className="coefficient-error" role="alert">
+          {errorMessage}
+        </p>
+      )}
+      {mapping && (
+        <p className="coefficient-mapping">
+          Block ({mapping.blockX}, {mapping.blockY}) · image samples (
+          {mapping.imageX}, {mapping.imageY}) · MCU ({mapping.mcuX},{" "}
+          {mapping.mcuY}) · block in MCU ({mapping.blockInMcuX},{" "}
+          {mapping.blockInMcuY})
+        </p>
+      )}
+      {values ? (
+        <>
+          <div className="coefficient-table-wrap">
+            <table className="coefficient-table">
+              <thead>
+                <tr>
+                  <th scope="col">v / u</th>
+                  {Array.from({ length: 8 }, (_, u) => (
+                    <th scope="col" key={u}>
+                      {u}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: 8 }, (_, v) => (
+                  <tr key={v}>
+                    <th scope="row">{v}</th>
+                    {Array.from({ length: 8 }, (_, u) => (
+                      <td
+                        className={u === 0 && v === 0 ? "coefficient-dc" : ""}
+                        key={u}
+                      >
+                        {values[v * 8 + u]}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="coefficient-note">
+            Natural coefficient order · DC at (u=0, v=0) · remaining values are
+            AC spatial-frequency coefficients.
+          </p>
+        </>
+      ) : (
+        !errorMessage && (
+          <p className="coefficient-note">
+            Select a component and block coordinate to inspect its 64 quantized
+            coefficients.
+          </p>
+        )
+      )}
+    </section>
   );
 }
 
@@ -344,8 +593,9 @@ function App() {
               <div className="eyebrow">JPEG STRUCTURE · CREATIVE CONTROL</div>
               <h1>Make room for happy accidents.</h1>
               <p>
-                Inspect a JPEG locally. The original file stays untouched while
-                its structure and decoded preview remain separate.
+                Inspect JPEG structure and quantized DCT coefficients locally.
+                The original file stays untouched and its pixel preview remains
+                separate.
               </p>
               <button
                 className="welcome-button"
@@ -357,8 +607,10 @@ function App() {
                 <span aria-hidden="true">↗</span>
               </button>
               <div className="milestone-note">
-                <span className="note-index">01</span>
-                <span>Drop a JPEG here or choose a file to inspect.</span>
+                <span className="note-index">02</span>
+                <span>
+                  Drop a JPEG here to inspect its structure and blocks.
+                </span>
               </div>
             </div>
           ) : (
@@ -446,6 +698,11 @@ function App() {
                 <div className="digest-label">SHA-256</div>
                 <code className="digest-value">{document.sha256}</code>
               </div>
+              <CoefficientInspector
+                key={document.sha256}
+                bytes={document.sourceBytes}
+                inspection={document.inspection}
+              />
               <MetadataInspector inspection={document.inspection} />
             </>
           ) : (
@@ -459,8 +716,9 @@ function App() {
               </p>
               {errorMessage && (
                 <p className="support-note">
-                  Supported: 8-bit baseline sequential Huffman JPEG, grayscale
-                  or three-component, single interleaved scan.
+                  Supported for coefficient inspection: 8-bit baseline
+                  sequential Huffman JPEG, grayscale or three-component, single
+                  interleaved scan.
                 </p>
               )}
             </div>
@@ -471,13 +729,13 @@ function App() {
       <footer className="statusbar">
         <span>
           {document
-            ? "Original JPEG bytes preserved · inspection is read-only"
+            ? "Original JPEG bytes preserved · coefficient inspection is read-only"
             : "Original files stay on your device."}
         </span>
         <span className="statusbar-right">
           <span>JPEG DOMAIN</span>
           <span className="status-divider" aria-hidden="true" />
-          <span>{document ? "INSPECTOR 1.0" : "MILESTONE 1"}</span>
+          <span>{document ? "COEFFICIENT PROTOTYPE" : "MILESTONE 2"}</span>
         </span>
       </footer>
     </main>

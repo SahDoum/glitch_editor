@@ -13,6 +13,8 @@ npm run dev
 
 See [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) for the Node.js requirement, verification commands, error/logging conventions, and fixture provenance.
 
+The coefficient prototype uses libjpeg-turbo WebAssembly. This software is based in part on the work of the Independent JPEG Group.
+
 ## Project documents
 
 - [Product specification](./PRODUCT.md)
