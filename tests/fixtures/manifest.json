@@ -1,0 +1,29 @@
+{
+  "license": "CC0-1.0",
+  "provenance": "Original synthetic color fields and grayscale gradient generated for this project. No photographs, third-party imagery, or external image assets were used.",
+  "generator": {
+    "name": "ImageMagick",
+    "version": "7.1.1-38",
+    "jpegProcess": "baseline sequential DCT Huffman"
+  },
+  "fixtures": [
+    {
+      "file": "synthetic-color-420.jpg",
+      "sha256": "1c11334ae289f1ba5a8cbdbe6c5a4e778c209429ed3a3cdc9ed80d9442412c8b",
+      "width": 16,
+      "height": 16,
+      "components": 3,
+      "samplingFactors": ["2x2", "1x1", "1x1"],
+      "description": "Small synthetic RGB color-block pattern with 4:2:0 sampling."
+    },
+    {
+      "file": "synthetic-grayscale.jpg",
+      "sha256": "33507ea57bab7d578d5812784f6d99b9a026f1869f28a71acacc44564df61543",
+      "width": 8,
+      "height": 8,
+      "components": 1,
+      "samplingFactors": ["1x1"],
+      "description": "Tiny synthetic grayscale gradient."
+    }
+  ]
+}

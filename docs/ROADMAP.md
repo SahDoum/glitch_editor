@@ -11,15 +11,15 @@
 - Record scope changes in `docs/DECISIONS.md`.
 - Treat support for a JPEG process as a product claim that requires fixtures and tests.
 
-## Milestone 0 — Repository and engineering foundation
+## Milestone 0 — Repository and engineering foundation (complete)
 
 ### Tasks
-- [ ] Initialize TypeScript application and package scripts.
-- [ ] Add formatting, linting, type checking, and unit-test runner.
-- [ ] Add CI for install, lint, typecheck, tests, and production build.
-- [ ] Add `AGENTS.md`, `PRODUCT.md`, and architecture docs.
-- [ ] Define error/result conventions and logging policy.
-- [ ] Create a small fixture corpus with licensing/provenance notes.
+- [x] Initialize TypeScript application and package scripts.
+- [x] Add formatting, linting, type checking, and unit-test runner.
+- [x] Add CI for install, lint, typecheck, tests, and production build.
+- [x] Add `AGENTS.md`, `PRODUCT.md`, and architecture docs.
+- [x] Define error/result conventions and logging policy.
+- [x] Create a small fixture corpus with licensing/provenance notes.
 
 ### Acceptance
 - Clean checkout can install, test, and build using documented commands.

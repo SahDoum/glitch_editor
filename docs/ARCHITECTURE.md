@@ -196,15 +196,19 @@ tests/
   golden/
 ```
 
-## 9. Technology decisions (provisional)
+## 9. Technology decisions
 
 - TypeScript for application and domain contracts.
-- React or equivalent for UI; keep framework out of domain modules.
+- React for the browser UI; keep framework out of domain modules.
+- Vite for local development and static production builds.
+- Node.js is a development/build/test tool only. The application is delivered as static browser assets; no backend is part of this foundation.
 - Web Workers for parsing/codec/operations.
 - WebAssembly codec adapter where it provides the required coefficient-level API.
 - Canvas 2D for initial preview and overlays; profile before adopting WebGL/WebGPU.
 - IndexedDB for optional local project persistence.
-- Vitest (or equivalent) for unit/integration tests; browser automation for workflows.
+- Vitest for unit/integration tests; browser automation can be added for workflows.
+
+The initial toolchain uses Node.js 20.19 or newer, pinned in `.nvmrc` for local development and selected explicitly in CI. React and React DOM are the only production dependencies at this stage. No JPEG codec has been selected or included.
 
 A small Python/C++ prototype may be used to validate JPEG algorithms and compare codec behavior. It is a research harness, not automatically the production runtime.
 
@@ -227,3 +231,10 @@ Record significant choices in `docs/DECISIONS.md` or individual ADRs. At minimum
 - Cloud processing or image uploads.
 - GPU acceleration before profiling.
 - Silent fallback from a failed coefficient operation to pixel-level editing.
+
+## 12. Error and logging conventions
+
+- Functions that can fail because of user input, file contents, or processing return a discriminated `Result<T, AppError>` instead of throwing expected failures.
+- `AppError` contains a stable error code and a concise, user-safe message. Unexpected programming errors may still throw and are handled at the application boundary.
+- Logs contain only allowlisted event names and error codes. Never log image bytes, image metadata, file names, user input, or raw stack traces.
+- UI feedback uses the safe error message; diagnostic logs must not be the only user-facing explanation.

@@ -1,0 +1,52 @@
+{
+  "name": "jpeg-glitch-editor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "packageManager": "npm@10.8.2",
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run typecheck && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"tests/**/*.{ts,tsx,json}\" \"scripts/**/*.mjs\" \"*.{js,ts,json,html}\" \".github/workflows/*.yml\" \"README.md\" \"docs/DEVELOPMENT.md\" \"docs/DECISIONS.md\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"tests/**/*.{ts,tsx,json}\" \"scripts/**/*.mjs\" \"*.{js,ts,json,html}\" \".github/workflows/*.yml\" \"README.md\" \"docs/DEVELOPMENT.md\" \"docs/DECISIONS.md\"",
+    "predev": "node scripts/check-node.mjs",
+    "prebuild": "node scripts/check-node.mjs",
+    "prepreview": "node scripts/check-node.mjs",
+    "pretest": "node scripts/check-node.mjs",
+    "pretest:watch": "node scripts/check-node.mjs",
+    "pretypecheck": "node scripts/check-node.mjs",
+    "prelint": "node scripts/check-node.mjs",
+    "precheck": "node scripts/check-node.mjs",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "20.19.43",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.2.1",
+    "eslint": "10.14.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.3.0",
+    "prettier": "3.9.10",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.72.1",
+    "vite": "8.3.5",
+    "vitest": "4.1.12"
+  },
+  "overrides": {
+    "minimatch": "11.0.1"
+  }
+}

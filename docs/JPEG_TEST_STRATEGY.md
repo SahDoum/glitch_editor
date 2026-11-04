@@ -190,9 +190,10 @@ A milestone is not complete unless:
 Adapt to the package manager and scripts actually chosen. Do not claim these commands exist until configured.
 
 ```bash
+npm ci
+npm run format:check
 npm run lint
 npm run typecheck
-npm run test
-npm run test:integration
+npm test
 npm run build
 ```
