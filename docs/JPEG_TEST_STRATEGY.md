@@ -78,6 +78,19 @@ Each fixture should have a manifest entry containing:
 - restart interval and scan count where applicable;
 - whether the current product version claims support.
 
+### Milestone 1 capability
+
+The current inspector accepts 8-bit baseline sequential Huffman JPEGs with
+one interleaved scan and either one grayscale or three components. It parses
+marker boundaries, byte-stuffed entropy data, and restart markers, but does
+not entropy-decode or expose quantized DCT coefficients. The pixel preview is
+decoded separately by the browser and must not be used as evidence of
+coefficient correctness. Progressive, arithmetic-coded, non-8-bit, and
+multiple-scan files are unsupported and must fail visibly. The import limits
+are 50 MiB per JPEG file, 40 megapixels per frame, and 10,000 marker entries.
+Parser tests cover the pixel and marker limits; import tests verify oversized
+files are rejected before reading.
+
 Do not use unlicensed photographs in a public test corpus. Tiny synthetic images are preferred for deterministic tests.
 
 ## 4. Independent validation

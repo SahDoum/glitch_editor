@@ -611,6 +611,10 @@ version and warn that exact output may differ.
     release.
 -   Handle browser memory pressure and release temporary buffers.
 
+The Milestone 1 inspector accepts JPEG files up to 50 MiB, frame dimensions
+up to 40 megapixels, and at most 10,000 markers. The marker parser runs in a
+cancellable Web Worker; oversized inputs are rejected before preview decoding.
+
 ## 12. Error handling and safety
 
 -   Keep original bytes immutable.
@@ -658,10 +662,13 @@ The MVP is complete when a user can:
 ### Milestone 1 --- JPEG inspection
 
 -   import and parse JPEG;
--   show metadata and marker structure;
--   decode preview;
--   inspect DCT coefficient arrays;
--   show block and MCU overlays.
+-   show metadata and marker/scan structure;
+-   decode a separate browser pixel preview;
+-   show component-aware block and MCU overlays.
+
+DCT coefficient-array inspection is deferred until the codec evaluation
+milestone. A browser-decoded pixel preview is not a substitute for quantized
+DCT coefficients.
 
 ### Milestone 2 --- Editing foundation
 

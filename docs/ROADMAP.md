@@ -26,22 +26,29 @@
 - CI runs on every pull request.
 - No image is uploaded to a server.
 
-## Milestone 1 — Import and JPEG Inspector
+## Milestone 1 — Import and JPEG Inspector (complete)
 
 ### Tasks
-- [ ] File picker and drag-and-drop import.
-- [ ] Preserve exact source bytes and calculate a content digest.
-- [ ] Parse and display marker sequence and segment boundaries.
-- [ ] Display dimensions, process, precision, components, sampling factors, and table assignments.
-- [ ] Decode and display a preview.
-- [ ] Report unsupported/malformed JPEGs clearly.
-- [ ] Add block and MCU geometry overlays where geometry is known.
+- [x] File picker and drag-and-drop import.
+- [x] Preserve exact source bytes and calculate a content digest.
+- [x] Parse and display marker sequence and segment boundaries.
+- [x] Display dimensions, process, precision, components, sampling factors, and table assignments.
+- [x] Decode and display a preview.
+- [x] Report unsupported/malformed JPEGs clearly.
+- [x] Add block and MCU geometry overlays where geometry is known.
 
 ### Acceptance
-- Open known-good baseline JPEG fixtures.
-- Inspector output matches independently verified fixture metadata.
-- Original bytes remain unchanged after inspection.
-- Unsupported formats fail visibly and safely.
+- [x] Open known-good baseline JPEG fixtures.
+- [x] Inspector output matches fixture metadata verified against the fixture manifest and ImageMagick.
+- [x] Original bytes remain unchanged after inspection.
+- [x] Unsupported formats fail visibly and safely.
+
+The inspector supports 8-bit baseline sequential Huffman JPEG with one
+interleaved scan and either one grayscale or three components. Coefficient
+inspection remains in Milestone 2, after codec evaluation; the browser-decoded
+pixel preview is not treated as JPEG coefficient data. Inputs are limited to
+50 MiB, 40 megapixels, and 10,000 markers; marker parsing runs in a cancellable
+Web Worker.
 
 ## Milestone 2 — Coefficient access prototype
 

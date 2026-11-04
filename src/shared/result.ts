@@ -1,6 +1,7 @@
 export type AppErrorCode =
   | "INVALID_INPUT"
   | "UNSUPPORTED_FORMAT"
+  | "MALFORMED_JPEG"
   | "PROCESSING_FAILED"
   | "CANCELLED"
   | "INTERNAL";
