@@ -57,11 +57,16 @@ describe("JPEG import", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(Buffer.from(result.value.sourceBytes)).toEqual(original);
-    expect(result.value.sha256).toBe(
+    expect(Buffer.from(result.value.originalAsset.readBytes())).toEqual(
+      original,
+    );
+    expect(result.value.originalAsset.sha256).toBe(
       createHash("sha256").update(original).digest("hex"),
     );
-    expect(result.value.fileName).toBe("synthetic-color-420.jpg");
+    expect(result.value.originalAsset.fileName).toBe("synthetic-color-420.jpg");
+    const exposedCopy = result.value.originalAsset.readBytes();
+    exposedCopy[0] = 0;
+    expect(result.value.originalAsset.readBytes()[0]).toBe(original[0]);
     URL.revokeObjectURL(result.value.previewUrl);
   });
 

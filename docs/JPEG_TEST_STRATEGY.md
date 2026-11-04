@@ -27,6 +27,11 @@
 - Operation serialization, replay, undo/redo.
 - Worker message validation and stale-result rejection.
 
+Milestone 3 additionally verifies defensive original-byte reads, image-pixel
+selection and mask bounds, deterministic seeded replay, operation stack
+serialization/version rejection, ordered recomputation, enable/disable,
+parameter edits, delete, undo/redo, and stale preview discard.
+
 ### Integration tests
 
 - Import → inspect → preview.

@@ -88,6 +88,13 @@ Do not collapse these into one generic `image` object.
 
 The original bytes are authoritative for reset and original export. A preview is never the authoritative JPEG representation.
 
+Milestone 3 implements `OriginalAsset` with private byte storage and
+copy-returning reads, plus an immutable `ProjectDocument` snapshot. The
+editable document tracks its monotonic revision, selected image-pixel region,
+and an operation-derived mask state separately from the source JPEG.
+Selections and masks remain spatial controls; they are not DCT-block
+coordinates or coefficient edits.
+
 ## 4. JPEG engine boundary
 
 Expose a stable facade. The rest of the app should depend on these conceptual operations, not a particular codec library:
@@ -153,6 +160,21 @@ Operation definitions should provide:
 - a clear statement of whether re-encoding is required.
 
 Do not assume operations commute. Reordering requires recomputation of downstream results.
+
+The current operation stack uses a version-1 serialized schema and resolves
+each operation by exact type/version in `OperationRegistry`. Every stack
+change replays enabled operations from the initial editable representation in
+order; failed validation or execution leaves the prior document intact.
+Undo/redo stores immutable document frames, while document revisions continue
+to increase so preview results from earlier revisions cannot be mistaken for
+current output. A supplied 32-bit seed creates a repeatable random stream.
+Unknown operation versions are rejected explicitly; no migration is claimed
+yet.
+
+The only built-in operation in this milestone applies a spatial mask to the
+document model. It does not modify JPEG coefficients, pixels, or source bytes.
+The coefficient bridge remains read-only, so coefficient-changing operations
+and re-encoding are deferred to Milestone 4.
 
 ## 6. Preview and export pipeline
 

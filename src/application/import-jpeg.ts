@@ -4,13 +4,12 @@ import {
   type InspectWorkerResponse,
 } from "../jpeg/inspect-worker-protocol";
 import type { JpegInspection } from "../jpeg/inspect";
+import { OriginalAsset } from "../document/model";
 
 const MAX_JPEG_FILE_BYTES = 50 * 1024 * 1024;
 
 export interface ImportedJpeg {
-  fileName: string;
-  sourceBytes: Uint8Array;
-  sha256: string;
+  originalAsset: OriginalAsset;
   inspection: JpegInspection;
   previewUrl: string;
 }
@@ -159,6 +158,13 @@ export async function importJpeg(
   }
   if (signal?.aborted) return cancelled();
 
+  const originalAsset = OriginalAsset.create({
+    fileName: file.name,
+    sha256: toHex(new Uint8Array(digest)),
+    bytes,
+  });
+  if (!originalAsset.ok) return originalAsset;
+
   let previewUrl: string;
   try {
     previewUrl = URL.createObjectURL(file);
@@ -224,9 +230,7 @@ export async function importJpeg(
   }
 
   return success({
-    fileName: file.name,
-    sourceBytes: bytes,
-    sha256: toHex(new Uint8Array(digest)),
+    originalAsset: originalAsset.value,
     inspection: inspection.value,
     previewUrl,
   });

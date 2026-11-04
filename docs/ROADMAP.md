@@ -84,19 +84,27 @@ ADR-003 and `docs/DEVELOPMENT.md` for the local build procedure.
 
 ### Tasks
 
-- [ ] Define immutable original asset and editable document representations.
-- [ ] Define versioned operation schema and registry.
-- [ ] Implement operation stack, undo/redo, enable/disable, delete, and parameter editing.
-- [ ] Add selection and mask representation.
-- [ ] Add deterministic seeded random utility.
-- [ ] Handle stale asynchronous preview results.
+- [x] Define immutable original asset and editable document representations.
+- [x] Define versioned operation schema and registry.
+- [x] Implement operation stack, undo/redo, enable/disable, delete, and parameter editing.
+- [x] Add selection and mask representation.
+- [x] Add deterministic seeded random utility.
+- [x] Handle stale asynchronous preview results.
 
 ### Acceptance
 
-- Operations can be replayed deterministically from the original document.
-- Undo/redo restores the exact prior editable state.
-- Reordering recomputes downstream operations and does not assume commutativity.
-- Original bytes are always recoverable.
+- [x] Operations can be replayed deterministically from the original document.
+- [x] Undo/redo restores the exact prior editable state.
+- [x] Reordering recomputes downstream operations and does not assume commutativity.
+- [x] Original bytes are always recoverable.
+
+The immutable document model, version-1 operation registry/serializer,
+ordered replay history, image-pixel rectangular selection and mask operation,
+seeded random utility, and stale-preview coordinator are implemented. The UI
+can apply, edit, toggle, reorder, undo/redo, delete, and reset spatial mask
+operations. These operations only affect spatial-mask state: coefficient
+editing and JPEG re-encoding remain deferred because the current coefficient
+bridge is read-only. See `docs/DECISIONS.md` ADR-004.
 
 ## Milestone 4 — First DCT editing vertical slice
 

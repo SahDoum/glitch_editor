@@ -1,14 +1,21 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ChangeEvent,
   type DragEvent,
+  type PointerEvent,
 } from "react";
 import {
   createJpegCoefficientReader,
   type JpegCoefficientReader,
 } from "./application/coefficient-reader";
+import {
+  applyMaskToDocument,
+  createJpegDocumentSession,
+  type JpegEditableState,
+} from "./application/jpeg-document";
 import { importJpeg, type ImportedJpeg } from "./application/import-jpeg";
 import {
   getJpegComponentBlockGrid,
@@ -16,6 +23,16 @@ import {
   type JpegBlockCoordinate,
 } from "./jpeg/block-geometry";
 import type { JpegInspection } from "./jpeg/inspect";
+import {
+  createRectangleSelection,
+  createSpatialMask,
+  getMaskFromParameters,
+  spatialMaskParameters,
+  type SpatialMask,
+  type SpatialSelection,
+} from "./document/masks";
+import type { ProjectDocument } from "./document/model";
+import { OperationHistory } from "./operations/history";
 
 const MARKER_LIMIT = 250;
 
@@ -27,10 +44,14 @@ function ImageOverlays({
   inspection,
   showBlocks,
   showMcus,
+  selection,
+  mask,
 }: {
   inspection: JpegInspection;
   showBlocks: boolean;
   showMcus: boolean;
+  selection: SpatialSelection | null;
+  mask: SpatialMask | null;
 }) {
   const blockPatternWidth = inspection.blockWidth;
   const blockPatternHeight = inspection.blockHeight;
@@ -84,6 +105,27 @@ function ImageOverlays({
           width={inspection.width}
           height={inspection.height}
           fill="url(#mcu-grid)"
+        />
+      )}
+      {mask?.width === inspection.width &&
+        mask.height === inspection.height &&
+        mask.shapes.map((shape, index) => (
+          <rect
+            className="active-mask-overlay"
+            key={`${mask.id}-${index}`}
+            x={shape.x}
+            y={shape.y}
+            width={shape.width}
+            height={shape.height}
+          />
+        ))}
+      {selection && (
+        <rect
+          className="selection-overlay"
+          x={selection.x}
+          y={selection.y}
+          width={selection.width}
+          height={selection.height}
         />
       )}
     </svg>
@@ -227,12 +269,13 @@ function MetadataInspector({ inspection }: { inspection: JpegInspection }) {
 }
 
 function CoefficientInspector({
-  bytes,
+  asset,
   inspection,
 }: {
-  bytes: Uint8Array;
+  asset: ImportedJpeg["originalAsset"];
   inspection: JpegInspection;
 }) {
+  const bytes = useMemo(() => asset.readBytes(), [asset]);
   const componentOptions = inspection.components;
   const [componentId, setComponentId] = useState(componentOptions[0]?.id ?? 0);
   const [blockX, setBlockX] = useState("0");
@@ -461,15 +504,27 @@ function CoefficientInspector({
 
 function App() {
   const [document, setDocument] = useState<ImportedJpeg | null>(null);
+  const [historyDocument, setHistoryDocument] =
+    useState<ProjectDocument<JpegEditableState> | null>(null);
+  const [historyAvailability, setHistoryAvailability] = useState({
+    canUndo: false,
+    canRedo: false,
+  });
   const [errorMessage, setErrorMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [showBlocks, setShowBlocks] = useState(false);
   const [showMcus, setShowMcus] = useState(false);
+  const [isSelecting, setIsSelecting] = useState(false);
+  const [selection, setSelection] = useState<SpatialSelection | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const requestId = useRef(0);
   const dragDepth = useRef(0);
   const importController = useRef<AbortController | null>(null);
+  const operationHistory = useRef<OperationHistory<JpegEditableState> | null>(
+    null,
+  );
+  const selectionStart = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(
     () => () => {
@@ -506,9 +561,159 @@ function App() {
       return;
     }
 
+    const history = createJpegDocumentSession(result.value);
+    if (!history.ok) {
+      URL.revokeObjectURL(result.value.previewUrl);
+      setErrorMessage(history.error.message);
+      return;
+    }
+
+    operationHistory.current = history.value;
+    setHistoryDocument(history.value.snapshot);
+    setHistoryAvailability({
+      canUndo: history.value.canUndo,
+      canRedo: history.value.canRedo,
+    });
+    setSelection(null);
+    setIsSelecting(false);
     setShowBlocks(false);
     setShowMcus(false);
     setDocument(result.value);
+  }
+
+  function updateHistory(
+    result: ReturnType<OperationHistory<JpegEditableState>["add"]>,
+  ) {
+    if (!result.ok) {
+      setErrorMessage(result.error.message);
+      return;
+    }
+    setErrorMessage("");
+    setHistoryDocument(result.value);
+    const history = operationHistory.current;
+    setHistoryAvailability({
+      canUndo: history?.canUndo ?? false,
+      canRedo: history?.canRedo ?? false,
+    });
+  }
+
+  function mutateHistory(
+    mutate: (
+      history: OperationHistory<JpegEditableState>,
+    ) => ReturnType<OperationHistory<JpegEditableState>["add"]>,
+  ) {
+    const history = operationHistory.current;
+    if (!history) return;
+    updateHistory(mutate(history));
+  }
+
+  function getImagePoint(
+    event: PointerEvent<HTMLDivElement>,
+  ): { x: number; y: number } | null {
+    if (!document) return null;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    if (bounds.width <= 0 || bounds.height <= 0) return null;
+    return {
+      x:
+        ((event.clientX - bounds.left) / bounds.width) *
+        document.inspection.width,
+      y:
+        ((event.clientY - bounds.top) / bounds.height) *
+        document.inspection.height,
+    };
+  }
+
+  function updateSelection(
+    start: { x: number; y: number },
+    end: { x: number; y: number },
+  ) {
+    if (!document) return;
+    const result = createRectangleSelection(
+      start.x,
+      start.y,
+      end.x,
+      end.y,
+      document.inspection.width,
+      document.inspection.height,
+    );
+    if (!result.ok) {
+      setErrorMessage(result.error.message);
+      return;
+    }
+    setSelection(result.value);
+    const history = operationHistory.current;
+    if (history) updateHistory(history.setSelection(result.value));
+  }
+
+  function onImagePointerDown(event: PointerEvent<HTMLDivElement>) {
+    if (!isSelecting || event.button !== 0) return;
+    const point = getImagePoint(event);
+    if (!point) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    selectionStart.current = point;
+    updateSelection(point, point);
+  }
+
+  function onImagePointerMove(event: PointerEvent<HTMLDivElement>) {
+    const start = selectionStart.current;
+    const end = getImagePoint(event);
+    if (start && end) updateSelection(start, end);
+  }
+
+  function onImagePointerUp(event: PointerEvent<HTMLDivElement>) {
+    const start = selectionStart.current;
+    const end = getImagePoint(event);
+    if (start && end) updateSelection(start, end);
+    selectionStart.current = null;
+  }
+
+  function addSelectionMask() {
+    if (!document || !selection) return;
+    const mask = createSpatialMask(
+      selection,
+      document.inspection.width,
+      document.inspection.height,
+    );
+    if (!mask.ok) {
+      setErrorMessage(mask.error.message);
+      return;
+    }
+    const history = operationHistory.current;
+    if (!history) return;
+    updateHistory(applyMaskToDocument(history, mask.value));
+  }
+
+  function clearSelection() {
+    setSelection(null);
+    const history = operationHistory.current;
+    if (history) updateHistory(history.setSelection(null));
+  }
+
+  function editMaskOperation(operationId: string) {
+    if (!document || !selection) return;
+    const mask = createSpatialMask(
+      selection,
+      document.inspection.width,
+      document.inspection.height,
+    );
+    if (!mask.ok) {
+      setErrorMessage(mask.error.message);
+      return;
+    }
+    mutateHistory((history) =>
+      history.editParameters(operationId, spatialMaskParameters(mask.value)),
+    );
+  }
+
+  function handleUndo() {
+    const history = operationHistory.current;
+    if (history) updateHistory(history.undo());
+  }
+
+  function handleRedo() {
+    const history = operationHistory.current;
+    if (history) updateHistory(history.redo());
   }
 
   function onFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -552,10 +757,35 @@ function App() {
         </a>
         <div className="topbar-actions">
           {document && (
-            <span className="active-file" title={document.fileName}>
-              {document.fileName}
+            <span
+              className="active-file"
+              title={document.originalAsset.fileName}
+            >
+              {document.originalAsset.fileName}
             </span>
           )}
+          <div className="history-toolbar" aria-label="Operation history">
+            <button
+              className="history-toolbar-button"
+              type="button"
+              onClick={handleUndo}
+              disabled={!historyAvailability.canUndo}
+              aria-label="Undo"
+              title="Undo"
+            >
+              ↶
+            </button>
+            <button
+              className="history-toolbar-button"
+              type="button"
+              onClick={handleRedo}
+              disabled={!historyAvailability.canRedo}
+              aria-label="Redo"
+              title="Redo"
+            >
+              ↷
+            </button>
+          </div>
           <input
             ref={fileInput}
             className="visually-hidden"
@@ -607,9 +837,10 @@ function App() {
                 <span aria-hidden="true">↗</span>
               </button>
               <div className="milestone-note">
-                <span className="note-index">02</span>
+                <span className="note-index">03</span>
                 <span>
-                  Drop a JPEG here to inspect its structure and blocks.
+                  Drop a JPEG to inspect it, select a region, and build a
+                  reversible mask history.
                 </span>
               </div>
             </div>
@@ -623,6 +854,17 @@ function App() {
                   </p>
                 </div>
                 <div className="overlay-controls">
+                  <button
+                    className={`tool-toggle ${isSelecting ? "is-active" : ""}`}
+                    type="button"
+                    aria-pressed={isSelecting}
+                    onClick={() => {
+                      setIsSelecting((active) => !active);
+                      selectionStart.current = null;
+                    }}
+                  >
+                    {isSelecting ? "Selecting region…" : "Select region"}
+                  </button>
                   <label>
                     <input
                       type="checkbox"
@@ -646,16 +888,26 @@ function App() {
                 </div>
               </div>
               <div className="image-stage">
-                <div className="preview-image-wrap">
+                <div
+                  className={`preview-image-wrap ${isSelecting ? "is-selecting" : ""}`}
+                  onPointerDown={onImagePointerDown}
+                  onPointerMove={onImagePointerMove}
+                  onPointerUp={onImagePointerUp}
+                  onPointerCancel={() => {
+                    selectionStart.current = null;
+                  }}
+                >
                   <img
                     className="preview-image"
                     src={document.previewUrl}
-                    alt={`Decoded preview of ${document.fileName}`}
+                    alt={`Decoded preview of ${document.originalAsset.fileName}`}
                   />
                   <ImageOverlays
                     inspection={document.inspection}
                     showBlocks={showBlocks}
                     showMcus={showMcus}
+                    selection={selection}
+                    mask={historyDocument?.currentState.activeMask ?? null}
                   />
                 </div>
               </div>
@@ -663,7 +915,7 @@ function App() {
                 <span>
                   {document.inspection.width} × {document.inspection.height}
                 </span>
-                <span>Preview only · no JPEG re-encoding</span>
+                <span>Pixel preview · no JPEG re-encoding</span>
               </div>
             </div>
           )}
@@ -685,22 +937,190 @@ function App() {
           )}
           {document ? (
             <>
+              <section className="inspector-section selection-panel">
+                <div className="section-kicker">SPATIAL SELECTION</div>
+                <h2>Selection &amp; mask</h2>
+                <p className="operation-description">
+                  Draw a rectangle in image-pixel coordinates. Applying it
+                  stores an editable mask operation; it does not change JPEG
+                  coefficients or pixels.
+                </p>
+                {selection ? (
+                  <p className="selection-readout">
+                    x {selection.x.toFixed(1)} · y {selection.y.toFixed(1)} ·{" "}
+                    {selection.width.toFixed(1)} × {selection.height.toFixed(1)}{" "}
+                    image pixels
+                  </p>
+                ) : (
+                  <p className="operation-empty">
+                    Enable Select region and drag over the decoded preview.
+                  </p>
+                )}
+                <div className="operation-actions">
+                  <button
+                    className="operation-button"
+                    type="button"
+                    disabled={!selection}
+                    onClick={addSelectionMask}
+                  >
+                    Apply mask operation
+                  </button>
+                  <button
+                    className="operation-button secondary"
+                    type="button"
+                    disabled={!selection}
+                    onClick={clearSelection}
+                  >
+                    Clear selection
+                  </button>
+                </div>
+              </section>
+              <section className="inspector-section operation-stack">
+                <div className="section-heading">
+                  <div>
+                    <div className="section-kicker">
+                      NON-DESTRUCTIVE HISTORY
+                    </div>
+                    <h2>Operation stack</h2>
+                  </div>
+                  <span className="count-badge">
+                    {historyDocument?.operations.length ?? 0}
+                  </span>
+                </div>
+                <p className="operation-description">
+                  Enabled operations replay in order from the original document.
+                  Reordering recomputes later state.
+                </p>
+                {historyDocument?.operations.length ? (
+                  <ol className="operation-list">
+                    {historyDocument.operations.map((operation, index) => {
+                      const mask = getMaskFromParameters(operation.parameters);
+                      return (
+                        <li
+                          className="operation-entry"
+                          key={operation.id}
+                          data-enabled={operation.enabled}
+                        >
+                          <div className="operation-entry-heading">
+                            <label className="operation-enabled">
+                              <input
+                                type="checkbox"
+                                checked={operation.enabled}
+                                onChange={(event) =>
+                                  mutateHistory((history) =>
+                                    history.setEnabled(
+                                      operation.id,
+                                      event.currentTarget.checked,
+                                    ),
+                                  )
+                                }
+                              />
+                              <span>Spatial mask</span>
+                            </label>
+                            <span className="operation-status">
+                              {operation.status}
+                            </span>
+                          </div>
+                          {mask && (
+                            <p className="operation-parameters">
+                              Image-pixel rectangle · {mask.shapes[0]!.width} ×{" "}
+                              {mask.shapes[0]!.height}
+                            </p>
+                          )}
+                          <div className="operation-actions">
+                            <button
+                              className="operation-button secondary"
+                              type="button"
+                              disabled={index === 0}
+                              aria-label="Move operation up"
+                              onClick={() =>
+                                mutateHistory((history) =>
+                                  history.move(operation.id, index - 1),
+                                )
+                              }
+                            >
+                              ↑
+                            </button>
+                            <button
+                              className="operation-button secondary"
+                              type="button"
+                              disabled={
+                                index ===
+                                (historyDocument?.operations.length ?? 0) - 1
+                              }
+                              aria-label="Move operation down"
+                              onClick={() =>
+                                mutateHistory((history) =>
+                                  history.move(operation.id, index + 1),
+                                )
+                              }
+                            >
+                              ↓
+                            </button>
+                            <button
+                              className="operation-button secondary"
+                              type="button"
+                              disabled={!selection}
+                              onClick={() => editMaskOperation(operation.id)}
+                            >
+                              Update from selection
+                            </button>
+                            <button
+                              className="operation-button danger"
+                              type="button"
+                              aria-label="Delete operation"
+                              onClick={() =>
+                                mutateHistory((history) =>
+                                  history.delete(operation.id),
+                                )
+                              }
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                ) : (
+                  <p className="operation-empty">
+                    No operations yet. Add a mask from a spatial selection.
+                  </p>
+                )}
+                <button
+                  className="operation-reset"
+                  type="button"
+                  disabled={!historyDocument?.operations.length}
+                  onClick={() => {
+                    const history = operationHistory.current;
+                    if (history) updateHistory(history.resetToOriginal());
+                    clearSelection();
+                  }}
+                >
+                  Reset to original
+                </button>
+              </section>
               <div className="source-card">
                 <div className="section-kicker">ORIGINAL ASSET</div>
-                <p className="source-name" title={document.fileName}>
-                  {document.fileName}
+                <p
+                  className="source-name"
+                  title={document.originalAsset.fileName}
+                >
+                  {document.originalAsset.fileName}
                 </p>
                 <p className="source-size">
-                  {document.sourceBytes.byteLength.toLocaleString()} bytes
+                  {document.originalAsset.byteLength.toLocaleString()} bytes
                   <span>·</span>
                   Original bytes held unchanged in memory
                 </p>
                 <div className="digest-label">SHA-256</div>
-                <code className="digest-value">{document.sha256}</code>
+                <code className="digest-value">
+                  {document.originalAsset.sha256}
+                </code>
               </div>
               <CoefficientInspector
-                key={document.sha256}
-                bytes={document.sourceBytes}
+                key={document.originalAsset.sha256}
+                asset={document.originalAsset}
                 inspection={document.inspection}
               />
               <MetadataInspector inspection={document.inspection} />
@@ -729,13 +1149,13 @@ function App() {
       <footer className="statusbar">
         <span>
           {document
-            ? "Original JPEG bytes preserved · coefficient inspection is read-only"
+            ? `Original JPEG bytes preserved · revision ${historyDocument?.revision ?? 0}`
             : "Original files stay on your device."}
         </span>
         <span className="statusbar-right">
           <span>JPEG DOMAIN</span>
           <span className="status-divider" aria-hidden="true" />
-          <span>{document ? "COEFFICIENT PROTOTYPE" : "MILESTONE 2"}</span>
+          <span>{document ? "DOCUMENT HISTORY" : "MILESTONE 3"}</span>
         </span>
       </footer>
     </main>
