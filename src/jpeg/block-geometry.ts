@@ -169,6 +169,51 @@ export function mapJpegBlockCoordinate(
   });
 }
 
+export function mapJpegImagePointToBlock(
+  inspection: JpegInspection,
+  componentId: number,
+  imageX: number,
+  imageY: number,
+): Result<JpegBlockCoordinate> {
+  const component = inspection.components.find(
+    (candidate) => candidate.id === componentId,
+  );
+  if (
+    !component ||
+    !Number.isFinite(imageX) ||
+    !Number.isFinite(imageY) ||
+    imageX < 0 ||
+    imageY < 0 ||
+    imageX >= inspection.width ||
+    imageY >= inspection.height
+  ) {
+    return failure({
+      code: "INVALID_INPUT",
+      message: "The selected image point or JPEG component is invalid.",
+    });
+  }
+
+  const maxHorizontalSampling = Math.max(
+    ...inspection.components.map(
+      ({ horizontalSampling }) => horizontalSampling,
+    ),
+  );
+  const maxVerticalSampling = Math.max(
+    ...inspection.components.map(({ verticalSampling }) => verticalSampling),
+  );
+
+  return mapJpegBlockCoordinate(
+    inspection,
+    componentId,
+    Math.floor(
+      imageX / ((8 * maxHorizontalSampling) / component.horizontalSampling),
+    ),
+    Math.floor(
+      imageY / ((8 * maxVerticalSampling) / component.verticalSampling),
+    ),
+  );
+}
+
 export function getMaskBlockCoverage(
   mask: SpatialMask,
   inspection: JpegBlockGeometry,

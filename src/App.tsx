@@ -1,11 +1,14 @@
 import {
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   type ChangeEvent,
   type DragEvent,
   type PointerEvent,
+  type Ref,
+  type ReactNode,
 } from "react";
 import {
   encodeJpegCoefficients,
@@ -25,6 +28,7 @@ import { importJpeg, type ImportedJpeg } from "./application/import-jpeg";
 import {
   getJpegComponentBlockGrid,
   mapJpegBlockCoordinate,
+  mapJpegImagePointToBlock,
   snapSelectionToComponentBlocks,
   type JpegBlockGeometry,
   type JpegBlockCoordinate,
@@ -54,12 +58,94 @@ import {
   type QuantizationSemantics,
 } from "./operations/jpeg-glitch";
 import { DCT_FREQUENCY_BAND_RANGES } from "./operations/dct";
+import {
+  initialWorkspaceState,
+  TOOL_GROUPS,
+  workspaceReducer,
+  type CanvasTool,
+} from "./ui/workspace-state";
+import {
+  getBrushOverlayPath,
+  getRectangleSelection,
+} from "./ui/selection-overlay";
 
 const MARKER_LIMIT = 250;
 const EMPTY_JPEG_OPERATIONS: JpegEditableState["jpegOperations"] =
   Object.freeze([]);
 type ImagePoint = { x: number; y: number };
-type CanvasTool = "select" | "brush" | "pan";
+
+function getToolIconPaths(tool: CanvasTool): readonly string[] {
+  switch (tool) {
+    case "hand":
+      return [
+        "M5 12V6a1.5 1.5 0 0 1 3 0v5-2a1.5 1.5 0 0 1 3 0v2-1a1.5 1.5 0 0 1 3 0v2-1a1.5 1.5 0 0 1 3 0v5c0 3-2 5-5 5h-2c-2 0-3-1-4-3l-2-3a1.5 1.5 0 0 1 2-2l2 2",
+      ];
+    case "inspector":
+      return ["M10.5 3a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15Z", "m16 16 5 5"];
+    case "brush":
+      return ["m4 16 9-9 4 4-9 9H4v-4Z", "m12 8 3-3 4 4-3 3", "M4 21h7"];
+    case "select":
+      return ["M4 4h16v16H4z", "M9 4v3", "M15 4v3", "M4 9h3", "M4 15h3"];
+    case "repeat-block":
+      return ["M4 4h7v7H4z", "M13 13h7v7h-7z", "M13 4h7v5", "m17 6 3 3 3-3"];
+    case "shuffle":
+      return [
+        "M4 7h3c4 0 6 10 10 10h3",
+        "m17 14 3 3-3 3",
+        "M4 17h3c2 0 3-2 4-4",
+        "M16 7h4",
+        "m17 4 3 3-3 3",
+      ];
+    case "quantization":
+      return [
+        "M4 4h16v16H4z",
+        "M9.3 4v16",
+        "M14.7 4v16",
+        "M4 9.3h16",
+        "M4 14.7h16",
+      ];
+  }
+}
+
+function CollapsibleSection({
+  id,
+  title,
+  kicker,
+  count,
+  className = "",
+  detailsRef,
+  children,
+}: {
+  id: string;
+  title: string;
+  kicker?: string;
+  count?: number;
+  className?: string;
+  detailsRef?: Ref<HTMLDetailsElement>;
+  children: ReactNode;
+}) {
+  return (
+    <details
+      className={`collapsible-section ${className}`}
+      open
+      ref={detailsRef}
+    >
+      <summary className="collapsible-summary" aria-controls={`${id}-content`}>
+        <span className="collapsible-heading">
+          {kicker && <span className="section-kicker">{kicker}</span>}
+          <span className="collapsible-title">{title}</span>
+        </span>
+        {count !== undefined && <span className="count-badge">{count}</span>}
+        <span className="collapse-indicator" aria-hidden="true">
+          ⌄
+        </span>
+      </summary>
+      <div className="collapsible-content" id={`${id}-content`}>
+        {children}
+      </div>
+    </details>
+  );
+}
 
 function formatOffset(offset: number): string {
   return `0x${offset.toString(16).padStart(6, "0").toUpperCase()}`;
@@ -107,6 +193,7 @@ function ImageOverlays({
   mask,
   brushDraft,
   brushRadius,
+  selectedBlock,
 }: {
   inspection: JpegInspection;
   showBlocks: boolean;
@@ -115,6 +202,7 @@ function ImageOverlays({
   mask: SpatialMask | null;
   brushDraft: readonly ImagePoint[];
   brushRadius: number;
+  selectedBlock: JpegBlockCoordinate | null;
 }) {
   const blockPatternWidth = inspection.blockWidth;
   const blockPatternHeight = inspection.blockHeight;
@@ -173,26 +261,21 @@ function ImageOverlays({
       {mask?.width === inspection.width &&
         mask.height === inspection.height &&
         mask.shapes.map((shape, index) =>
-          shape.kind === "rectangle" ? (
-            <rect
-              className="active-mask-overlay"
+          shape.kind === "rectangle" ? null : shape.points.length === 1 ? (
+            <circle
+              className="active-mask-brush-point"
               key={`${mask.id}-${index}`}
-              x={shape.x}
-              y={shape.y}
-              width={shape.width}
-              height={shape.height}
+              cx={shape.points[0]?.x}
+              cy={shape.points[0]?.y}
+              r={shape.radius}
             />
           ) : (
-            <g className="active-mask-overlay" key={`${mask.id}-${index}`}>
-              {shape.points.map((point, pointIndex) => (
-                <circle
-                  key={pointIndex}
-                  cx={point.x}
-                  cy={point.y}
-                  r={shape.radius}
-                />
-              ))}
-            </g>
+            <path
+              className="active-mask-brush"
+              key={`${mask.id}-${index}`}
+              d={getBrushOverlayPath(shape.points)}
+              strokeWidth={shape.radius * 2}
+            />
           ),
         )}
       {selection && (
@@ -204,15 +287,31 @@ function ImageOverlays({
           height={selection.height}
         />
       )}
-      {brushDraft.map((point, index) => (
+      {brushDraft.length === 1 ? (
         <circle
-          className="brush-draft-overlay"
-          key={index}
-          cx={point.x}
-          cy={point.y}
+          className="brush-draft-point"
+          cx={brushDraft[0]?.x}
+          cy={brushDraft[0]?.y}
           r={brushRadius}
         />
-      ))}
+      ) : (
+        brushDraft.length > 1 && (
+          <path
+            className="brush-draft-overlay"
+            d={getBrushOverlayPath(brushDraft)}
+            strokeWidth={brushRadius * 2}
+          />
+        )
+      )}
+      {selectedBlock && (
+        <rect
+          className="selected-block-overlay"
+          x={selectedBlock.imageX}
+          y={selectedBlock.imageY}
+          width={selectedBlock.imageWidth}
+          height={selectedBlock.imageHeight}
+        />
+      )}
     </svg>
   );
 }
@@ -227,22 +326,36 @@ function describeMask(mask: SpatialMask): string {
 }
 
 function MetadataInspector({
+  asset,
   inspection,
   quantizationTables,
+  selectedBlock,
 }: {
+  asset: ImportedJpeg["originalAsset"];
   inspection: JpegInspection;
   quantizationTables: readonly {
     id: number;
     values: readonly number[];
   }[];
+  selectedBlock: JpegBlockCoordinate | null;
 }) {
   const visibleMarkers = inspection.markers.slice(0, MARKER_LIMIT);
+  const jpegInspectorRef = useRef<HTMLDetailsElement>(null);
+
+  useEffect(() => {
+    if (selectedBlock && jpegInspectorRef.current) {
+      jpegInspectorRef.current.open = true;
+    }
+  }, [selectedBlock]);
 
   return (
-    <aside className="inspector" aria-label="JPEG inspector">
-      <section className="inspector-section">
-        <div className="section-kicker">JPEG INSPECTOR</div>
-        <h2>Structure</h2>
+    <div className="inspector">
+      <CollapsibleSection
+        id="jpeg-inspector"
+        title="Structure"
+        kicker="JPEG INSPECTOR"
+        detailsRef={jpegInspectorRef}
+      >
         <dl className="metadata-list">
           <div>
             <dt>Dimensions</dt>
@@ -259,10 +372,18 @@ function MetadataInspector({
             <dd>{inspection.precision}-bit samples</dd>
           </div>
         </dl>
-      </section>
+        <CoefficientInspector
+          asset={asset}
+          inspection={inspection}
+          selectedBlock={selectedBlock}
+        />
+      </CollapsibleSection>
 
-      <section className="inspector-section">
-        <div className="section-kicker">FRAME COMPONENTS</div>
+      <CollapsibleSection
+        id="frame-components"
+        title="Components"
+        kicker="FRAME COMPONENTS"
+      >
         <ul className="component-list">
           {inspection.components.map((component) => {
             const blockGrid = getJpegComponentBlockGrid(
@@ -288,11 +409,13 @@ function MetadataInspector({
             );
           })}
         </ul>
-      </section>
+      </CollapsibleSection>
 
-      <section className="inspector-section">
-        <div className="section-kicker">DQT QUANTIZATION TABLES</div>
-        <h2>Current 8×8 matrices</h2>
+      <CollapsibleSection
+        id="dqt-tables"
+        title="Current 8×8 matrices"
+        kicker="DQT QUANTIZATION TABLES"
+      >
         {quantizationTables.map((table) => (
           <div className="quantization-table-view" key={table.id}>
             <p className="coefficient-note">Table {table.id} · natural order</p>
@@ -316,10 +439,13 @@ function MetadataInspector({
             </div>
           </div>
         ))}
-      </section>
+      </CollapsibleSection>
 
-      <section className="inspector-section">
-        <div className="section-kicker">BLOCK GEOMETRY</div>
+      <CollapsibleSection
+        id="block-geometry"
+        title="Block geometry"
+        kicker="BLOCK GEOMETRY"
+      >
         <dl className="metadata-list">
           <div>
             <dt>MCU size</dt>
@@ -348,16 +474,14 @@ function MetadataInspector({
             </dd>
           </div>
         </dl>
-      </section>
+      </CollapsibleSection>
 
-      <section className="inspector-section">
-        <div className="section-heading">
-          <div>
-            <div className="section-kicker">ENCODED FILE</div>
-            <h2>Marker sequence</h2>
-          </div>
-          <span className="count-badge">{inspection.markers.length}</span>
-        </div>
+      <CollapsibleSection
+        id="encoded-file"
+        title="Marker sequence"
+        kicker="ENCODED FILE"
+        count={inspection.markers.length}
+      >
         <div className="marker-table-wrap">
           <table className="marker-table">
             <thead>
@@ -394,8 +518,8 @@ function MetadataInspector({
             {formatOffset(scan.dataEndOffset)})
           </p>
         ))}
-      </section>
-    </aside>
+      </CollapsibleSection>
+    </div>
   );
 }
 
@@ -616,17 +740,15 @@ function QuantizationMatrixEditor({
 function CoefficientInspector({
   asset,
   inspection,
+  selectedBlock,
 }: {
   asset: ImportedJpeg["originalAsset"];
   inspection: JpegInspection;
+  selectedBlock: JpegBlockCoordinate | null;
 }) {
   const bytes = useMemo(() => asset.readBytes(), [asset]);
   const componentOptions = inspection.components;
-  const [componentId, setComponentId] = useState(componentOptions[0]?.id ?? 0);
-  const [blockX, setBlockX] = useState("0");
-  const [blockY, setBlockY] = useState("0");
   const [values, setValues] = useState<number[] | null>(null);
-  const [mapping, setMapping] = useState<JpegBlockCoordinate | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const reader = useRef<JpegCoefficientReader | null>(null);
@@ -641,163 +763,108 @@ function CoefficientInspector({
     [bytes],
   );
 
-  const selectedComponent =
-    componentOptions.find((component) => component.id === componentId) ??
-    componentOptions[0];
-  const selectedBlockGrid = selectedComponent
-    ? getJpegComponentBlockGrid(inspection, selectedComponent.id)
-    : null;
-
-  function clearSelection() {
-    requestId.current += 1;
-    setValues(null);
-    setMapping(null);
-    setErrorMessage("");
-    setIsLoading(false);
-  }
-
-  async function inspectSelectedBlock() {
-    if (!selectedComponent || !blockX.trim() || !blockY.trim()) {
-      setErrorMessage("Enter a component and valid DCT block coordinates.");
-      return;
-    }
-
-    const x = Number(blockX);
-    const y = Number(blockY);
-    const coordinate = mapJpegBlockCoordinate(
-      inspection,
-      selectedComponent.id,
-      x,
-      y,
-    );
-    if (!coordinate.ok) {
-      setErrorMessage(coordinate.error.message);
-      return;
-    }
-
+  useEffect(() => {
     const currentRequest = ++requestId.current;
-    setIsLoading(true);
-    setErrorMessage("");
-    setValues(null);
-    setMapping(null);
-
-    if (!reader.current) {
-      const created = createJpegCoefficientReader();
-      if (!created.ok) {
-        setErrorMessage(created.error.message);
+    void (async () => {
+      setValues(null);
+      setErrorMessage("");
+      if (!selectedBlock) {
         setIsLoading(false);
         return;
       }
-      reader.current = created.value;
-    }
 
-    try {
-      const opened = await reader.current.open(bytes);
-      if (currentRequest !== requestId.current) return;
-      if (!opened.ok) {
-        reader.current.close();
-        reader.current = null;
-        setErrorMessage(opened.error.message);
-        return;
-      }
-
-      const componentIndex = componentOptions.findIndex(
-        (component) => component.id === selectedComponent.id,
+      const coordinate = mapJpegBlockCoordinate(
+        inspection,
+        selectedBlock.componentId,
+        selectedBlock.blockX,
+        selectedBlock.blockY,
       );
-      const result = await reader.current.readBlock(componentIndex, x, y);
-      if (currentRequest !== requestId.current) return;
-      if (!result.ok) {
-        setErrorMessage(result.error.message);
+      if (!coordinate.ok) {
+        setErrorMessage(coordinate.error.message);
+        setIsLoading(false);
         return;
       }
-      setValues(result.value);
-      setMapping(coordinate.value);
-    } catch {
-      if (currentRequest === requestId.current) {
-        setErrorMessage(
-          "Coefficient inspection stopped unexpectedly. The original JPEG remains unchanged.",
-        );
+
+      setIsLoading(true);
+      if (!reader.current) {
+        const created = createJpegCoefficientReader();
+        if (!created.ok) {
+          setErrorMessage(created.error.message);
+          setIsLoading(false);
+          return;
+        }
+        reader.current = created.value;
       }
-    } finally {
-      if (currentRequest === requestId.current) setIsLoading(false);
-    }
-  }
+
+      try {
+        const opened = await reader.current.open(bytes);
+        if (currentRequest !== requestId.current) return;
+        if (!opened.ok) {
+          reader.current.close();
+          reader.current = null;
+          setErrorMessage(opened.error.message);
+          return;
+        }
+
+        const componentIndex = componentOptions.findIndex(
+          (component) => component.id === selectedBlock.componentId,
+        );
+        if (componentIndex < 0) {
+          setErrorMessage("The selected JPEG component is invalid.");
+          return;
+        }
+        const result = await reader.current.readBlock(
+          componentIndex,
+          selectedBlock.blockX,
+          selectedBlock.blockY,
+        );
+        if (currentRequest !== requestId.current) return;
+        if (!result.ok) {
+          setErrorMessage(result.error.message);
+          return;
+        }
+        setValues(result.value);
+      } catch {
+        if (currentRequest === requestId.current) {
+          setErrorMessage(
+            "Coefficient inspection stopped unexpectedly. The original JPEG remains unchanged.",
+          );
+        }
+      } finally {
+        if (currentRequest === requestId.current) setIsLoading(false);
+      }
+    })();
+
+    return () => {
+      if (requestId.current === currentRequest) requestId.current += 1;
+    };
+  }, [bytes, componentOptions, inspection, selectedBlock]);
 
   return (
-    <section className="inspector-section coefficient-inspector">
+    <div className="coefficient-inspector-content">
       <div className="section-kicker">QUANTIZED DCT COEFFICIENTS</div>
-      <h2>Inspect one block</h2>
+      <h3>Selected 8×8 DCT block</h3>
       <p className="coefficient-description">
         Read-only JPEG-domain inspection through libjpeg-turbo WebAssembly. This
         reads quantized coefficients, not decoded pixel values.
       </p>
-      <label className="coefficient-field">
-        <span>Component</span>
-        <select
-          value={selectedComponent?.id ?? ""}
-          onChange={(event) => {
-            setComponentId(Number(event.currentTarget.value));
-            clearSelection();
-          }}
-        >
-          {componentOptions.map((component, index) => (
-            <option key={component.id} value={component.id}>
-              {getComponentControlLabel(inspection, index)} ·{" "}
-              {component.horizontalSampling}×{component.verticalSampling}{" "}
-              sampling · component {index}
-            </option>
-          ))}
-        </select>
-      </label>
-      <div className="coefficient-coordinate-fields">
-        <label className="coefficient-field">
-          <span>Block X</span>
-          <input
-            type="number"
-            min="0"
-            max={Math.max(0, (selectedBlockGrid?.columns ?? 1) - 1)}
-            step="1"
-            value={blockX}
-            onChange={(event) => {
-              setBlockX(event.currentTarget.value);
-              clearSelection();
-            }}
-          />
-        </label>
-        <label className="coefficient-field">
-          <span>Block Y</span>
-          <input
-            type="number"
-            min="0"
-            max={Math.max(0, (selectedBlockGrid?.rows ?? 1) - 1)}
-            step="1"
-            value={blockY}
-            onChange={(event) => {
-              setBlockY(event.currentTarget.value);
-              clearSelection();
-            }}
-          />
-        </label>
-      </div>
-      <button
-        className="coefficient-read-button"
-        type="button"
-        disabled={isLoading}
-        onClick={() => void inspectSelectedBlock()}
-      >
-        {isLoading ? "Reading coefficients…" : "Read selected block"}
-      </button>
+      {selectedBlock && (
+        <p className="coefficient-mapping">
+          Component ID {selectedBlock.componentId} · block (
+          {selectedBlock.blockX}, {selectedBlock.blockY}) · image samples (
+          {selectedBlock.imageX}, {selectedBlock.imageY}) · MCU (
+          {selectedBlock.mcuX}, {selectedBlock.mcuY}) · block in MCU (
+          {selectedBlock.blockInMcuX}, {selectedBlock.blockInMcuY})
+        </p>
+      )}
+      {isLoading && (
+        <p className="coefficient-note" role="status">
+          Reading quantized coefficients…
+        </p>
+      )}
       {errorMessage && (
         <p className="coefficient-error" role="alert">
           {errorMessage}
-        </p>
-      )}
-      {mapping && (
-        <p className="coefficient-mapping">
-          Block ({mapping.blockX}, {mapping.blockY}) · image samples (
-          {mapping.imageX}, {mapping.imageY}) · MCU ({mapping.mcuX},{" "}
-          {mapping.mcuY}) · block in MCU ({mapping.blockInMcuX},{" "}
-          {mapping.blockInMcuY})
         </p>
       )}
       {values ? (
@@ -837,14 +904,16 @@ function CoefficientInspector({
           </p>
         </>
       ) : (
-        !errorMessage && (
+        !errorMessage &&
+        !isLoading && (
           <p className="coefficient-note">
-            Select a component and block coordinate to inspect its 64 quantized
-            coefficients.
+            {selectedBlock
+              ? "The selected block has no coefficient data to display."
+              : "Activate Inspector and click an 8×8 DCT block to read its 64 quantized coefficients."}
           </p>
         )
       )}
-    </section>
+    </div>
   );
 }
 
@@ -866,9 +935,20 @@ function App() {
   const [showBlocks, setShowBlocks] = useState(false);
   const [showMcus, setShowMcus] = useState(false);
   const [showOriginal, setShowOriginal] = useState(false);
-  const [toolMode, setToolMode] = useState<CanvasTool>("select");
+  const [workspaceState, dispatchWorkspace] = useReducer(
+    workspaceReducer,
+    initialWorkspaceState,
+  );
+  const {
+    activeTool: toolMode,
+    isRightPanelCollapsed,
+    selectedBlock,
+    selectionMask: globalSelectionMask,
+  } = workspaceState;
+  const activeToolPanel = useRef<HTMLDetailsElement>(null);
   const [snapToBlocks, setSnapToBlocks] = useState(false);
   const [componentIndex, setComponentIndex] = useState(0);
+  const [inspectorComponentId, setInspectorComponentId] = useState(0);
   const [frequencyBand, setFrequencyBand] =
     useState<GlitchFrequencyBand>("all");
   const [coefficientDomain, setCoefficientDomain] =
@@ -886,7 +966,6 @@ function App() {
   const [brushSize, setBrushSize] = useState(32);
   const [zoom, setZoom] = useState(1);
   const [selection, setSelection] = useState<SpatialSelection | null>(null);
-  const [paintedMask, setPaintedMask] = useState<SpatialMask | null>(null);
   const [brushDraft, setBrushDraft] = useState<readonly ImagePoint[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
   const requestId = useRef(0);
@@ -1046,9 +1125,10 @@ function App() {
       canRedo: history.value.canRedo,
     });
     setSelection(null);
-    setPaintedMask(null);
+    dispatchWorkspace({ type: "reset-document" });
     setBrushDraft([]);
     setComponentIndex(0);
+    setInspectorComponentId(result.value.inspection.components[0]?.id ?? 0);
     setFrequencyBand("all");
     setCoefficientDomain("ac");
     setCoefficientMode("zero");
@@ -1060,7 +1140,6 @@ function App() {
     setRepeatOffsetY(0);
     setRepeatCount(1);
     setBrushSize(32);
-    setToolMode("select");
     setSnapToBlocks(false);
     setShowBlocks(false);
     setShowMcus(false);
@@ -1122,8 +1201,8 @@ function App() {
   function updateSelection(
     start: { x: number; y: number },
     end: { x: number; y: number },
-  ) {
-    if (!document) return;
+  ): SpatialSelection | null {
+    if (!document) return null;
     const result = createRectangleSelection(
       start.x,
       start.y,
@@ -1134,14 +1213,14 @@ function App() {
     );
     if (!result.ok) {
       setErrorMessage(result.error.message);
-      return;
+      return null;
     }
     let nextSelection = result.value;
     if (snapToBlocks && nextSelection) {
       const component = document.inspection.components[componentIndex];
       if (!component) {
         setErrorMessage("The selected JPEG component is invalid.");
-        return;
+        return null;
       }
       const snapped = snapSelectionToComponentBlocks(
         nextSelection,
@@ -1150,19 +1229,18 @@ function App() {
       );
       if (!snapped.ok) {
         setErrorMessage(snapped.error.message);
-        return;
+        return null;
       }
       nextSelection = snapped.value;
     }
-    setPaintedMask(null);
+    dispatchWorkspace({ type: "set-selection", selection: null });
     setSelection(nextSelection);
-    const history = operationHistory.current;
-    if (history) updateHistory(history.setSelection(nextSelection));
+    return nextSelection;
   }
 
   function onImagePointerDown(event: PointerEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
-    if (toolMode === "pan") {
+    if (toolMode === "hand") {
       const stage = imageStage.current;
       if (!stage) return;
       event.preventDefault();
@@ -1177,18 +1255,51 @@ function App() {
     }
     const point = getImagePoint(event);
     if (!point) return;
+    if (
+      toolMode !== "inspector" &&
+      toolMode !== "select" &&
+      toolMode !== "brush"
+    ) {
+      return;
+    }
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
+    if (toolMode === "inspector") {
+      if (!document) return;
+      const component =
+        document.inspection.components.find(
+          (candidate) => candidate.id === inspectorComponentId,
+        ) ?? document.inspection.components[0];
+      if (!component) {
+        setErrorMessage("The selected JPEG component is invalid.");
+        return;
+      }
+      const coordinate = mapJpegImagePointToBlock(
+        document.inspection,
+        component.id,
+        point.x,
+        point.y,
+      );
+      if (!coordinate.ok) {
+        setErrorMessage(coordinate.error.message);
+        return;
+      }
+      dispatchWorkspace({
+        type: "select-block",
+        block: coordinate.value,
+      });
+      setErrorMessage("");
+      return;
+    }
     if (toolMode === "select") {
       selectionStart.current = point;
       updateSelection(point, point);
       return;
     }
-    setSelection(null);
-    const history = operationHistory.current;
-    if (history) updateHistory(history.setSelection(null));
-    brushPoints.current = [point];
-    setBrushDraft([point]);
+    if (toolMode === "brush") {
+      brushPoints.current = [point];
+      setBrushDraft([point]);
+    }
   }
 
   function onImagePointerMove(event: PointerEvent<HTMLDivElement>) {
@@ -1254,32 +1365,50 @@ function App() {
         setErrorMessage(mask.error.message);
         return;
       }
-      setPaintedMask(mask.value);
+      setSelection(null);
+      dispatchWorkspace({ type: "set-selection", selection: mask.value });
       const history = operationHistory.current;
-      if (history) updateHistory(applyMaskToDocument(history, mask.value));
+      if (history) {
+        const clearedSelection = history.setSelection(null);
+        if (!clearedSelection.ok) {
+          setErrorMessage(clearedSelection.error.message);
+          return;
+        }
+        updateHistory(applyMaskToDocument(history, mask.value));
+      }
       return;
     }
     const start = selectionStart.current;
     const end = getImagePoint(event);
-    if (start && end) updateSelection(start, end);
-    selectionStart.current = null;
-  }
-
-  function addSelectionMask() {
-    if (!document || !selection) return;
-    const mask = createSpatialMask(
-      selection,
-      document.inspection.width,
-      document.inspection.height,
-    );
-    if (!mask.ok) {
-      setErrorMessage(mask.error.message);
-      return;
+    if (start && end) {
+      const nextSelection = updateSelection(start, end);
+      const history = operationHistory.current;
+      if (nextSelection && document) {
+        const mask = createSpatialMask(
+          nextSelection,
+          document.inspection.width,
+          document.inspection.height,
+        );
+        if (!mask.ok) {
+          setErrorMessage(mask.error.message);
+        } else {
+          setSelection(null);
+          dispatchWorkspace({ type: "set-selection", selection: mask.value });
+          if (history) {
+            const selectionResult = history.setSelection(nextSelection);
+            if (!selectionResult.ok) {
+              setErrorMessage(selectionResult.error.message);
+            } else {
+              updateHistory(applyMaskToDocument(history, mask.value));
+            }
+          }
+        }
+      } else {
+        dispatchWorkspace({ type: "set-selection", selection: null });
+        if (history) updateHistory(history.setSelection(null));
+      }
     }
-    setPaintedMask(mask.value);
-    const history = operationHistory.current;
-    if (!history) return;
-    updateHistory(applyMaskToDocument(history, mask.value));
+    selectionStart.current = null;
   }
 
   function activateTool(tool: CanvasTool) {
@@ -1287,29 +1416,14 @@ function App() {
     brushPoints.current = [];
     panStart.current = null;
     setBrushDraft([]);
-    if (tool === "brush") {
-      setSelection(null);
-      const history = operationHistory.current;
-      if (history) updateHistory(history.setSelection(null));
-    }
-    setToolMode(tool);
+    setSelection(null);
+    dispatchWorkspace({ type: "activate-tool", tool });
+    if (activeToolPanel.current) activeToolPanel.current.open = true;
   }
 
   function applyCoefficientOperation() {
     const history = operationHistory.current;
-    let mask = paintedMask ?? historyDocument?.currentState.activeMask ?? null;
-    if (document && selection) {
-      const selectedMask = createSpatialMask(
-        selection,
-        document.inspection.width,
-        document.inspection.height,
-      );
-      if (!selectedMask.ok) {
-        setErrorMessage(selectedMask.error.message);
-        return;
-      }
-      mask = selectedMask.value;
-    }
+    const mask = globalSelectionMask;
     if (!history || !mask) {
       setErrorMessage(
         "Paint a mask or create a selection before applying a coefficient glitch.",
@@ -1351,19 +1465,7 @@ function App() {
 
   function applyBlockPermutation() {
     const history = operationHistory.current;
-    let mask = paintedMask ?? historyDocument?.currentState.activeMask ?? null;
-    if (document && selection) {
-      const selectedMask = createSpatialMask(
-        selection,
-        document.inspection.width,
-        document.inspection.height,
-      );
-      if (!selectedMask.ok) {
-        setErrorMessage(selectedMask.error.message);
-        return;
-      }
-      mask = selectedMask.value;
-    }
+    const mask = globalSelectionMask;
     if (!history || !mask) {
       setErrorMessage(
         "Paint a mask or create a selection before permuting DCT blocks.",
@@ -1403,23 +1505,18 @@ function App() {
 
   function clearSelection() {
     setSelection(null);
+    dispatchWorkspace({ type: "set-selection", selection: null });
     const history = operationHistory.current;
     if (history) updateHistory(history.setSelection(null));
   }
 
   function editMaskOperation(operationId: string) {
-    if (!document || !selection) return;
-    const mask = createSpatialMask(
-      selection,
-      document.inspection.width,
-      document.inspection.height,
-    );
-    if (!mask.ok) {
-      setErrorMessage(mask.error.message);
-      return;
-    }
+    if (!globalSelectionMask) return;
     mutateHistory((history) =>
-      history.editParameters(operationId, spatialMaskParameters(mask.value)),
+      history.editParameters(
+        operationId,
+        spatialMaskParameters(globalSelectionMask),
+      ),
     );
   }
 
@@ -1475,11 +1572,16 @@ function App() {
     if (files[0]) void loadFile(files[0]);
   }
 
-  const activeMaskForOverlay =
-    paintedMask ?? historyDocument?.currentState.activeMask ?? null;
+  const activeMaskForOverlay = globalSelectionMask;
+  const visibleSelection =
+    selection ?? getRectangleSelection(globalSelectionMask);
+  const activeToolLabel =
+    TOOL_GROUPS.flatMap((group) => group.tools).find(
+      (tool) => tool.id === toolMode,
+    )?.label ?? "Tool settings";
 
   return (
-    <main className="workspace">
+    <main className={`workspace ${document ? "has-tool-bar" : ""}`}>
       <header className="topbar">
         <a className="brand" href="/" aria-label="JPEG Glitch Editor home">
           <span className="brand-mark" aria-hidden="true">
@@ -1552,8 +1654,52 @@ function App() {
         </div>
       </header>
 
+      {document && (
+        <nav className="tool-bar" aria-label="Editing tools">
+          {TOOL_GROUPS.map((group) => (
+            <div
+              className="tool-group"
+              key={group.label}
+              role="group"
+              aria-label={group.label}
+            >
+              <span className="tool-group-label">{group.label}</span>
+              <div className="tool-group-buttons">
+                {group.tools.map((tool) => (
+                  <button
+                    className={`tool-button ${toolMode === tool.id ? "is-active" : ""}`}
+                    key={tool.id}
+                    type="button"
+                    aria-label={tool.label}
+                    aria-pressed={toolMode === tool.id}
+                    title={tool.label}
+                    onClick={() => activateTool(tool.id)}
+                  >
+                    <svg
+                      className="tool-icon"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.7"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      {getToolIconPaths(tool.id).map((path) => (
+                        <path d={path} key={path} />
+                      ))}
+                    </svg>
+                    <span>{tool.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </nav>
+      )}
+
       <section
-        className={`editor ${isDragging ? "is-dragging" : ""}`}
+        className={`editor ${isDragging ? "is-dragging" : ""} ${isRightPanelCollapsed ? "is-panel-collapsed" : ""}`}
         aria-label="JPEG workspace"
         onDragEnter={onDragEnter}
         onDragOver={(event) => event.preventDefault()}
@@ -1607,30 +1753,6 @@ function App() {
                   </p>
                 </div>
                 <div className="overlay-controls">
-                  <button
-                    className={`tool-toggle ${toolMode === "select" ? "is-active" : ""}`}
-                    type="button"
-                    aria-pressed={toolMode === "select"}
-                    onClick={() => activateTool("select")}
-                  >
-                    Select
-                  </button>
-                  <button
-                    className={`tool-toggle ${toolMode === "brush" ? "is-active" : ""}`}
-                    type="button"
-                    aria-pressed={toolMode === "brush"}
-                    onClick={() => activateTool("brush")}
-                  >
-                    Brush
-                  </button>
-                  <button
-                    className={`tool-toggle ${toolMode === "pan" ? "is-active" : ""}`}
-                    type="button"
-                    aria-pressed={toolMode === "pan"}
-                    onClick={() => activateTool("pan")}
-                  >
-                    Hand
-                  </button>
                   <button
                     className="tool-toggle"
                     type="button"
@@ -1700,7 +1822,7 @@ function App() {
               </div>
               <div className="image-stage" ref={imageStage}>
                 <div
-                  className={`preview-image-wrap ${toolMode === "select" ? "is-selecting" : ""} ${toolMode === "brush" ? "is-brushing" : ""} ${toolMode === "pan" ? "is-panning" : ""}`}
+                  className={`preview-image-wrap ${toolMode === "select" ? "is-selecting" : ""} ${toolMode === "brush" ? "is-brushing" : ""} ${toolMode === "inspector" ? "is-inspecting" : ""} ${toolMode === "hand" ? "is-panning" : ""}`}
                   style={{ transform: `scale(${zoom})` }}
                   onPointerDown={onImagePointerDown}
                   onPointerMove={onImagePointerMove}
@@ -1725,10 +1847,11 @@ function App() {
                     inspection={document.inspection}
                     showBlocks={showBlocks}
                     showMcus={showMcus}
-                    selection={selection}
+                    selection={visibleSelection}
                     mask={activeMaskForOverlay}
                     brushDraft={brushDraft}
                     brushRadius={brushSize / 2}
+                    selectedBlock={selectedBlock}
                   />
                 </div>
               </div>
@@ -1753,613 +1876,743 @@ function App() {
         </div>
 
         <aside className="side-panel">
-          {errorMessage && (
-            <div className="error-banner" role="alert">
-              <span className="error-icon" aria-hidden="true">
-                !
-              </span>
-              <span>{errorMessage}</span>
-            </div>
-          )}
-          {document ? (
-            <>
-              <section className="inspector-section selection-panel">
-                <div className="section-kicker">FIRST GLITCH LAB · DCT</div>
-                <h2>Coefficient experiments</h2>
-                <p className="operation-description">
-                  Paint or select in image-pixel coordinates. The mask is mapped
-                  to intersecting 8×8 DCT blocks of one selected component.
-                  These operations change quantized coefficients and create a
-                  newly encoded JPEG; the original JPEG bytes stay untouched.
-                </p>
-                <label className="coefficient-field">
-                  <span>Component</span>
-                  <select
-                    value={componentIndex}
-                    onChange={(event) =>
-                      setComponentIndex(Number(event.currentTarget.value))
-                    }
-                  >
-                    {document.inspection.components.map((component, index) => (
-                      <option key={component.id} value={index}>
-                        {getComponentControlLabel(document.inspection, index)} ·{" "}
-                        {component.horizontalSampling}×
-                        {component.verticalSampling} sampling
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <p className="coefficient-note">
-                  Y/Cb/Cr labels are common ID conventions, not guaranteed color
-                  metadata. Component index and sampling factors are
-                  authoritative. Select Cb or Cr to experiment on chroma
-                  coefficients independently.
-                </p>
-                <label className="coefficient-field tool-field">
-                  <span>Coefficient domain</span>
-                  <select
-                    value={coefficientDomain}
-                    disabled={
-                      coefficientMode === "offset" ||
-                      coefficientMode === "invert" ||
-                      coefficientMode === "isolate"
-                    }
-                    onChange={(event) => {
-                      const next = event.currentTarget.value;
-                      if (next === "dc" || next === "ac") {
-                        setCoefficientDomain(next);
-                        if (next === "dc") setFrequencyBand("all");
-                      }
-                    }}
-                  >
-                    <option value="ac">AC coefficients</option>
-                    <option value="dc">DC coefficients</option>
-                  </select>
-                </label>
-                <label className="coefficient-field tool-field">
-                  <span>Operation</span>
-                  <select
-                    value={coefficientMode}
-                    onChange={(event) => {
-                      const next = event.currentTarget.value;
-                      if (
-                        next === "zero" ||
-                        next === "scale" ||
-                        next === "randomize" ||
-                        next === "offset" ||
-                        next === "invert" ||
-                        next === "isolate"
-                      ) {
-                        setCoefficientMode(next);
-                        if (next === "offset") {
-                          setCoefficientDomain("dc");
-                          setFrequencyBand("all");
-                        } else if (next === "invert" || next === "isolate") {
-                          setCoefficientDomain("ac");
-                          if (next === "isolate" && frequencyBand === "all") {
-                            setFrequencyBand("low");
-                          }
-                        }
-                      }
-                    }}
-                  >
-                    <option value="zero">Zero selected coefficients</option>
-                    <option value="scale">Scale coefficients</option>
-                    <option value="randomize">Randomize coefficients</option>
-                    <option value="offset">Add DC offset</option>
-                    <option value="invert">Invert AC signs</option>
-                    <option value="isolate">
-                      Keep selected AC frequency band
-                    </option>
-                  </select>
-                </label>
-                <label className="coefficient-field tool-field">
-                  <span>
-                    {coefficientDomain === "ac" ? "AC frequency band" : "DC"}
-                  </span>
-                  <select
-                    value={frequencyBand}
-                    disabled={coefficientDomain === "dc"}
-                    onChange={(event) => {
-                      const next = GLITCH_FREQUENCY_BANDS.find(
-                        (band) => band === event.currentTarget.value,
-                      );
-                      if (next) setFrequencyBand(next);
-                    }}
-                  >
-                    {GLITCH_FREQUENCY_BANDS.map((band) => {
-                      const range = DCT_FREQUENCY_BAND_RANGES[band];
-                      return (
-                        <option
-                          key={band}
-                          value={band}
-                          disabled={
-                            coefficientMode === "isolate" && band === "all"
-                          }
-                        >
-                          {band === "all" ? "All AC" : band} · u+v{" "}
-                          {range.minimum}–{range.maximum}
-                        </option>
-                      );
-                    })}
-                  </select>
-                </label>
-                {["scale", "randomize", "offset"].includes(coefficientMode) && (
-                  <label className="coefficient-field tool-field">
-                    <span>
-                      {coefficientMode === "scale"
-                        ? "Scale multiplier"
-                        : coefficientMode === "randomize"
-                          ? "Random coefficient range"
-                          : "DC offset"}
-                    </span>
-                    <input
-                      type="number"
-                      min={
-                        coefficientMode === "scale"
-                          ? "-8"
-                          : coefficientMode === "offset"
-                            ? "-2047"
-                            : "1"
-                      }
-                      max={
-                        coefficientMode === "scale"
-                          ? "8"
-                          : coefficientMode === "offset"
-                            ? "2047"
-                            : "2047"
-                      }
-                      step={coefficientMode === "scale" ? "0.1" : "1"}
-                      value={coefficientStrength}
-                      onChange={(event) =>
-                        setCoefficientStrength(
-                          Number(event.currentTarget.value),
-                        )
-                      }
-                    />
-                  </label>
-                )}
-                {coefficientMode === "randomize" && (
-                  <label className="coefficient-field tool-field">
-                    <span>Deterministic seed</span>
-                    <input
-                      type="number"
-                      min="0"
-                      max="4294967295"
-                      step="1"
-                      value={coefficientSeed}
-                      onChange={(event) =>
-                        setCoefficientSeed(Number(event.currentTarget.value))
-                      }
-                    />
-                  </label>
-                )}
-                <label className="coefficient-field tool-field">
-                  <span>Brush diameter · {brushSize} image pixels</span>
-                  <input
-                    type="range"
-                    min="4"
-                    max="256"
-                    step="4"
-                    value={brushSize}
-                    onChange={(event) =>
-                      setBrushSize(Number(event.currentTarget.value))
-                    }
-                  />
-                </label>
-                <label className="snap-control">
-                  <input
-                    type="checkbox"
-                    checked={snapToBlocks}
-                    onChange={(event) =>
-                      setSnapToBlocks(event.currentTarget.checked)
-                    }
-                  />
-                  <span>Snap selection to component DCT blocks</span>
-                </label>
-                {selection ? (
-                  <p className="selection-readout">
-                    x {selection.x.toFixed(1)} · y {selection.y.toFixed(1)} ·{" "}
-                    {selection.width.toFixed(1)} × {selection.height.toFixed(1)}{" "}
-                    image pixels
-                  </p>
-                ) : (
-                  <p className="operation-empty">
-                    Use Select to draw a region or Brush to paint a mask.
-                  </p>
-                )}
-                {activeMaskForOverlay && (
-                  <p className="selection-readout">
-                    {describeMask(activeMaskForOverlay)}
-                  </p>
-                )}
-                <div className="operation-actions">
-                  <button
-                    className="operation-button"
-                    type="button"
-                    disabled={!selection}
-                    onClick={addSelectionMask}
-                  >
-                    Add selection mask
-                  </button>
-                  <button
-                    className="operation-button"
-                    type="button"
-                    disabled={
-                      (!selection &&
-                        !paintedMask &&
-                        !historyDocument?.currentState.activeMask) ||
-                      isEncoding
-                    }
-                    onClick={applyCoefficientOperation}
-                  >
-                    Apply {coefficientMode} to selected {coefficientDomain}
-                  </button>
-                  <button
-                    className="operation-button secondary"
-                    type="button"
-                    disabled={!selection && !paintedMask}
-                    onClick={clearSelection}
-                  >
-                    Clear selection
-                  </button>
-                </div>
-              </section>
-              <section className="inspector-section">
-                <div className="section-kicker">BLOCK DUPLICATE / REPEAT</div>
-                <h2>Repeat one DCT block</h2>
-                <p className="operation-description">
-                  Copies the selected component's 8×8 quantized coefficient
-                  block to repeated block coordinates. It does not copy JPEG
-                  bytes or an MCU.
-                </p>
-                <div className="coefficient-coordinate-fields">
-                  <label className="coefficient-field">
-                    <span>Source block X</span>
-                    <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={repeatSourceX}
-                      onChange={(event) =>
-                        setRepeatSourceX(Number(event.currentTarget.value))
-                      }
-                    />
-                  </label>
-                  <label className="coefficient-field">
-                    <span>Source block Y</span>
-                    <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={repeatSourceY}
-                      onChange={(event) =>
-                        setRepeatSourceY(Number(event.currentTarget.value))
-                      }
-                    />
-                  </label>
-                </div>
-                <div className="coefficient-coordinate-fields">
-                  <label className="coefficient-field">
-                    <span>Offset X · blocks</span>
-                    <input
-                      type="number"
-                      step="1"
-                      value={repeatOffsetX}
-                      onChange={(event) =>
-                        setRepeatOffsetX(Number(event.currentTarget.value))
-                      }
-                    />
-                  </label>
-                  <label className="coefficient-field">
-                    <span>Offset Y · blocks</span>
-                    <input
-                      type="number"
-                      step="1"
-                      value={repeatOffsetY}
-                      onChange={(event) =>
-                        setRepeatOffsetY(Number(event.currentTarget.value))
-                      }
-                    />
-                  </label>
-                </div>
-                <label className="coefficient-field tool-field">
-                  <span>Copies</span>
-                  <input
-                    type="number"
-                    min="1"
-                    max="256"
-                    step="1"
-                    value={repeatCount}
-                    onChange={(event) =>
-                      setRepeatCount(Number(event.currentTarget.value))
-                    }
-                  />
-                </label>
-                <button
-                  className="operation-button"
-                  type="button"
-                  disabled={isEncoding}
-                  onClick={applyBlockRepeat}
-                >
-                  Duplicate / repeat block
-                </button>
-              </section>
-              <section className="inspector-section">
-                <div className="section-kicker">BLOCK PERMUTATION</div>
-                <h2>Shuffle selected DCT blocks</h2>
-                <p className="operation-description">
-                  Randomly permutes whole quantized 8×8 blocks, including DC,
-                  within the selected component and mask. Every selected block
-                  is used once; blocks outside the mask are unchanged. A block
-                  is selected at 50% mask coverage or greater. Rectangles use
-                  area; brush masks use an 8×8 coverage sample.
-                </p>
-                <label className="coefficient-field tool-field">
-                  <span>Deterministic seed</span>
-                  <input
-                    type="number"
-                    min="0"
-                    max="4294967295"
-                    step="1"
-                    value={permutationSeed}
-                    onChange={(event) =>
-                      setPermutationSeed(Number(event.currentTarget.value))
-                    }
-                  />
-                </label>
-                <button
-                  className="operation-button"
-                  type="button"
-                  disabled={
-                    (!selection &&
-                      !paintedMask &&
-                      !historyDocument?.currentState.activeMask) ||
-                    isEncoding
-                  }
-                  onClick={applyBlockPermutation}
-                >
-                  Permute blocks in mask
-                </button>
-              </section>
-              <QuantizationMatrixEditor
-                key={`${document.originalAsset.sha256}-${historyDocument?.revision ?? 0}`}
-                quantizationTables={currentQuantizationTables}
-                disabled={isEncoding}
-                onApply={applyQuantizationEdit}
-              />
-              <section className="inspector-section operation-stack">
-                <div className="section-heading">
-                  <div>
-                    <div className="section-kicker">
-                      NON-DESTRUCTIVE HISTORY
-                    </div>
-                    <h2>Operation stack</h2>
-                  </div>
-                  <span className="count-badge">
-                    {historyDocument?.operations.length ?? 0}
-                  </span>
-                </div>
-                <p className="operation-description">
-                  Enabled operations replay in order from the original document.
-                  Reordering recomputes later state.
-                </p>
-                {historyDocument?.operations.length ? (
-                  <ol className="operation-list">
-                    {historyDocument.operations.map((operation, index) => {
-                      const mask = getMaskFromParameters(operation.parameters);
-                      const parameters =
-                        typeof operation.parameters === "object" &&
-                        operation.parameters !== null &&
-                        !Array.isArray(operation.parameters)
-                          ? operation.parameters
-                          : null;
-                      const operationKind = parameters
-                        ? Reflect.get(parameters, "kind")
-                        : undefined;
-                      return (
-                        <li
-                          className="operation-entry"
-                          key={operation.id}
-                          data-enabled={operation.enabled}
-                        >
-                          <div className="operation-entry-heading">
-                            <label className="operation-enabled">
-                              <input
-                                type="checkbox"
-                                checked={operation.enabled}
-                                onChange={(event) =>
-                                  mutateHistory((history) =>
-                                    history.setEnabled(
-                                      operation.id,
-                                      event.currentTarget.checked,
-                                    ),
-                                  )
-                                }
-                              />
-                              <span>
-                                {operation.type === "spatial/apply-mask"
-                                  ? "Spatial mask"
-                                  : operationKind === "coefficients"
-                                    ? "Coefficient glitch"
-                                    : operationKind === "block-repeat"
-                                      ? "Block duplicate / repeat"
-                                      : operationKind === "block-permutation"
-                                        ? "Block permutation"
-                                        : operationKind === "quantization"
-                                          ? "DQT matrix edit"
-                                          : operation.type}
-                              </span>
-                            </label>
-                            <span className="operation-status">
-                              {operation.status}
-                            </span>
-                          </div>
-                          {mask && (
-                            <p className="operation-parameters">
-                              {describeMask(mask)}
-                            </p>
-                          )}
-                          {parameters && operationKind === "coefficients" && (
-                            <p className="operation-parameters">
-                              Component{" "}
-                              {Reflect.get(parameters, "componentIndex")} ·{" "}
-                              {Reflect.get(parameters, "mode")}{" "}
-                              {Reflect.get(parameters, "domain")} ·{" "}
-                              {Reflect.get(parameters, "frequencyBand")} · seed{" "}
-                              {Reflect.get(parameters, "seed")}
-                            </p>
-                          )}
-                          {parameters && operationKind === "block-repeat" && (
-                            <p className="operation-parameters">
-                              Component{" "}
-                              {Reflect.get(parameters, "componentIndex")} ·
-                              source ({Reflect.get(parameters, "sourceX")},{" "}
-                              {Reflect.get(parameters, "sourceY")}) · offset (
-                              {Reflect.get(parameters, "offsetX")},{" "}
-                              {Reflect.get(parameters, "offsetY")}) ·{" "}
-                              {Reflect.get(parameters, "repetitions")} copies
-                            </p>
-                          )}
-                          {parameters &&
-                            operationKind === "block-permutation" && (
-                              <p className="operation-parameters">
-                                Component{" "}
-                                {Reflect.get(parameters, "componentIndex")} ·
-                                seed {Reflect.get(parameters, "seed")} ·
-                                Fisher–Yates
-                              </p>
-                            )}
-                          {parameters && operationKind === "quantization" && (
-                            <p className="operation-parameters">
-                              DQT {Reflect.get(parameters, "tableId")} ·{" "}
-                              {Reflect.get(parameters, "semantics")} ·{" "}
-                              {Reflect.get(parameters, "pattern")} · seed{" "}
-                              {Reflect.get(parameters, "seed")}
-                            </p>
-                          )}
-                          <div className="operation-actions">
-                            <button
-                              className="operation-button secondary"
-                              type="button"
-                              disabled={index === 0}
-                              aria-label="Move operation up"
-                              onClick={() =>
-                                mutateHistory((history) =>
-                                  history.move(operation.id, index - 1),
-                                )
-                              }
-                            >
-                              ↑
-                            </button>
-                            <button
-                              className="operation-button secondary"
-                              type="button"
-                              disabled={
-                                index ===
-                                (historyDocument?.operations.length ?? 0) - 1
-                              }
-                              aria-label="Move operation down"
-                              onClick={() =>
-                                mutateHistory((history) =>
-                                  history.move(operation.id, index + 1),
-                                )
-                              }
-                            >
-                              ↓
-                            </button>
-                            <button
-                              className="operation-button secondary"
-                              type="button"
-                              disabled={
-                                !selection ||
-                                operation.type !== "spatial/apply-mask"
-                              }
-                              onClick={() => editMaskOperation(operation.id)}
-                            >
-                              Update from selection
-                            </button>
-                            <button
-                              className="operation-button danger"
-                              type="button"
-                              aria-label="Delete operation"
-                              onClick={() =>
-                                mutateHistory((history) =>
-                                  history.delete(operation.id),
-                                )
-                              }
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ol>
-                ) : (
-                  <p className="operation-empty">
-                    No operations yet. Add a mask from a spatial selection.
-                  </p>
-                )}
-                <button
-                  className="operation-reset"
-                  type="button"
-                  disabled={!historyDocument?.operations.length}
-                  onClick={() => {
-                    const history = operationHistory.current;
-                    if (history) updateHistory(history.resetToOriginal());
-                    clearSelection();
-                  }}
-                >
-                  Reset to original
-                </button>
-              </section>
-              <div className="source-card">
-                <div className="section-kicker">ORIGINAL ASSET</div>
-                <p
-                  className="source-name"
-                  title={document.originalAsset.fileName}
-                >
-                  {document.originalAsset.fileName}
-                </p>
-                <p className="source-size">
-                  {document.originalAsset.byteLength.toLocaleString()} bytes
-                  <span>·</span>
-                  Original bytes held unchanged in memory
-                </p>
-                <div className="digest-label">SHA-256</div>
-                <code className="digest-value">
-                  {document.originalAsset.sha256}
-                </code>
+          <button
+            className="side-panel-toggle"
+            type="button"
+            aria-expanded={!isRightPanelCollapsed}
+            aria-controls="side-panel-content"
+            aria-label={
+              isRightPanelCollapsed
+                ? "Expand right panel"
+                : "Collapse right panel"
+            }
+            onClick={() =>
+              dispatchWorkspace({
+                type: "set-panel-collapsed",
+                collapsed: !isRightPanelCollapsed,
+              })
+            }
+          >
+            <span aria-hidden="true">{isRightPanelCollapsed ? "‹" : "›"}</span>
+          </button>
+          <div
+            className="side-panel-content"
+            id="side-panel-content"
+            aria-hidden={isRightPanelCollapsed}
+          >
+            {errorMessage && (
+              <div className="error-banner" role="alert">
+                <span className="error-icon" aria-hidden="true">
+                  !
+                </span>
+                <span>{errorMessage}</span>
               </div>
-              <CoefficientInspector
-                key={document.originalAsset.sha256}
-                asset={document.originalAsset}
-                inspection={document.inspection}
-              />
-              <MetadataInspector
-                inspection={document.inspection}
-                quantizationTables={currentQuantizationTables}
-              />
-            </>
-          ) : (
-            <div className="inspector-empty">
-              <span className="empty-index">01 / INSPECT</span>
-              <h2>JPEG structure</h2>
-              <p>
-                Dimensions, coding process, component sampling, table
-                assignments, marker boundaries, and block geometry will appear
-                here.
-              </p>
-              {errorMessage && (
-                <p className="support-note">
-                  Supported for coefficient inspection: 8-bit baseline
-                  sequential Huffman JPEG, grayscale or three-component, single
-                  interleaved scan.
+            )}
+            {document ? (
+              <>
+                <CollapsibleSection
+                  id="active-tool"
+                  title={`${activeToolLabel} settings`}
+                  kicker="ACTIVE TOOL"
+                  className="active-tool-panel"
+                  detailsRef={activeToolPanel}
+                >
+                  {toolMode === "hand" && (
+                    <section className="inspector-section">
+                      <p className="operation-description">
+                        Drag the canvas to pan. Use the canvas controls to zoom
+                        or fit the image.
+                      </p>
+                    </section>
+                  )}
+                  {toolMode === "inspector" && (
+                    <section className="inspector-section">
+                      <p className="operation-description">
+                        Click an 8×8 DCT block to highlight it and read its
+                        quantized coefficients in JPEG INSPECTOR. This does not
+                        change the global pixel-space selection.
+                      </p>
+                      <label className="coefficient-field">
+                        <span>Component to inspect</span>
+                        <select
+                          value={inspectorComponentId}
+                          onChange={(event) => {
+                            setInspectorComponentId(
+                              Number(event.currentTarget.value),
+                            );
+                            dispatchWorkspace({
+                              type: "select-block",
+                              block: null,
+                            });
+                          }}
+                        >
+                          {document.inspection.components.map(
+                            (component, index) => (
+                              <option key={component.id} value={component.id}>
+                                {getComponentControlLabel(
+                                  document.inspection,
+                                  index,
+                                )}{" "}
+                                · {component.horizontalSampling}×
+                                {component.verticalSampling} sampling
+                              </option>
+                            ),
+                          )}
+                        </select>
+                      </label>
+                      {selectedBlock && (
+                        <p className="selection-readout">
+                          Component ID {selectedBlock.componentId} · block (
+                          {selectedBlock.blockX}, {selectedBlock.blockY})
+                        </p>
+                      )}
+                    </section>
+                  )}
+                  {(toolMode === "brush" || toolMode === "select") && (
+                    <section className="inspector-section selection-panel">
+                      <div className="section-kicker">
+                        FIRST GLITCH LAB · DCT
+                      </div>
+                      <h2>Coefficient experiments</h2>
+                      <p className="operation-description">
+                        Paint or select in image-pixel coordinates. The mask is
+                        mapped to intersecting 8×8 DCT blocks of one selected
+                        component. These operations change quantized
+                        coefficients and create a newly encoded JPEG; the
+                        original JPEG bytes stay untouched.
+                      </p>
+                      <label className="coefficient-field">
+                        <span>Component</span>
+                        <select
+                          value={componentIndex}
+                          onChange={(event) =>
+                            setComponentIndex(Number(event.currentTarget.value))
+                          }
+                        >
+                          {document.inspection.components.map(
+                            (component, index) => (
+                              <option key={component.id} value={index}>
+                                {getComponentControlLabel(
+                                  document.inspection,
+                                  index,
+                                )}{" "}
+                                · {component.horizontalSampling}×
+                                {component.verticalSampling} sampling
+                              </option>
+                            ),
+                          )}
+                        </select>
+                      </label>
+                      <p className="coefficient-note">
+                        Y/Cb/Cr labels are common ID conventions, not guaranteed
+                        color metadata. Component index and sampling factors are
+                        authoritative. Select Cb or Cr to experiment on chroma
+                        coefficients independently.
+                      </p>
+                      <label className="coefficient-field tool-field">
+                        <span>Coefficient domain</span>
+                        <select
+                          value={coefficientDomain}
+                          disabled={
+                            coefficientMode === "offset" ||
+                            coefficientMode === "invert" ||
+                            coefficientMode === "isolate"
+                          }
+                          onChange={(event) => {
+                            const next = event.currentTarget.value;
+                            if (next === "dc" || next === "ac") {
+                              setCoefficientDomain(next);
+                              if (next === "dc") setFrequencyBand("all");
+                            }
+                          }}
+                        >
+                          <option value="ac">AC coefficients</option>
+                          <option value="dc">DC coefficients</option>
+                        </select>
+                      </label>
+                      <label className="coefficient-field tool-field">
+                        <span>Operation</span>
+                        <select
+                          value={coefficientMode}
+                          onChange={(event) => {
+                            const next = event.currentTarget.value;
+                            if (
+                              next === "zero" ||
+                              next === "scale" ||
+                              next === "randomize" ||
+                              next === "offset" ||
+                              next === "invert" ||
+                              next === "isolate"
+                            ) {
+                              setCoefficientMode(next);
+                              if (next === "offset") {
+                                setCoefficientDomain("dc");
+                                setFrequencyBand("all");
+                              } else if (
+                                next === "invert" ||
+                                next === "isolate"
+                              ) {
+                                setCoefficientDomain("ac");
+                                if (
+                                  next === "isolate" &&
+                                  frequencyBand === "all"
+                                ) {
+                                  setFrequencyBand("low");
+                                }
+                              }
+                            }
+                          }}
+                        >
+                          <option value="zero">
+                            Zero selected coefficients
+                          </option>
+                          <option value="scale">Scale coefficients</option>
+                          <option value="randomize">
+                            Randomize coefficients
+                          </option>
+                          <option value="offset">Add DC offset</option>
+                          <option value="invert">Invert AC signs</option>
+                          <option value="isolate">
+                            Keep selected AC frequency band
+                          </option>
+                        </select>
+                      </label>
+                      <label className="coefficient-field tool-field">
+                        <span>
+                          {coefficientDomain === "ac"
+                            ? "AC frequency band"
+                            : "DC"}
+                        </span>
+                        <select
+                          value={frequencyBand}
+                          disabled={coefficientDomain === "dc"}
+                          onChange={(event) => {
+                            const next = GLITCH_FREQUENCY_BANDS.find(
+                              (band) => band === event.currentTarget.value,
+                            );
+                            if (next) setFrequencyBand(next);
+                          }}
+                        >
+                          {GLITCH_FREQUENCY_BANDS.map((band) => {
+                            const range = DCT_FREQUENCY_BAND_RANGES[band];
+                            return (
+                              <option
+                                key={band}
+                                value={band}
+                                disabled={
+                                  coefficientMode === "isolate" &&
+                                  band === "all"
+                                }
+                              >
+                                {band === "all" ? "All AC" : band} · u+v{" "}
+                                {range.minimum}–{range.maximum}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </label>
+                      {["scale", "randomize", "offset"].includes(
+                        coefficientMode,
+                      ) && (
+                        <label className="coefficient-field tool-field">
+                          <span>
+                            {coefficientMode === "scale"
+                              ? "Scale multiplier"
+                              : coefficientMode === "randomize"
+                                ? "Random coefficient range"
+                                : "DC offset"}
+                          </span>
+                          <input
+                            type="number"
+                            min={
+                              coefficientMode === "scale"
+                                ? "-8"
+                                : coefficientMode === "offset"
+                                  ? "-2047"
+                                  : "1"
+                            }
+                            max={
+                              coefficientMode === "scale"
+                                ? "8"
+                                : coefficientMode === "offset"
+                                  ? "2047"
+                                  : "2047"
+                            }
+                            step={coefficientMode === "scale" ? "0.1" : "1"}
+                            value={coefficientStrength}
+                            onChange={(event) =>
+                              setCoefficientStrength(
+                                Number(event.currentTarget.value),
+                              )
+                            }
+                          />
+                        </label>
+                      )}
+                      {coefficientMode === "randomize" && (
+                        <label className="coefficient-field tool-field">
+                          <span>Deterministic seed</span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="4294967295"
+                            step="1"
+                            value={coefficientSeed}
+                            onChange={(event) =>
+                              setCoefficientSeed(
+                                Number(event.currentTarget.value),
+                              )
+                            }
+                          />
+                        </label>
+                      )}
+                      {toolMode === "brush" && (
+                        <label className="coefficient-field tool-field">
+                          <span>Brush diameter · {brushSize} image pixels</span>
+                          <input
+                            type="range"
+                            min="4"
+                            max="256"
+                            step="4"
+                            value={brushSize}
+                            onChange={(event) =>
+                              setBrushSize(Number(event.currentTarget.value))
+                            }
+                          />
+                        </label>
+                      )}
+                      {toolMode === "select" && (
+                        <label className="snap-control">
+                          <input
+                            type="checkbox"
+                            checked={snapToBlocks}
+                            onChange={(event) =>
+                              setSnapToBlocks(event.currentTarget.checked)
+                            }
+                          />
+                          <span>Snap selection to component DCT blocks</span>
+                        </label>
+                      )}
+                      {visibleSelection ? (
+                        <p className="selection-readout">
+                          x {visibleSelection.x.toFixed(1)} · y{" "}
+                          {visibleSelection.y.toFixed(1)} ·{" "}
+                          {visibleSelection.width.toFixed(1)} ×{" "}
+                          {visibleSelection.height.toFixed(1)} image pixels
+                        </p>
+                      ) : (
+                        <p className="operation-empty">
+                          Use Select to draw a region or Brush to paint a mask.
+                        </p>
+                      )}
+                      {activeMaskForOverlay && (
+                        <p className="selection-readout">
+                          {describeMask(activeMaskForOverlay)}
+                        </p>
+                      )}
+                      <div className="operation-actions">
+                        <button
+                          className="operation-button"
+                          type="button"
+                          disabled={!globalSelectionMask || isEncoding}
+                          onClick={applyCoefficientOperation}
+                        >
+                          Apply {coefficientMode} to selected{" "}
+                          {coefficientDomain}
+                        </button>
+                        <button
+                          className="operation-button secondary"
+                          type="button"
+                          disabled={!selection && !globalSelectionMask}
+                          onClick={clearSelection}
+                        >
+                          Clear selection
+                        </button>
+                      </div>
+                    </section>
+                  )}
+                  {toolMode === "repeat-block" && (
+                    <section className="inspector-section">
+                      <div className="section-kicker">
+                        BLOCK DUPLICATE / REPEAT
+                      </div>
+                      <h2>Repeat one DCT block</h2>
+                      <p className="operation-description">
+                        Copies the selected component's 8×8 quantized
+                        coefficient block to repeated block coordinates. It does
+                        not copy JPEG bytes or an MCU.
+                      </p>
+                      <div className="coefficient-coordinate-fields">
+                        <label className="coefficient-field">
+                          <span>Source block X</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={repeatSourceX}
+                            onChange={(event) =>
+                              setRepeatSourceX(
+                                Number(event.currentTarget.value),
+                              )
+                            }
+                          />
+                        </label>
+                        <label className="coefficient-field">
+                          <span>Source block Y</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={repeatSourceY}
+                            onChange={(event) =>
+                              setRepeatSourceY(
+                                Number(event.currentTarget.value),
+                              )
+                            }
+                          />
+                        </label>
+                      </div>
+                      <div className="coefficient-coordinate-fields">
+                        <label className="coefficient-field">
+                          <span>Offset X · blocks</span>
+                          <input
+                            type="number"
+                            step="1"
+                            value={repeatOffsetX}
+                            onChange={(event) =>
+                              setRepeatOffsetX(
+                                Number(event.currentTarget.value),
+                              )
+                            }
+                          />
+                        </label>
+                        <label className="coefficient-field">
+                          <span>Offset Y · blocks</span>
+                          <input
+                            type="number"
+                            step="1"
+                            value={repeatOffsetY}
+                            onChange={(event) =>
+                              setRepeatOffsetY(
+                                Number(event.currentTarget.value),
+                              )
+                            }
+                          />
+                        </label>
+                      </div>
+                      <label className="coefficient-field tool-field">
+                        <span>Copies</span>
+                        <input
+                          type="number"
+                          min="1"
+                          max="256"
+                          step="1"
+                          value={repeatCount}
+                          onChange={(event) =>
+                            setRepeatCount(Number(event.currentTarget.value))
+                          }
+                        />
+                      </label>
+                      <button
+                        className="operation-button"
+                        type="button"
+                        disabled={isEncoding}
+                        onClick={applyBlockRepeat}
+                      >
+                        Duplicate / repeat block
+                      </button>
+                    </section>
+                  )}
+                  {toolMode === "shuffle" && (
+                    <section className="inspector-section">
+                      <div className="section-kicker">BLOCK PERMUTATION</div>
+                      <h2>Shuffle selected DCT blocks</h2>
+                      <p className="operation-description">
+                        Randomly permutes whole quantized 8×8 blocks, including
+                        DC, within the selected component and mask. Every
+                        selected block is used once; blocks outside the mask are
+                        unchanged. A block is selected at 50% mask coverage or
+                        greater. Rectangles use area; brush masks use an 8×8
+                        coverage sample.
+                      </p>
+                      <label className="coefficient-field tool-field">
+                        <span>Deterministic seed</span>
+                        <input
+                          type="number"
+                          min="0"
+                          max="4294967295"
+                          step="1"
+                          value={permutationSeed}
+                          onChange={(event) =>
+                            setPermutationSeed(
+                              Number(event.currentTarget.value),
+                            )
+                          }
+                        />
+                      </label>
+                      <button
+                        className="operation-button"
+                        type="button"
+                        disabled={!globalSelectionMask || isEncoding}
+                        onClick={applyBlockPermutation}
+                      >
+                        Permute blocks in mask
+                      </button>
+                    </section>
+                  )}
+                  {toolMode === "quantization" && (
+                    <QuantizationMatrixEditor
+                      key={`${document.originalAsset.sha256}-${historyDocument?.revision ?? 0}`}
+                      quantizationTables={currentQuantizationTables}
+                      disabled={isEncoding}
+                      onApply={applyQuantizationEdit}
+                    />
+                  )}
+                </CollapsibleSection>
+                <CollapsibleSection
+                  id="history"
+                  title="History"
+                  kicker="NON-DESTRUCTIVE OPERATIONS"
+                  count={historyDocument?.operations.length ?? 0}
+                  className="history-panel"
+                >
+                  <section className="inspector-section operation-stack">
+                    <p className="operation-description">
+                      Enabled operations replay in order from the original
+                      document. Reordering recomputes later state.
+                    </p>
+                    {historyDocument?.operations.length ? (
+                      <ol className="operation-list">
+                        {historyDocument.operations.map((operation, index) => {
+                          const mask = getMaskFromParameters(
+                            operation.parameters,
+                          );
+                          const parameters =
+                            typeof operation.parameters === "object" &&
+                            operation.parameters !== null &&
+                            !Array.isArray(operation.parameters)
+                              ? operation.parameters
+                              : null;
+                          const operationKind = parameters
+                            ? Reflect.get(parameters, "kind")
+                            : undefined;
+                          return (
+                            <li
+                              className="operation-entry"
+                              key={operation.id}
+                              data-enabled={operation.enabled}
+                            >
+                              <div className="operation-entry-heading">
+                                <label className="operation-enabled">
+                                  <input
+                                    type="checkbox"
+                                    checked={operation.enabled}
+                                    onChange={(event) =>
+                                      mutateHistory((history) =>
+                                        history.setEnabled(
+                                          operation.id,
+                                          event.currentTarget.checked,
+                                        ),
+                                      )
+                                    }
+                                  />
+                                  <span>
+                                    {operation.type === "spatial/apply-mask"
+                                      ? "Spatial mask"
+                                      : operationKind === "coefficients"
+                                        ? "Coefficient glitch"
+                                        : operationKind === "block-repeat"
+                                          ? "Block duplicate / repeat"
+                                          : operationKind ===
+                                              "block-permutation"
+                                            ? "Block permutation"
+                                            : operationKind === "quantization"
+                                              ? "DQT matrix edit"
+                                              : operation.type}
+                                  </span>
+                                </label>
+                                <span className="operation-status">
+                                  {operation.status}
+                                </span>
+                              </div>
+                              {mask && (
+                                <p className="operation-parameters">
+                                  {describeMask(mask)}
+                                </p>
+                              )}
+                              {parameters &&
+                                operationKind === "coefficients" && (
+                                  <p className="operation-parameters">
+                                    Component{" "}
+                                    {Reflect.get(parameters, "componentIndex")}{" "}
+                                    · {Reflect.get(parameters, "mode")}{" "}
+                                    {Reflect.get(parameters, "domain")} ·{" "}
+                                    {Reflect.get(parameters, "frequencyBand")} ·
+                                    seed {Reflect.get(parameters, "seed")}
+                                  </p>
+                                )}
+                              {parameters &&
+                                operationKind === "block-repeat" && (
+                                  <p className="operation-parameters">
+                                    Component{" "}
+                                    {Reflect.get(parameters, "componentIndex")}{" "}
+                                    · source (
+                                    {Reflect.get(parameters, "sourceX")},{" "}
+                                    {Reflect.get(parameters, "sourceY")}) ·
+                                    offset ({Reflect.get(parameters, "offsetX")}
+                                    , {Reflect.get(parameters, "offsetY")}) ·{" "}
+                                    {Reflect.get(parameters, "repetitions")}{" "}
+                                    copies
+                                  </p>
+                                )}
+                              {parameters &&
+                                operationKind === "block-permutation" && (
+                                  <p className="operation-parameters">
+                                    Component{" "}
+                                    {Reflect.get(parameters, "componentIndex")}{" "}
+                                    · seed {Reflect.get(parameters, "seed")} ·
+                                    Fisher–Yates
+                                  </p>
+                                )}
+                              {parameters &&
+                                operationKind === "quantization" && (
+                                  <p className="operation-parameters">
+                                    DQT {Reflect.get(parameters, "tableId")} ·{" "}
+                                    {Reflect.get(parameters, "semantics")} ·{" "}
+                                    {Reflect.get(parameters, "pattern")} · seed{" "}
+                                    {Reflect.get(parameters, "seed")}
+                                  </p>
+                                )}
+                              <div className="operation-actions">
+                                <button
+                                  className="operation-button secondary"
+                                  type="button"
+                                  disabled={index === 0}
+                                  aria-label="Move operation up"
+                                  onClick={() =>
+                                    mutateHistory((history) =>
+                                      history.move(operation.id, index - 1),
+                                    )
+                                  }
+                                >
+                                  ↑
+                                </button>
+                                <button
+                                  className="operation-button secondary"
+                                  type="button"
+                                  disabled={
+                                    index ===
+                                    (historyDocument?.operations.length ?? 0) -
+                                      1
+                                  }
+                                  aria-label="Move operation down"
+                                  onClick={() =>
+                                    mutateHistory((history) =>
+                                      history.move(operation.id, index + 1),
+                                    )
+                                  }
+                                >
+                                  ↓
+                                </button>
+                                <button
+                                  className="operation-button secondary"
+                                  type="button"
+                                  disabled={
+                                    !globalSelectionMask ||
+                                    operation.type !== "spatial/apply-mask"
+                                  }
+                                  onClick={() =>
+                                    editMaskOperation(operation.id)
+                                  }
+                                >
+                                  Update from selection
+                                </button>
+                                <button
+                                  className="operation-button danger"
+                                  type="button"
+                                  aria-label="Delete operation"
+                                  onClick={() =>
+                                    mutateHistory((history) =>
+                                      history.delete(operation.id),
+                                    )
+                                  }
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ol>
+                    ) : (
+                      <p className="operation-empty">
+                        Select a region or paint with Brush to add it to
+                        history.
+                      </p>
+                    )}
+                    <button
+                      className="operation-reset"
+                      type="button"
+                      disabled={!historyDocument?.operations.length}
+                      onClick={() => {
+                        const history = operationHistory.current;
+                        if (history) updateHistory(history.resetToOriginal());
+                        clearSelection();
+                      }}
+                    >
+                      Reset to original
+                    </button>
+                  </section>
+                </CollapsibleSection>
+                <CollapsibleSection
+                  id="original-asset"
+                  title="Original asset"
+                  kicker="ORIGINAL ASSET"
+                  className="source-section"
+                >
+                  <div className="source-card">
+                    <p
+                      className="source-name"
+                      title={document.originalAsset.fileName}
+                    >
+                      {document.originalAsset.fileName}
+                    </p>
+                    <p className="source-size">
+                      {document.originalAsset.byteLength.toLocaleString()} bytes
+                      <span>·</span>
+                      Original bytes held unchanged in memory
+                    </p>
+                    <div className="digest-label">SHA-256</div>
+                    <code className="digest-value">
+                      {document.originalAsset.sha256}
+                    </code>
+                  </div>
+                </CollapsibleSection>
+                <MetadataInspector
+                  asset={document.originalAsset}
+                  inspection={document.inspection}
+                  quantizationTables={currentQuantizationTables}
+                  selectedBlock={selectedBlock}
+                />
+              </>
+            ) : (
+              <div className="inspector-empty">
+                <span className="empty-index">01 / INSPECT</span>
+                <h2>JPEG structure</h2>
+                <p>
+                  Dimensions, coding process, component sampling, table
+                  assignments, marker boundaries, and block geometry will appear
+                  here.
                 </p>
-              )}
-            </div>
-          )}
+                {errorMessage && (
+                  <p className="support-note">
+                    Supported for coefficient inspection: 8-bit baseline
+                    sequential Huffman JPEG, grayscale or three-component,
+                    single interleaved scan.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
         </aside>
       </section>
 

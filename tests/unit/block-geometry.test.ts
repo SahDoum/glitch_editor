@@ -4,6 +4,7 @@ import {
   getMaskBlockCoverage,
   getMaskBlockCoverageAtLeastHalf,
   mapJpegBlockCoordinate,
+  mapJpegImagePointToBlock,
   snapSelectionToComponentBlocks,
 } from "../../src/jpeg/block-geometry";
 import { inspectJpeg } from "../../src/jpeg/inspect";
@@ -65,6 +66,58 @@ describe("JPEG block coordinates", () => {
         blockInMcuX: 0,
         blockInMcuY: 0,
       },
+    });
+  });
+
+  it("maps image clicks to the clicked component's 8×8 DCT block", async () => {
+    const inspection = inspectJpeg(
+      await fixtureBytes("synthetic-color-420.jpg"),
+    );
+    expect(inspection.ok).toBe(true);
+    if (!inspection.ok) return;
+
+    expect(
+      mapJpegImagePointToBlock(inspection.value, 1, 8.5, 9.5),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        componentId: 1,
+        blockX: 1,
+        blockY: 1,
+        imageX: 8,
+        imageY: 8,
+      },
+    });
+    expect(mapJpegImagePointToBlock(inspection.value, 2, 15, 15)).toMatchObject(
+      {
+        ok: true,
+        value: {
+          componentId: 2,
+          blockX: 0,
+          blockY: 0,
+          imageWidth: 16,
+          imageHeight: 16,
+        },
+      },
+    );
+  });
+
+  it("maps clicks at odd image edges and rejects points outside the image", async () => {
+    const inspection = inspectJpeg(
+      await fixtureBytes("synthetic-color-odd-420.jpg"),
+    );
+    expect(inspection.ok).toBe(true);
+    if (!inspection.ok) return;
+
+    expect(
+      mapJpegImagePointToBlock(inspection.value, 1, 16.5, 8.5),
+    ).toMatchObject({
+      ok: true,
+      value: { blockX: 2, blockY: 1, imageX: 16, imageY: 8 },
+    });
+    expect(mapJpegImagePointToBlock(inspection.value, 1, 17, 8)).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_INPUT" },
     });
   });
 

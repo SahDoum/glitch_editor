@@ -176,19 +176,36 @@ produced a 667-byte JPEG with SOI and EOI markers. The operation catalog,
 parameters, examples, and experiment results are recorded in
 `GLITCH_EXPERIMENTS.md`.
 
-## Milestone 6 — Usable tool and inspector workflow (next)
+## Milestone 6 — Usable tool and inspector workflow (complete)
 
 ### Tasks
 
-- [ ] Replace the left-side tool grouping with a top tool bar: Manipulation (Hand, Inspector), Coefficients (Brush, Select), Blocks (Repeat Block, Shuffle), and Quantization (Quantization Matrix).
-- [ ] Give every tool an icon, accessible name, selected state, and contextual settings panel in the right column.
-- [ ] Make Brush and Select edit one persistent global pixel-space selection; switching tools must not clear or hide it.
-- [ ] Make brush input produce a continuous pixel-space selection region, not separate visible circles; render it as a translucent fill without an outline. Keep the rectangular Select frame visible.
-- [ ] Remove the separate “Add selection mask” action; both selection tools edit the current global selection directly.
-- [ ] Make Inspector select and highlight an 8×8 DCT block on canvas click and show its coefficient details in JPEG INSPECTOR; remove the separate “Inspect one block” action.
-- [ ] Put the tool panel above History and the ORIGINAL ASSET, JPEG INSPECTOR, FRAME COMPONENTS, DQT QUANTIZATION TABLES, BLOCK GEOMETRY, and ENCODED FILE sections in the right column.
-- [ ] Make the whole right column collapsible and each listed section independently collapsible.
-- [ ] Add focused UI tests for tool switching, shared selection persistence/rendering, block inspection/highlighting, and panel collapse behavior.
+- [x] Replace the left-side tool grouping with a top tool bar: Manipulation (Hand, Inspector), Coefficients (Brush, Select), Blocks (Repeat Block, Shuffle), and Quantization (Quantization Matrix).
+- [x] Give every tool an icon, accessible name, selected state, and contextual settings panel in the right column.
+- [x] Make Brush and Select edit one persistent global pixel-space selection; switching tools must not clear or hide it.
+- [x] Make brush input produce a continuous pixel-space selection region, not separate visible circles; render it as a translucent fill without an outline. Keep the rectangular Select frame visible.
+- [x] Remove the separate “Add selection mask” action; both selection tools edit the current global selection directly.
+- [x] Make Inspector select and highlight an 8×8 DCT block on canvas click and show its coefficient details in JPEG INSPECTOR; remove the separate “Inspect one block” action.
+- [x] Put the tool panel above History and the ORIGINAL ASSET, JPEG INSPECTOR, FRAME COMPONENTS, DQT QUANTIZATION TABLES, BLOCK GEOMETRY, and ENCODED FILE sections in the right column.
+- [x] Make the whole right column collapsible and each listed section independently collapsible.
+- [x] Add focused UI-state tests for tool switching, shared selection persistence/rendering, block inspection state, brush rendering, and panel collapse behavior.
+
+The toolbar and inspector workflow use presentation state separate from the
+JPEG document and operation model. Rectangle selection and brush masks are the
+same global image-pixel selection used by coefficient operations; changing
+tools only changes the active tool and never discards that mask. Brush samples
+render as a single round-capped SVG stroke; rectangular selections retain a
+visible dashed frame. Inspector clicks map image pixels to the selected
+component's visible 8×8 DCT block using sampling-aware block geometry, then
+read quantized coefficients through the existing WebAssembly reader. The
+selected block is distinct from the spatial selection. Tool, history, original
+asset, JPEG inspector, component, DQT, geometry, and encoded-file sections can
+be collapsed independently, as can the complete right panel.
+
+Validation: `npm run check` passed with 15 test files and 81 tests. Browser
+smoke testing confirmed JPEG import, tool groups, rectangle and brush selection,
+coefficient inspection/highlighting, and independent section/right-panel
+collapse. No browser console or page errors were observed.
 
 ### Acceptance
 
@@ -256,14 +273,13 @@ the document representation, JPEG capability claims, or codec pipeline.
 - Large-file processing reports progress and remains responsive.
 - No source asset is silently lost.
 
-## Next issues — Milestone 6
+## Next issues — Milestone 7
 
-1. Group tools in the top toolbar and wire active-tool state to a contextual right-column panel.
-2. Unify Brush and Select on the global pixel-space selection; remove the separate “Add selection mask” action.
-3. Implement continuous brush selection and the translucent, borderless overlay while retaining the rectangular selection frame.
-4. Make Inspector select/highlight a clicked block and show its details in JPEG INSPECTOR.
-5. Reorder the right-column sections and add independent section and whole-column collapse controls.
-6. Add focused interaction tests for selection persistence, inspector block selection, and collapsible panels.
+1. Define compatible source/target JPEG document handling for a two-image workflow.
+2. Select source and target pixel-space regions and map them to sampling-aware DCT block regions.
+3. Implement reversible coefficient-block transplant and separately scoped DC/AC transfer.
+4. Reject incompatible component layouts, block geometry, quantization assignments, or JPEG processes with actionable errors.
+5. Test compatible and incompatible transplants against the supported fixture set and independent decoders.
 
 ## Explicitly deferred
 

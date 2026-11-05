@@ -31,6 +31,11 @@ where promised, but is not the sole success criterion for glitch operations.
 - Seeded random number generation.
 - Operation serialization, replay, undo/redo.
 - Worker message validation and stale-result rejection.
+- Workspace tool-group order, active-tool transitions, shared selection
+  persistence, independent block-selection state, panel collapse state, and
+  continuous brush overlay path rendering.
+- Image-pixel click to component DCT-block mapping for common sampling modes
+  and odd visible image edges.
 
 Milestone 3 additionally verifies defensive original-byte reads, image-pixel
 selection and mask bounds, deterministic seeded replay, operation stack
@@ -58,6 +63,9 @@ parameter edits, delete, undo/redo, and stale preview discard.
 
 - Drag/drop and file-picker import.
 - Canvas zoom/pan and overlays.
+- Tool-group activation, selection persistence between Brush and Select,
+  Inspector block highlight/coefficient readout, and independent section and
+  whole-panel collapse.
 - Tool parameter editing and preview.
 - Undo/redo and operation stack controls.
 - Export download and reopen.
