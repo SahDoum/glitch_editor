@@ -203,16 +203,21 @@ A desktop-oriented responsive workspace:
 
 - **Top bar:** file name, open/import, save project, export, undo,
   redo, compare.
-- **Left toolbar:** pointer, selection, brush/mask, block tools,
-  glitch tools.
+- **Tool bar:** grouped tool icons for **Manipulation** (Hand,
+  Inspector), **Coefficients** (Brush, Select), **Blocks** (Repeat
+  Block, Shuffle), and **Quantization** (Quantization Matrix). The
+  selected tool has a clear active state.
 - **Center canvas:** image preview with zoom and pan.
-- **Right inspector:** parameters for the selected tool or selected
-  JPEG structure.
-- **Bottom panel:** operation/layer stack, history, optional
-  coefficient/stream inspector.
+- **Right column:** the selected tool's contextual panel, followed by
+  History, ORIGINAL ASSET, JPEG INSPECTOR, FRAME COMPONENTS, DQT
+  QUANTIZATION TABLES, BLOCK GEOMETRY, and ENCODED FILE sections, in
+  that order.
 
-On narrow screens, side panels may collapse into drawers. The
-application is primarily designed for desktop browsers.
+The right column can be collapsed as a whole; each of its sections can
+also be collapsed independently. Selecting a tool opens its contextual
+panel in the right column. On narrow screens, side panels may collapse
+into drawers. The application is primarily designed for desktop
+browsers.
 
 ### 6.2 Canvas
 
@@ -223,7 +228,8 @@ Required interactions:
 - pixel-accurate cursor coordinates;
 - optional overlay for 8×8 block grid;
 - optional MCU grid;
-- selection rectangle and freehand mask;
+- pixel-space rectangular selection and continuous brush selection;
+- selection overlay that keeps the edited preview visible;
 - show/hide original;
 - split-view or difference preview;
 - indicate when the displayed preview is approximate or stale.
@@ -231,8 +237,23 @@ Required interactions:
 The canvas displays a decoded preview. The source JPEG data remains a
 separate authoritative document model.
 
+Brush and Select edit the same global pixel-space selection. Switching
+between them does not clear or hide the current selection; operations
+use that one visible area as their spatial scope. Brush input creates a
+continuous selected region rather than a trail of separate circular
+marks. Show the brush selection as a translucent fill with no outline so
+the image and resulting changes remain visible. Rectangular Select keeps
+a visible frame around its selected region. Remove the separate
+`Add selection mask` action; either tool edits the current selection
+directly. The selection remains a spatial mask in image-pixel
+coordinates and is mapped to JPEG units by the operation/JPEG pipeline.
+
 ### 6.3 Tool inspector
 
+The tool bar is the single entry point for selecting tools. Each tool
+has an icon, an accessible name, and a visible selected state. Selecting
+a tool displays its contextual menu/settings in the right column; tool
+controls must not be scattered across unrelated inspector sections.
 Every tool exposes:
 
 - tool name and short explanation;
@@ -243,6 +264,12 @@ Every tool exposes:
 - deterministic seed for random behavior;
 - Apply/preview controls where computation is expensive;
 - Reset tool settings.
+
+Inspector is a manipulation tool, not a separate “Inspect one block”
+command. With Inspector active, clicking an 8×8 DCT block selects and
+highlights that block and displays its details in JPEG INSPECTOR. The
+selected block is distinct from the global pixel-space operation
+selection.
 
 ### 6.4 History and operation stack
 
@@ -717,17 +744,29 @@ recorded in `docs/ROADMAP.md` and ADR-005.
 - separate DC and AC targeting, component selection, and block repeat;
 - DQT matrix editing and pattern generation with explicit reinterpret/requantize semantics.
 
-### Milestone 6 --- Two-image transplant
+### Milestone 6 --- Usable tool and inspector workflow (next)
+
+- grouped top toolbar with Hand, Inspector, Brush, Select, Repeat Block,
+  Shuffle, and Quantization Matrix;
+- one persistent global pixel-space selection shared by Brush and Select;
+- continuous, translucent, borderless brush-selection overlay and framed
+  rectangular selection;
+- Inspector tool selects/highlights a clicked 8×8 DCT block and shows its
+  details in JPEG INSPECTOR;
+- contextual settings for the active tool and a collapsible right column
+  with independently collapsible information sections.
+
+### Milestone 7 --- Two-image transplant
 
 - source/target documents and DCT block or AC/DC transplant;
 - validate component layout, sampling, block geometry, quantization assignments, and scan/process compatibility.
 
-### Milestone 7 --- Experimental bitstream lab
+### Milestone 8 --- Experimental bitstream lab
 
 - marker/scan and restart-marker inspection;
 - isolated raw-byte and bitstream experiments with decoder recovery diagnostics.
 
-### Milestone 8 --- Project persistence and polish
+### Milestone 9 --- Project persistence and polish
 
 - versioned local project persistence and remaining product polish.
 
@@ -735,7 +774,8 @@ recorded in `docs/ROADMAP.md` and ADR-005.
 
 The initial codec and baseline-only process boundary are recorded in ADR-003
 and ADR-005. DQT semantics and the experiment-first product priority are
-recorded in ADR-006. Remaining decisions include:
+recorded in ADR-006; the tool/selection workflow priority is recorded in
+ADR-007. Remaining decisions include:
 
 1.  Which operations can be evaluated incrementally, and which require
     full re-encoding?

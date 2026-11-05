@@ -166,7 +166,7 @@ The product goal is visual experimentation, not a guarantee that every
 intervention produces a universally decodable JPEG. This slice keeps the
 coefficient re-encoder for predictable previews, while retaining an encoded
 result for export even when browser preview decoding fails. Raw entropy/byte
-corruption remains isolated to Milestone 7. The generated bridge was rebuilt
+corruption remains isolated to Milestone 8. The generated bridge was rebuilt
 with Emscripten 4.0.23; the production browser preview imported a synthetic
 JPEG and successfully applied block repeat, AC inversion, frequency isolation,
 block permutation, and a radial DQT edit. Each operation appeared as applied
@@ -176,7 +176,37 @@ produced a 667-byte JPEG with SOI and EOI markers. The operation catalog,
 parameters, examples, and experiment results are recorded in
 `GLITCH_EXPERIMENTS.md`.
 
-## Milestone 6 — Two-image DCT transplant
+## Milestone 6 — Usable tool and inspector workflow (next)
+
+### Tasks
+
+- [ ] Replace the left-side tool grouping with a top tool bar: Manipulation (Hand, Inspector), Coefficients (Brush, Select), Blocks (Repeat Block, Shuffle), and Quantization (Quantization Matrix).
+- [ ] Give every tool an icon, accessible name, selected state, and contextual settings panel in the right column.
+- [ ] Make Brush and Select edit one persistent global pixel-space selection; switching tools must not clear or hide it.
+- [ ] Make brush input produce a continuous pixel-space selection region, not separate visible circles; render it as a translucent fill without an outline. Keep the rectangular Select frame visible.
+- [ ] Remove the separate “Add selection mask” action; both selection tools edit the current global selection directly.
+- [ ] Make Inspector select and highlight an 8×8 DCT block on canvas click and show its coefficient details in JPEG INSPECTOR; remove the separate “Inspect one block” action.
+- [ ] Put the tool panel above History and the ORIGINAL ASSET, JPEG INSPECTOR, FRAME COMPONENTS, DQT QUANTIZATION TABLES, BLOCK GEOMETRY, and ENCODED FILE sections in the right column.
+- [ ] Make the whole right column collapsible and each listed section independently collapsible.
+- [ ] Add focused UI tests for tool switching, shared selection persistence/rendering, block inspection/highlighting, and panel collapse behavior.
+
+### Acceptance
+
+- The top tool bar presents exactly the named groups and tools, and selecting a tool visibly activates it and opens its settings in the right column.
+- Brush and Select always expose the same global image-pixel selection; switching between them preserves that area, and a spatial operation uses that visible area.
+- Brush selection appears as a continuous translucent overlay with no outline, leaving preview changes visible; rectangular Select keeps its frame.
+- There is no separate “Add selection mask” action or “Inspect one block” command.
+- Clicking a block with Inspector active highlights the selected 8×8 DCT block and shows its coefficient details without changing the global pixel-space selection.
+- The right column and each information section can be collapsed/expanded independently without changing the document, selection, or operation history.
+- Existing JPEG-domain operations, undo/redo, and original-byte preservation are unchanged.
+
+This usability milestone is intentionally prioritized before new JPEG
+workflows: users need to understand which tool is active and which
+pixel-space region an operation will affect before adding two-image
+transplant or entropy-stream features. It changes the UI workflow, not
+the document representation, JPEG capability claims, or codec pipeline.
+
+## Milestone 7 — Two-image DCT transplant
 
 ### Tasks
 
@@ -192,7 +222,7 @@ parameters, examples, and experiment results are recorded in
 - Incompatible cases are rejected or converted only through an explicitly documented path.
 - No arbitrary byte copy is described as a block/MCU transplant.
 
-## Milestone 7 — Experimental stream and byte lab
+## Milestone 8 — Experimental stream and byte lab
 
 ### Tasks
 
@@ -209,7 +239,7 @@ parameters, examples, and experiment results are recorded in
 - Decoder failures are expected, contained, and clearly explained.
 - Any claimed stream-level operation has dedicated fixtures and bitstream tests.
 
-## Milestone 8 — Project persistence and polish
+## Milestone 9 — Project persistence and polish
 
 ### Tasks
 
@@ -226,18 +256,14 @@ parameters, examples, and experiment results are recorded in
 - Large-file processing reports progress and remains responsive.
 - No source asset is silently lost.
 
-## First 10 issues to create
+## Next issues — Milestone 6
 
-1. Scaffold TypeScript app, scripts, lint, typecheck, tests, CI.
-2. Add JPEG fixture corpus and provenance manifest.
-3. Implement safe marker scanner for supported JPEG subset.
-4. Display parsed JPEG metadata in an inspector panel.
-5. Add preview decode through a replaceable codec adapter.
-6. Add block geometry model and coordinate mapping tests.
-7. Spike coefficient access in candidate codecs.
-8. Write codec decision record with benchmark and limitations.
-9. Define document and operation TypeScript contracts.
-10. Implement first deterministic coefficient operation in a test harness.
+1. Group tools in the top toolbar and wire active-tool state to a contextual right-column panel.
+2. Unify Brush and Select on the global pixel-space selection; remove the separate “Add selection mask” action.
+3. Implement continuous brush selection and the translucent, borderless overlay while retaining the rectangular selection frame.
+4. Make Inspector select/highlight a clicked block and show its details in JPEG INSPECTOR.
+5. Reorder the right-column sections and add independent section and whole-column collapse controls.
+6. Add focused interaction tests for selection persistence, inspector block selection, and collapsible panels.
 
 ## Explicitly deferred
 

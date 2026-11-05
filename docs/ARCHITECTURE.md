@@ -59,6 +59,21 @@ Coordinates import, document lifecycle, selection, operation dispatch, preview r
 
 Owns immutable source assets, document metadata, current editable representation, masks/selections, operation stack, and revision identifiers.
 
+The application has one global spatial selection in image-pixel
+coordinates, shared by Brush and Select; changing the active tool does
+not create a second selection or implicitly clear the current one.
+Selection rendering and tool input stay in the UI/application boundary,
+while mapping the selection to component blocks remains JPEG/operation
+work. The Inspector's selected 8×8 DCT block is separate state expressed
+in component/block coordinates; it must not be confused with the global
+pixel-space selection.
+
+The tool bar owns tool activation and presents each tool's contextual
+controls in the right column. The right column contains the active tool
+panel followed by History and the collapsible document/JPEG information
+sections. UI collapse state is presentation state, not document or
+operation data.
+
 ### `jpeg/`
 
 JPEG-specific interfaces and adapters: marker parser, frame/scan metadata, coefficient access, encoding, validation, and codec capability reporting.
