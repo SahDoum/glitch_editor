@@ -26,7 +26,7 @@ export interface JpegBlockGeometry {
   readonly height: number;
   readonly components: readonly Pick<
     JpegInspection["components"][number],
-    "id" | "horizontalSampling" | "verticalSampling"
+    "id" | "horizontalSampling" | "verticalSampling" | "quantizationTable"
   >[];
 }
 
@@ -265,4 +265,108 @@ export function getMaskBlockCoverage(
   }
 
   return success(coverage);
+}
+
+export function getMaskBlockCoverageAtLeastHalf(
+  mask: SpatialMask,
+  inspection: JpegBlockGeometry,
+  componentId: number,
+): Result<Uint8Array> {
+  const intersecting = getMaskBlockCoverage(mask, inspection, componentId);
+  if (!intersecting.ok) return intersecting;
+  const grid = getJpegComponentBlockGrid(inspection, componentId);
+  const component = inspection.components.find(
+    (candidate) => candidate.id === componentId,
+  );
+  if (!grid || !component) {
+    return failure({
+      code: "INVALID_INPUT",
+      message: "The selected JPEG component is invalid.",
+    });
+  }
+
+  const maxHorizontalSampling = Math.max(
+    ...inspection.components.map(
+      ({ horizontalSampling }) => horizontalSampling,
+    ),
+  );
+  const maxVerticalSampling = Math.max(
+    ...inspection.components.map(({ verticalSampling }) => verticalSampling),
+  );
+  const blockWidth = (8 * maxHorizontalSampling) / component.horizontalSampling;
+  const blockHeight = (8 * maxVerticalSampling) / component.verticalSampling;
+  const selected = new Uint8Array(intersecting.value.length);
+  const shape = mask.shapes[0];
+  if (!shape) return success(selected);
+
+  if (shape.kind === "rectangle") {
+    for (let blockY = 0; blockY < grid.rows; blockY += 1) {
+      const top = blockY * blockHeight;
+      const bottom = Math.min(inspection.height, top + blockHeight);
+      for (let blockX = 0; blockX < grid.columns; blockX += 1) {
+        const index = blockY * grid.columns + blockX;
+        if (intersecting.value[index] === 0) continue;
+        const left = blockX * blockWidth;
+        const right = Math.min(inspection.width, left + blockWidth);
+        const overlapWidth = Math.max(
+          0,
+          Math.min(right, shape.x + shape.width) - Math.max(left, shape.x),
+        );
+        const overlapHeight = Math.max(
+          0,
+          Math.min(bottom, shape.y + shape.height) - Math.max(top, shape.y),
+        );
+        const visibleArea = (right - left) * (bottom - top);
+        if (overlapWidth * overlapHeight >= visibleArea / 2) {
+          selected[index] = 1;
+        }
+      }
+    }
+    return success(selected);
+  }
+
+  const candidateCount = intersecting.value.reduce(
+    (count, value) => count + value,
+    0,
+  );
+  const coverageWork = candidateCount * 64 * shape.points.length;
+  if (!Number.isSafeInteger(coverageWork) || coverageWork > 50_000_000) {
+    return failure({
+      code: "PROCESSING_FAILED",
+      message:
+        "The block-permutation mask is too complex to measure safely. Use a smaller brush mask or a rectangular selection.",
+    });
+  }
+
+  for (let blockY = 0; blockY < grid.rows; blockY += 1) {
+    const top = blockY * blockHeight;
+    const bottom = Math.min(inspection.height, top + blockHeight);
+    for (let blockX = 0; blockX < grid.columns; blockX += 1) {
+      const index = blockY * grid.columns + blockX;
+      if (intersecting.value[index] === 0) continue;
+      const left = blockX * blockWidth;
+      const right = Math.min(inspection.width, left + blockWidth);
+      let coveredSamples = 0;
+      for (let sampleY = 0; sampleY < 8; sampleY += 1) {
+        const y = top + ((sampleY + 0.5) * (bottom - top)) / 8;
+        for (let sampleX = 0; sampleX < 8; sampleX += 1) {
+          const x = left + ((sampleX + 0.5) * (right - left)) / 8;
+          if (
+            shape.points.some((point) => {
+              const distanceX = point.x - x;
+              const distanceY = point.y - y;
+              return (
+                distanceX * distanceX + distanceY * distanceY <=
+                shape.radius * shape.radius
+              );
+            })
+          ) {
+            coveredSamples += 1;
+          }
+        }
+      }
+      if (coveredSamples >= 32) selected[index] = 1;
+    }
+  }
+  return success(selected);
 }

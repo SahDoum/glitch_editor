@@ -3,8 +3,7 @@ import type {
   CoefficientWorkerResponse,
   CoefficientWorkerValue,
 } from "../jpeg/coefficient-worker-protocol";
-import type { DctFrequencyBand } from "../operations/dct";
-import type { SpatialMask } from "../document/masks";
+import type { JpegGlitchOperation } from "../operations/jpeg-glitch";
 import type { JpegBlockGeometry } from "../jpeg/block-geometry";
 
 type CoefficientWorkerRequestPayload =
@@ -26,16 +25,10 @@ export interface JpegCoefficientReader {
   close(): void;
 }
 
-export interface JpegCoefficientEdit {
-  readonly componentIndex: number;
-  readonly frequencyBand: DctFrequencyBand;
-  readonly mask: SpatialMask;
-}
-
 export async function encodeJpegCoefficients(
   bytes: Uint8Array,
   geometry: JpegBlockGeometry,
-  edits: readonly JpegCoefficientEdit[],
+  operations: readonly JpegGlitchOperation[],
   signal?: AbortSignal,
 ): Promise<Result<Uint8Array>> {
   if (typeof Worker === "undefined") {
@@ -136,7 +129,7 @@ export async function encodeJpegCoefficients(
           id: 0,
           bytes: inputBuffer,
           geometry,
-          edits,
+          operations,
         },
         [inputBuffer],
       );

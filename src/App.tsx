@@ -10,12 +10,14 @@ import {
 import {
   encodeJpegCoefficients,
   createJpegCoefficientReader,
-  type JpegCoefficientEdit,
   type JpegCoefficientReader,
 } from "./application/coefficient-reader";
 import {
-  applyDctZeroBandOperation,
+  applyBlockPermutationOperation,
+  applyBlockRepeatOperation,
+  applyCoefficientGlitchOperation,
   applyMaskToDocument,
+  applyQuantizationOperation,
   createJpegDocumentSession,
   type JpegEditableState,
 } from "./application/jpeg-document";
@@ -40,21 +42,61 @@ import {
 import type { ProjectDocument } from "./document/model";
 import { OperationHistory } from "./operations/history";
 import {
-  DCT_FREQUENCY_BAND_RANGES,
-  DCT_FREQUENCY_BANDS,
-  getDctFrequencyBand,
-  type DctFrequencyBand,
-} from "./operations/dct";
+  createQuantizationPattern,
+  GLITCH_FREQUENCY_BANDS,
+  QUANTIZATION_PATTERNS,
+  QUANTIZATION_SEMANTICS,
+  type CoefficientDomain,
+  type CoefficientGlitchMode,
+  type GlitchFrequencyBand,
+  type JpegGlitchOperation,
+  type QuantizationPattern,
+  type QuantizationSemantics,
+} from "./operations/jpeg-glitch";
+import { DCT_FREQUENCY_BAND_RANGES } from "./operations/dct";
 
 const MARKER_LIMIT = 250;
-const EMPTY_DCT_OPERATIONS: JpegEditableState["dctOperations"] = Object.freeze(
-  [],
-);
+const EMPTY_JPEG_OPERATIONS: JpegEditableState["jpegOperations"] =
+  Object.freeze([]);
 type ImagePoint = { x: number; y: number };
 type CanvasTool = "select" | "brush" | "pan";
 
 function formatOffset(offset: number): string {
   return `0x${offset.toString(16).padStart(6, "0").toUpperCase()}`;
+}
+
+function getComponentControlLabel(
+  inspection: JpegInspection,
+  componentIndex: number,
+): string {
+  const component = inspection.components[componentIndex];
+  if (!component) return `Component ${componentIndex}`;
+  if (inspection.components.length === 1) return `Gray · ID ${component.id}`;
+  const commonName =
+    component.id === 1
+      ? "likely Y"
+      : component.id === 2
+        ? "likely Cb"
+        : component.id === 3
+          ? "likely Cr"
+          : null;
+  return `Component ${componentIndex}${commonName ? ` · ${commonName}` : ""} · ID ${component.id}`;
+}
+
+function getCurrentQuantizationTables(
+  inspection: JpegInspection,
+  operations: readonly JpegGlitchOperation[],
+) {
+  const latest = new Map<number, readonly number[]>();
+  for (const operation of operations) {
+    if (operation.kind === "quantization") {
+      latest.set(operation.tableId, operation.values);
+    }
+  }
+  return inspection.quantizationTables.map((table) => ({
+    id: table.id,
+    values: [...(latest.get(table.id) ?? table.values)],
+  }));
 }
 
 function ImageOverlays({
@@ -184,24 +226,16 @@ function describeMask(mask: SpatialMask): string {
   return `Image-pixel brush · radius ${shape.radius.toFixed(1)} px · ${shape.points.length} samples`;
 }
 
-function getDctOperationDetails(
-  value: unknown,
-): { componentIndex: number; frequencyBand: DctFrequencyBand } | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return null;
-  }
-  const componentIndex = Reflect.get(value, "componentIndex");
-  const frequencyBand = Reflect.get(value, "frequencyBand");
-  if (typeof componentIndex !== "number" || !Number.isInteger(componentIndex)) {
-    return null;
-  }
-  const parsedBand = getDctFrequencyBand(frequencyBand);
-  return parsedBand.ok
-    ? { componentIndex, frequencyBand: parsedBand.value }
-    : null;
-}
-
-function MetadataInspector({ inspection }: { inspection: JpegInspection }) {
+function MetadataInspector({
+  inspection,
+  quantizationTables,
+}: {
+  inspection: JpegInspection;
+  quantizationTables: readonly {
+    id: number;
+    values: readonly number[];
+  }[];
+}) {
   const visibleMarkers = inspection.markers.slice(0, MARKER_LIMIT);
 
   return (
@@ -254,6 +288,34 @@ function MetadataInspector({ inspection }: { inspection: JpegInspection }) {
             );
           })}
         </ul>
+      </section>
+
+      <section className="inspector-section">
+        <div className="section-kicker">DQT QUANTIZATION TABLES</div>
+        <h2>Current 8×8 matrices</h2>
+        {quantizationTables.map((table) => (
+          <div className="quantization-table-view" key={table.id}>
+            <p className="coefficient-note">Table {table.id} · natural order</p>
+            <div className="coefficient-table-wrap">
+              <table className="coefficient-table">
+                <tbody>
+                  {Array.from({ length: 8 }, (_, v) => (
+                    <tr key={v}>
+                      {Array.from({ length: 8 }, (_, u) => (
+                        <td
+                          className={u === 0 && v === 0 ? "coefficient-dc" : ""}
+                          key={u}
+                        >
+                          {table.values[v * 8 + u]}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ))}
       </section>
 
       <section className="inspector-section">
@@ -334,6 +396,220 @@ function MetadataInspector({ inspection }: { inspection: JpegInspection }) {
         ))}
       </section>
     </aside>
+  );
+}
+
+function QuantizationMatrixEditor({
+  quantizationTables,
+  disabled,
+  onApply,
+}: {
+  quantizationTables: readonly { id: number; values: readonly number[] }[];
+  disabled: boolean;
+  onApply(
+    tableId: number,
+    values: readonly number[],
+    semantics: QuantizationSemantics,
+    pattern: QuantizationPattern | "manual",
+    seed: number,
+  ): void;
+}) {
+  const [tableId, setTableId] = useState(quantizationTables[0]?.id ?? 0);
+  const [values, setValues] = useState<number[]>(
+    () => quantizationTables[0]?.values.slice() ?? [],
+  );
+  const [pattern, setPattern] = useState<QuantizationPattern | "manual">(
+    "manual",
+  );
+  const [semantics, setSemantics] =
+    useState<QuantizationSemantics>("reinterpret");
+  const [seed, setSeed] = useState("1");
+  const [errorMessage, setErrorMessage] = useState("");
+  const table = quantizationTables.find(
+    (candidate) => candidate.id === tableId,
+  );
+
+  function chooseTable(value: string) {
+    const nextId = Number(value);
+    const nextTable = quantizationTables.find(
+      (candidate) => candidate.id === nextId,
+    );
+    if (!nextTable) return;
+    setTableId(nextId);
+    setValues(nextTable.values.slice());
+    setErrorMessage("");
+  }
+
+  function applyPattern() {
+    const seedValue = Number(seed);
+    if (
+      !Number.isInteger(seedValue) ||
+      seedValue < 0 ||
+      seedValue > 0xffff_ffff
+    ) {
+      setErrorMessage("Pattern seed must be an unsigned 32-bit integer.");
+      return;
+    }
+    if (pattern === "manual") {
+      setErrorMessage("Choose a generated pattern before applying it.");
+      return;
+    }
+    const result = createQuantizationPattern(pattern, values, seedValue);
+    if (!result.ok) {
+      setErrorMessage(result.error.message);
+      return;
+    }
+    setValues([...result.value]);
+    setErrorMessage("");
+  }
+
+  const validValues =
+    values.length === 64 &&
+    Number.isInteger(Number(seed)) &&
+    Number(seed) >= 0 &&
+    Number(seed) <= 0xffff_ffff &&
+    values.every(
+      (value) => Number.isInteger(value) && value >= 1 && value <= 255,
+    );
+
+  return (
+    <section className="inspector-section quantization-editor">
+      <div className="section-kicker">FIRST GLITCH LAB · DQT</div>
+      <h2>Quantization matrix</h2>
+      <p className="operation-description">
+        Edit the 64 quantization values used by components assigned to this
+        table. Changing DQT values does not recover detail discarded earlier.
+      </p>
+      <label className="coefficient-field">
+        <span>Table assigned to component(s)</span>
+        <select
+          value={tableId}
+          disabled={disabled}
+          onChange={(event) => chooseTable(event.currentTarget.value)}
+        >
+          {quantizationTables.map((entry) => (
+            <option key={entry.id} value={entry.id}>
+              DQT {entry.id}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="coefficient-table-wrap">
+        <table className="coefficient-table editable-quantization-table">
+          <tbody>
+            {Array.from({ length: 8 }, (_, v) => (
+              <tr key={v}>
+                {Array.from({ length: 8 }, (_, u) => {
+                  const index = v * 8 + u;
+                  return (
+                    <td
+                      className={u === 0 && v === 0 ? "coefficient-dc" : ""}
+                      key={u}
+                    >
+                      <input
+                        aria-label={`DQT ${tableId}, u ${u}, v ${v}`}
+                        type="number"
+                        min="1"
+                        max="255"
+                        step="1"
+                        value={values[index] ?? ""}
+                        disabled={disabled}
+                        onChange={(event) => {
+                          const next = values.slice();
+                          next[index] = Number(event.currentTarget.value);
+                          setValues(next);
+                          setPattern("manual");
+                        }}
+                      />
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="quantization-pattern-controls">
+        <label className="coefficient-field">
+          <span>Pattern</span>
+          <select
+            value={pattern}
+            disabled={disabled}
+            onChange={(event) => {
+              const next = QUANTIZATION_PATTERNS.find(
+                (candidate) => candidate === event.currentTarget.value,
+              );
+              if (next) setPattern(next);
+            }}
+          >
+            <option value="manual">manual values</option>
+            {QUANTIZATION_PATTERNS.map((candidate) => (
+              <option key={candidate} value={candidate}>
+                {candidate}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="coefficient-field">
+          <span>Seed</span>
+          <input
+            type="number"
+            min="0"
+            max="4294967295"
+            step="1"
+            value={seed}
+            disabled={disabled}
+            onChange={(event) => setSeed(event.currentTarget.value)}
+          />
+        </label>
+      </div>
+      <button
+        className="operation-button secondary"
+        type="button"
+        disabled={disabled || pattern === "manual"}
+        onClick={applyPattern}
+      >
+        Generate pattern
+      </button>
+      <label className="coefficient-field tool-field">
+        <span>Apply semantics</span>
+        <select
+          value={semantics}
+          disabled={disabled}
+          onChange={(event) => {
+            const next = QUANTIZATION_SEMANTICS.find(
+              (candidate) => candidate === event.currentTarget.value,
+            );
+            if (next) setSemantics(next);
+          }}
+        >
+          <option value="reinterpret">Reinterpret existing coefficients</option>
+          <option value="requantize">
+            Requantize from retained coefficients
+          </option>
+        </select>
+      </label>
+      <p className="coefficient-note">
+        {semantics === "reinterpret"
+          ? "Keeps quantized coefficients and changes their DQT interpretation."
+          : "Approximates unquantized values as old coefficient × old DQT, then divides by the new DQT. Discarded information is not restored."}
+      </p>
+      {errorMessage && (
+        <p className="coefficient-error" role="alert">
+          {errorMessage}
+        </p>
+      )}
+      <button
+        className="operation-button"
+        type="button"
+        disabled={disabled || !table || !validValues}
+        onClick={() =>
+          onApply(tableId, values, semantics, pattern, Number(seed))
+        }
+      >
+        Apply DQT pattern
+      </button>
+    </section>
   );
 }
 
@@ -466,8 +742,9 @@ function CoefficientInspector({
         >
           {componentOptions.map((component, index) => (
             <option key={component.id} value={component.id}>
-              ID {component.id} · {component.horizontalSampling}×
-              {component.verticalSampling} sampling · component {index}
+              {getComponentControlLabel(inspection, index)} ·{" "}
+              {component.horizontalSampling}×{component.verticalSampling}{" "}
+              sampling · component {index}
             </option>
           ))}
         </select>
@@ -577,6 +854,7 @@ function App() {
     useState<ProjectDocument<JpegEditableState> | null>(null);
   const [editedPreviewUrl, setEditedPreviewUrl] = useState<string | null>(null);
   const [editedBytes, setEditedBytes] = useState<Uint8Array | null>(null);
+  const [editedPreviewError, setEditedPreviewError] = useState("");
   const [historyAvailability, setHistoryAvailability] = useState({
     canUndo: false,
     canRedo: false,
@@ -591,7 +869,20 @@ function App() {
   const [toolMode, setToolMode] = useState<CanvasTool>("select");
   const [snapToBlocks, setSnapToBlocks] = useState(false);
   const [componentIndex, setComponentIndex] = useState(0);
-  const [frequencyBand, setFrequencyBand] = useState<DctFrequencyBand>("all");
+  const [frequencyBand, setFrequencyBand] =
+    useState<GlitchFrequencyBand>("all");
+  const [coefficientDomain, setCoefficientDomain] =
+    useState<CoefficientDomain>("ac");
+  const [coefficientMode, setCoefficientMode] =
+    useState<CoefficientGlitchMode>("zero");
+  const [coefficientStrength, setCoefficientStrength] = useState(1);
+  const [coefficientSeed, setCoefficientSeed] = useState(1);
+  const [repeatSourceX, setRepeatSourceX] = useState(0);
+  const [repeatSourceY, setRepeatSourceY] = useState(0);
+  const [repeatOffsetX, setRepeatOffsetX] = useState(1);
+  const [repeatOffsetY, setRepeatOffsetY] = useState(0);
+  const [repeatCount, setRepeatCount] = useState(1);
+  const [permutationSeed, setPermutationSeed] = useState(1);
   const [brushSize, setBrushSize] = useState(32);
   const [zoom, setZoom] = useState(1);
   const [selection, setSelection] = useState<SpatialSelection | null>(null);
@@ -613,8 +904,15 @@ function App() {
     scrollTop: number;
   } | null>(null);
   const imageStage = useRef<HTMLDivElement>(null);
-  const dctOperations =
-    historyDocument?.currentState.dctOperations ?? EMPTY_DCT_OPERATIONS;
+  const jpegOperations =
+    historyDocument?.currentState.jpegOperations ?? EMPTY_JPEG_OPERATIONS;
+  const currentQuantizationTables = useMemo(
+    () =>
+      document
+        ? getCurrentQuantizationTables(document.inspection, jpegOperations)
+        : [],
+    [document, jpegOperations],
+  );
 
   useEffect(
     () => () => {
@@ -631,31 +929,27 @@ function App() {
   );
 
   useEffect(() => {
-    if (!document || dctOperations.length === 0) return;
+    if (!document || jpegOperations.length === 0) return;
 
     const controller = new AbortController();
     const geometry: JpegBlockGeometry = {
       width: document.inspection.width,
       height: document.inspection.height,
       components: document.inspection.components.map(
-        ({ id, horizontalSampling, verticalSampling }) => ({
+        ({ id, horizontalSampling, verticalSampling, quantizationTable }) => ({
           id,
           horizontalSampling,
           verticalSampling,
+          quantizationTable,
         }),
       ),
     };
-    const edits: JpegCoefficientEdit[] = dctOperations.map((operation) => ({
-      componentIndex: operation.componentIndex,
-      frequencyBand: operation.frequencyBand,
-      mask: operation.mask,
-    }));
 
     void (async () => {
       const encoded = await encodeJpegCoefficients(
         document.originalAsset.readBytes(),
         geometry,
-        edits,
+        jpegOperations,
         controller.signal,
       );
       if (controller.signal.aborted) return;
@@ -670,6 +964,8 @@ function App() {
       const previewUrl = URL.createObjectURL(
         new Blob([outputBuffer], { type: "image/jpeg" }),
       );
+      setEditedBytes(encoded.value);
+      let previewError = "";
       try {
         const preview = new Image();
         preview.src = previewUrl;
@@ -678,30 +974,31 @@ function App() {
           preview.naturalWidth !== document.inspection.width ||
           preview.naturalHeight !== document.inspection.height
         ) {
-          throw new Error("The re-encoded preview dimensions do not match.");
+          previewError =
+            "The encoded output dimensions differ from the source image.";
         }
       } catch {
-        URL.revokeObjectURL(previewUrl);
-        if (!controller.signal.aborted) {
-          setErrorMessage(
-            "The re-encoded JPEG could not be decoded for preview. The original remains unchanged.",
-          );
-          setIsEncoding(false);
-        }
-        return;
+        previewError =
+          "The browser decoder could not render this encoded experiment. The file is still available to export.";
       }
       if (controller.signal.aborted) {
         URL.revokeObjectURL(previewUrl);
         return;
       }
 
-      setEditedPreviewUrl(previewUrl);
-      setEditedBytes(encoded.value);
+      if (previewError) {
+        URL.revokeObjectURL(previewUrl);
+        setEditedPreviewUrl(null);
+        setEditedPreviewError(previewError);
+      } else {
+        setEditedPreviewUrl(previewUrl);
+        setEditedPreviewError("");
+      }
       setIsEncoding(false);
     })();
 
     return () => controller.abort();
-  }, [document, dctOperations]);
+  }, [document, jpegOperations]);
 
   useEffect(
     () => () => {
@@ -742,6 +1039,7 @@ function App() {
     setHistoryDocument(history.value.snapshot);
     setEditedPreviewUrl(null);
     setEditedBytes(null);
+    setEditedPreviewError("");
     setIsEncoding(false);
     setHistoryAvailability({
       canUndo: history.value.canUndo,
@@ -752,6 +1050,15 @@ function App() {
     setBrushDraft([]);
     setComponentIndex(0);
     setFrequencyBand("all");
+    setCoefficientDomain("ac");
+    setCoefficientMode("zero");
+    setCoefficientStrength(1);
+    setCoefficientSeed(1);
+    setRepeatSourceX(0);
+    setRepeatSourceY(0);
+    setRepeatOffsetX(1);
+    setRepeatOffsetY(0);
+    setRepeatCount(1);
     setBrushSize(32);
     setToolMode("select");
     setSnapToBlocks(false);
@@ -769,11 +1076,12 @@ function App() {
       setErrorMessage(result.error.message);
       return;
     }
-    const previousDctOperations = historyDocument?.currentState.dctOperations;
-    if (result.value.currentState.dctOperations !== previousDctOperations) {
+    const previousJpegOperations = historyDocument?.currentState.jpegOperations;
+    if (result.value.currentState.jpegOperations !== previousJpegOperations) {
       setEditedPreviewUrl(null);
       setEditedBytes(null);
-      setIsEncoding(result.value.currentState.dctOperations.length > 0);
+      setEditedPreviewError("");
+      setIsEncoding(result.value.currentState.jpegOperations.length > 0);
       setShowOriginal(false);
     }
     setErrorMessage("");
@@ -987,7 +1295,7 @@ function App() {
     setToolMode(tool);
   }
 
-  function applyDctOperation() {
+  function applyCoefficientOperation() {
     const history = operationHistory.current;
     let mask = paintedMask ?? historyDocument?.currentState.activeMask ?? null;
     if (document && selection) {
@@ -1004,15 +1312,91 @@ function App() {
     }
     if (!history || !mask) {
       setErrorMessage(
-        "Paint a mask or create a selection before applying a DCT operation.",
+        "Paint a mask or create a selection before applying a coefficient glitch.",
       );
       return;
     }
     updateHistory(
-      applyDctZeroBandOperation(history, {
+      applyCoefficientGlitchOperation(history, {
+        kind: "coefficients",
         mask,
         componentIndex,
+        domain: coefficientDomain,
+        mode: coefficientMode,
         frequencyBand,
+        strength:
+          coefficientMode === "invert" || coefficientMode === "isolate"
+            ? 0
+            : coefficientStrength,
+        seed: coefficientSeed,
+      }),
+    );
+  }
+
+  function applyBlockRepeat() {
+    const history = operationHistory.current;
+    if (!history) return;
+    updateHistory(
+      applyBlockRepeatOperation(history, {
+        kind: "block-repeat",
+        componentIndex,
+        sourceX: repeatSourceX,
+        sourceY: repeatSourceY,
+        offsetX: repeatOffsetX,
+        offsetY: repeatOffsetY,
+        repetitions: repeatCount,
+      }),
+    );
+  }
+
+  function applyBlockPermutation() {
+    const history = operationHistory.current;
+    let mask = paintedMask ?? historyDocument?.currentState.activeMask ?? null;
+    if (document && selection) {
+      const selectedMask = createSpatialMask(
+        selection,
+        document.inspection.width,
+        document.inspection.height,
+      );
+      if (!selectedMask.ok) {
+        setErrorMessage(selectedMask.error.message);
+        return;
+      }
+      mask = selectedMask.value;
+    }
+    if (!history || !mask) {
+      setErrorMessage(
+        "Paint a mask or create a selection before permuting DCT blocks.",
+      );
+      return;
+    }
+    updateHistory(
+      applyBlockPermutationOperation(history, {
+        kind: "block-permutation",
+        componentIndex,
+        mask,
+        seed: permutationSeed,
+      }),
+    );
+  }
+
+  function applyQuantizationEdit(
+    tableId: number,
+    values: readonly number[],
+    semantics: QuantizationSemantics,
+    pattern: QuantizationPattern | "manual",
+    seed: number,
+  ) {
+    const history = operationHistory.current;
+    if (!history) return;
+    updateHistory(
+      applyQuantizationOperation(history, {
+        kind: "quantization",
+        tableId,
+        values,
+        semantics,
+        pattern,
+        seed,
       }),
     );
   }
@@ -1156,7 +1540,7 @@ function App() {
               type="button"
               onClick={downloadEditedJpeg}
               disabled={!editedBytes || isEncoding}
-              title="Download the edited JPEG after coefficient-domain re-encoding"
+              title="Download the encoded JPEG experiment; the original is unchanged"
             >
               {isEncoding ? "Encoding…" : "Export JPEG"}
             </button>
@@ -1208,16 +1592,18 @@ function App() {
               <div className="preview-toolbar">
                 <div>
                   <div className="section-kicker">
-                    {editedPreviewUrl && !showOriginal
-                      ? "RE-ENCODED JPEG PREVIEW"
+                    {editedBytes && !showOriginal
+                      ? "ENCODED JPEG EXPERIMENT"
                       : "DECODED PIXEL PREVIEW"}
                   </div>
                   <p>
                     {isEncoding
-                      ? "Applying quantized DCT edits in the local JPEG worker…"
-                      : editedPreviewUrl
-                        ? "libjpeg-turbo re-encoding · source bytes remain unchanged"
-                        : "Original JPEG · no pixel-only editing"}
+                      ? "Applying JPEG-domain operations in the local worker…"
+                      : editedBytes && editedPreviewError
+                        ? editedPreviewError
+                        : editedBytes
+                          ? "libjpeg-turbo re-encoding · source bytes remain unchanged"
+                          : "Original JPEG · no pixel-only editing"}
                   </p>
                 </div>
                 <div className="overlay-controls">
@@ -1351,8 +1737,9 @@ function App() {
                   {document.inspection.width} × {document.inspection.height}
                 </span>
                 <span>
-                  {editedPreviewUrl && !showOriginal
-                    ? "Quantized DCT operation · JPEG re-encoded"
+                  {editedBytes && !showOriginal
+                    ? editedPreviewError ||
+                      "JPEG glitch operation · re-encoded preview"
                     : "Original decoded preview · source bytes unchanged"}
                 </span>
               </div>
@@ -1377,12 +1764,13 @@ function App() {
           {document ? (
             <>
               <section className="inspector-section selection-panel">
-                <div className="section-kicker">DCT COEFFICIENT EDIT</div>
-                <h2>Mask &amp; operation</h2>
+                <div className="section-kicker">FIRST GLITCH LAB · DCT</div>
+                <h2>Coefficient experiments</h2>
                 <p className="operation-description">
                   Paint or select in image-pixel coordinates. The mask is mapped
-                  to intersecting 8×8 DCT blocks for the chosen component.
-                  Zeroing coefficients requires JPEG re-encoding.
+                  to intersecting 8×8 DCT blocks of one selected component.
+                  These operations change quantized coefficients and create a
+                  newly encoded JPEG; the original JPEG bytes stay untouched.
                 </p>
                 <label className="coefficient-field">
                   <span>Component</span>
@@ -1394,28 +1782,101 @@ function App() {
                   >
                     {document.inspection.components.map((component, index) => (
                       <option key={component.id} value={index}>
-                        Component {index} · ID {component.id} ·{" "}
+                        {getComponentControlLabel(document.inspection, index)} ·{" "}
                         {component.horizontalSampling}×
                         {component.verticalSampling} sampling
                       </option>
                     ))}
                   </select>
                 </label>
+                <p className="coefficient-note">
+                  Y/Cb/Cr labels are common ID conventions, not guaranteed color
+                  metadata. Component index and sampling factors are
+                  authoritative. Select Cb or Cr to experiment on chroma
+                  coefficients independently.
+                </p>
                 <label className="coefficient-field tool-field">
-                  <span>AC frequency band</span>
+                  <span>Coefficient domain</span>
                   <select
-                    value={frequencyBand}
+                    value={coefficientDomain}
+                    disabled={
+                      coefficientMode === "offset" ||
+                      coefficientMode === "invert" ||
+                      coefficientMode === "isolate"
+                    }
                     onChange={(event) => {
-                      const result = getDctFrequencyBand(
-                        event.currentTarget.value,
-                      );
-                      if (result.ok) setFrequencyBand(result.value);
+                      const next = event.currentTarget.value;
+                      if (next === "dc" || next === "ac") {
+                        setCoefficientDomain(next);
+                        if (next === "dc") setFrequencyBand("all");
+                      }
                     }}
                   >
-                    {DCT_FREQUENCY_BANDS.map((band) => {
+                    <option value="ac">AC coefficients</option>
+                    <option value="dc">DC coefficients</option>
+                  </select>
+                </label>
+                <label className="coefficient-field tool-field">
+                  <span>Operation</span>
+                  <select
+                    value={coefficientMode}
+                    onChange={(event) => {
+                      const next = event.currentTarget.value;
+                      if (
+                        next === "zero" ||
+                        next === "scale" ||
+                        next === "randomize" ||
+                        next === "offset" ||
+                        next === "invert" ||
+                        next === "isolate"
+                      ) {
+                        setCoefficientMode(next);
+                        if (next === "offset") {
+                          setCoefficientDomain("dc");
+                          setFrequencyBand("all");
+                        } else if (next === "invert" || next === "isolate") {
+                          setCoefficientDomain("ac");
+                          if (next === "isolate" && frequencyBand === "all") {
+                            setFrequencyBand("low");
+                          }
+                        }
+                      }
+                    }}
+                  >
+                    <option value="zero">Zero selected coefficients</option>
+                    <option value="scale">Scale coefficients</option>
+                    <option value="randomize">Randomize coefficients</option>
+                    <option value="offset">Add DC offset</option>
+                    <option value="invert">Invert AC signs</option>
+                    <option value="isolate">
+                      Keep selected AC frequency band
+                    </option>
+                  </select>
+                </label>
+                <label className="coefficient-field tool-field">
+                  <span>
+                    {coefficientDomain === "ac" ? "AC frequency band" : "DC"}
+                  </span>
+                  <select
+                    value={frequencyBand}
+                    disabled={coefficientDomain === "dc"}
+                    onChange={(event) => {
+                      const next = GLITCH_FREQUENCY_BANDS.find(
+                        (band) => band === event.currentTarget.value,
+                      );
+                      if (next) setFrequencyBand(next);
+                    }}
+                  >
+                    {GLITCH_FREQUENCY_BANDS.map((band) => {
                       const range = DCT_FREQUENCY_BAND_RANGES[band];
                       return (
-                        <option key={band} value={band}>
+                        <option
+                          key={band}
+                          value={band}
+                          disabled={
+                            coefficientMode === "isolate" && band === "all"
+                          }
+                        >
                           {band === "all" ? "All AC" : band} · u+v{" "}
                           {range.minimum}–{range.maximum}
                         </option>
@@ -1423,6 +1884,56 @@ function App() {
                     })}
                   </select>
                 </label>
+                {["scale", "randomize", "offset"].includes(coefficientMode) && (
+                  <label className="coefficient-field tool-field">
+                    <span>
+                      {coefficientMode === "scale"
+                        ? "Scale multiplier"
+                        : coefficientMode === "randomize"
+                          ? "Random coefficient range"
+                          : "DC offset"}
+                    </span>
+                    <input
+                      type="number"
+                      min={
+                        coefficientMode === "scale"
+                          ? "-8"
+                          : coefficientMode === "offset"
+                            ? "-2047"
+                            : "1"
+                      }
+                      max={
+                        coefficientMode === "scale"
+                          ? "8"
+                          : coefficientMode === "offset"
+                            ? "2047"
+                            : "2047"
+                      }
+                      step={coefficientMode === "scale" ? "0.1" : "1"}
+                      value={coefficientStrength}
+                      onChange={(event) =>
+                        setCoefficientStrength(
+                          Number(event.currentTarget.value),
+                        )
+                      }
+                    />
+                  </label>
+                )}
+                {coefficientMode === "randomize" && (
+                  <label className="coefficient-field tool-field">
+                    <span>Deterministic seed</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="4294967295"
+                      step="1"
+                      value={coefficientSeed}
+                      onChange={(event) =>
+                        setCoefficientSeed(Number(event.currentTarget.value))
+                      }
+                    />
+                  </label>
+                )}
                 <label className="coefficient-field tool-field">
                   <span>Brush diameter · {brushSize} image pixels</span>
                   <input
@@ -1480,9 +1991,9 @@ function App() {
                         !historyDocument?.currentState.activeMask) ||
                       isEncoding
                     }
-                    onClick={applyDctOperation}
+                    onClick={applyCoefficientOperation}
                   >
-                    Zero selected AC band
+                    Apply {coefficientMode} to selected {coefficientDomain}
                   </button>
                   <button
                     className="operation-button secondary"
@@ -1494,6 +2005,129 @@ function App() {
                   </button>
                 </div>
               </section>
+              <section className="inspector-section">
+                <div className="section-kicker">BLOCK DUPLICATE / REPEAT</div>
+                <h2>Repeat one DCT block</h2>
+                <p className="operation-description">
+                  Copies the selected component's 8×8 quantized coefficient
+                  block to repeated block coordinates. It does not copy JPEG
+                  bytes or an MCU.
+                </p>
+                <div className="coefficient-coordinate-fields">
+                  <label className="coefficient-field">
+                    <span>Source block X</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={repeatSourceX}
+                      onChange={(event) =>
+                        setRepeatSourceX(Number(event.currentTarget.value))
+                      }
+                    />
+                  </label>
+                  <label className="coefficient-field">
+                    <span>Source block Y</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={repeatSourceY}
+                      onChange={(event) =>
+                        setRepeatSourceY(Number(event.currentTarget.value))
+                      }
+                    />
+                  </label>
+                </div>
+                <div className="coefficient-coordinate-fields">
+                  <label className="coefficient-field">
+                    <span>Offset X · blocks</span>
+                    <input
+                      type="number"
+                      step="1"
+                      value={repeatOffsetX}
+                      onChange={(event) =>
+                        setRepeatOffsetX(Number(event.currentTarget.value))
+                      }
+                    />
+                  </label>
+                  <label className="coefficient-field">
+                    <span>Offset Y · blocks</span>
+                    <input
+                      type="number"
+                      step="1"
+                      value={repeatOffsetY}
+                      onChange={(event) =>
+                        setRepeatOffsetY(Number(event.currentTarget.value))
+                      }
+                    />
+                  </label>
+                </div>
+                <label className="coefficient-field tool-field">
+                  <span>Copies</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="256"
+                    step="1"
+                    value={repeatCount}
+                    onChange={(event) =>
+                      setRepeatCount(Number(event.currentTarget.value))
+                    }
+                  />
+                </label>
+                <button
+                  className="operation-button"
+                  type="button"
+                  disabled={isEncoding}
+                  onClick={applyBlockRepeat}
+                >
+                  Duplicate / repeat block
+                </button>
+              </section>
+              <section className="inspector-section">
+                <div className="section-kicker">BLOCK PERMUTATION</div>
+                <h2>Shuffle selected DCT blocks</h2>
+                <p className="operation-description">
+                  Randomly permutes whole quantized 8×8 blocks, including DC,
+                  within the selected component and mask. Every selected block
+                  is used once; blocks outside the mask are unchanged. A block
+                  is selected at 50% mask coverage or greater. Rectangles use
+                  area; brush masks use an 8×8 coverage sample.
+                </p>
+                <label className="coefficient-field tool-field">
+                  <span>Deterministic seed</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="4294967295"
+                    step="1"
+                    value={permutationSeed}
+                    onChange={(event) =>
+                      setPermutationSeed(Number(event.currentTarget.value))
+                    }
+                  />
+                </label>
+                <button
+                  className="operation-button"
+                  type="button"
+                  disabled={
+                    (!selection &&
+                      !paintedMask &&
+                      !historyDocument?.currentState.activeMask) ||
+                    isEncoding
+                  }
+                  onClick={applyBlockPermutation}
+                >
+                  Permute blocks in mask
+                </button>
+              </section>
+              <QuantizationMatrixEditor
+                key={`${document.originalAsset.sha256}-${historyDocument?.revision ?? 0}`}
+                quantizationTables={currentQuantizationTables}
+                disabled={isEncoding}
+                onApply={applyQuantizationEdit}
+              />
               <section className="inspector-section operation-stack">
                 <div className="section-heading">
                   <div>
@@ -1514,11 +2148,15 @@ function App() {
                   <ol className="operation-list">
                     {historyDocument.operations.map((operation, index) => {
                       const mask = getMaskFromParameters(operation.parameters);
-                      const isDctOperation =
-                        operation.type === "jpeg/coefficients/zero-band";
-                      const dctDetails = isDctOperation
-                        ? getDctOperationDetails(operation.parameters)
-                        : null;
+                      const parameters =
+                        typeof operation.parameters === "object" &&
+                        operation.parameters !== null &&
+                        !Array.isArray(operation.parameters)
+                          ? operation.parameters
+                          : null;
+                      const operationKind = parameters
+                        ? Reflect.get(parameters, "kind")
+                        : undefined;
                       return (
                         <li
                           className="operation-entry"
@@ -1540,9 +2178,17 @@ function App() {
                                 }
                               />
                               <span>
-                                {isDctOperation
-                                  ? "Zero DCT frequency band"
-                                  : "Spatial mask"}
+                                {operation.type === "spatial/apply-mask"
+                                  ? "Spatial mask"
+                                  : operationKind === "coefficients"
+                                    ? "Coefficient glitch"
+                                    : operationKind === "block-repeat"
+                                      ? "Block duplicate / repeat"
+                                      : operationKind === "block-permutation"
+                                        ? "Block permutation"
+                                        : operationKind === "quantization"
+                                          ? "DQT matrix edit"
+                                          : operation.type}
                               </span>
                             </label>
                             <span className="operation-status">
@@ -1554,11 +2200,42 @@ function App() {
                               {describeMask(mask)}
                             </p>
                           )}
-                          {dctDetails && (
+                          {parameters && operationKind === "coefficients" && (
                             <p className="operation-parameters">
-                              Component {dctDetails.componentIndex} ·{" "}
-                              {dctDetails.frequencyBand} AC band · quantized
-                              coefficients · re-encoded
+                              Component{" "}
+                              {Reflect.get(parameters, "componentIndex")} ·{" "}
+                              {Reflect.get(parameters, "mode")}{" "}
+                              {Reflect.get(parameters, "domain")} ·{" "}
+                              {Reflect.get(parameters, "frequencyBand")} · seed{" "}
+                              {Reflect.get(parameters, "seed")}
+                            </p>
+                          )}
+                          {parameters && operationKind === "block-repeat" && (
+                            <p className="operation-parameters">
+                              Component{" "}
+                              {Reflect.get(parameters, "componentIndex")} ·
+                              source ({Reflect.get(parameters, "sourceX")},{" "}
+                              {Reflect.get(parameters, "sourceY")}) · offset (
+                              {Reflect.get(parameters, "offsetX")},{" "}
+                              {Reflect.get(parameters, "offsetY")}) ·{" "}
+                              {Reflect.get(parameters, "repetitions")} copies
+                            </p>
+                          )}
+                          {parameters &&
+                            operationKind === "block-permutation" && (
+                              <p className="operation-parameters">
+                                Component{" "}
+                                {Reflect.get(parameters, "componentIndex")} ·
+                                seed {Reflect.get(parameters, "seed")} ·
+                                Fisher–Yates
+                              </p>
+                            )}
+                          {parameters && operationKind === "quantization" && (
+                            <p className="operation-parameters">
+                              DQT {Reflect.get(parameters, "tableId")} ·{" "}
+                              {Reflect.get(parameters, "semantics")} ·{" "}
+                              {Reflect.get(parameters, "pattern")} · seed{" "}
+                              {Reflect.get(parameters, "seed")}
                             </p>
                           )}
                           <div className="operation-actions">
@@ -1594,7 +2271,10 @@ function App() {
                             <button
                               className="operation-button secondary"
                               type="button"
-                              disabled={!selection || isDctOperation}
+                              disabled={
+                                !selection ||
+                                operation.type !== "spatial/apply-mask"
+                              }
                               onClick={() => editMaskOperation(operation.id)}
                             >
                               Update from selection
@@ -1657,7 +2337,10 @@ function App() {
                 asset={document.originalAsset}
                 inspection={document.inspection}
               />
-              <MetadataInspector inspection={document.inspection} />
+              <MetadataInspector
+                inspection={document.inspection}
+                quantizationTables={currentQuantizationTables}
+              />
             </>
           ) : (
             <div className="inspector-empty">

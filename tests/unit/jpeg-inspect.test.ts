@@ -79,6 +79,7 @@ describe("JPEG inspector", () => {
         },
       ],
     });
+
     expect(result.value.process.toLowerCase()).toBe(
       fixture.process.toLowerCase(),
     );
@@ -100,6 +101,33 @@ describe("JPEG inspector", () => {
       expect(marker.startOffset).toBeLessThan(marker.endOffset);
       expect(marker.endOffset).toBeLessThanOrEqual(bytes.byteLength);
     }
+  });
+
+  it("exposes DQT values in natural 8×8 coefficient order", async () => {
+    const bytes = await fixtureBytes("synthetic-color-420.jpg");
+    const originalInspection = inspectJpeg(bytes);
+    expect(originalInspection.ok).toBe(true);
+    if (!originalInspection.ok) return;
+    const dqt = originalInspection.value.markers.find(
+      (marker) => marker.name === "DQT",
+    );
+    expect(dqt).toBeDefined();
+    if (!dqt) return;
+
+    const modified = bytes.slice();
+    const tableValuesStart = dqt.startOffset + 5;
+    for (let index = 0; index < 64; index += 1) {
+      modified[tableValuesStart + index] = index + 1;
+    }
+
+    const result = inspectJpeg(modified);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const table = result.value.quantizationTables.find(({ id }) => id === 0);
+    expect(table?.values).toHaveLength(64);
+    expect(table?.values.slice(0, 10)).toEqual([
+      1, 2, 6, 7, 15, 16, 28, 29, 3, 5,
+    ]);
   });
 
   it("inspects grayscale JPEG geometry", async () => {

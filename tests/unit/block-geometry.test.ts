@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import {
   getMaskBlockCoverage,
+  getMaskBlockCoverageAtLeastHalf,
   mapJpegBlockCoordinate,
   snapSelectionToComponentBlocks,
 } from "../../src/jpeg/block-geometry";
@@ -246,5 +247,54 @@ describe("JPEG block coordinates", () => {
     expect(getMaskBlockCoverage(mask.value, inspection.value, 2)).toMatchObject(
       { ok: true, value: new Uint8Array([1]) },
     );
+  });
+
+  it("selects only blocks with at least half of their visible area covered", async () => {
+    const inspection = inspectJpeg(
+      await fixtureBytes("synthetic-color-420.jpg"),
+    );
+    expect(inspection.ok).toBe(true);
+    if (!inspection.ok) return;
+
+    const halfLumaBlock = createRectangleSelection(0, 0, 4, 8, 16, 16);
+    expect(halfLumaBlock.ok).toBe(true);
+    if (!halfLumaBlock.ok || !halfLumaBlock.value) return;
+    const lumaMask = createSpatialMask(halfLumaBlock.value, 16, 16);
+    expect(lumaMask.ok).toBe(true);
+    if (!lumaMask.ok) return;
+    expect(
+      getMaskBlockCoverageAtLeastHalf(lumaMask.value, inspection.value, 1),
+    ).toMatchObject({
+      ok: true,
+      value: new Uint8Array([1, 0, 0, 0]),
+    });
+
+    const belowHalfChromaBlock = createRectangleSelection(0, 0, 7, 16, 16, 16);
+    expect(belowHalfChromaBlock.ok).toBe(true);
+    if (!belowHalfChromaBlock.ok || !belowHalfChromaBlock.value) return;
+    const chromaMask = createSpatialMask(belowHalfChromaBlock.value, 16, 16);
+    expect(chromaMask.ok).toBe(true);
+    if (!chromaMask.ok) return;
+    expect(
+      getMaskBlockCoverageAtLeastHalf(chromaMask.value, inspection.value, 2),
+    ).toMatchObject({ ok: true, value: new Uint8Array([0]) });
+  });
+
+  it("uses sampled brush coverage when selecting blocks for permutation", async () => {
+    const inspection = inspectJpeg(
+      await fixtureBytes("synthetic-color-420.jpg"),
+    );
+    expect(inspection.ok).toBe(true);
+    if (!inspection.ok) return;
+    const mask = createBrushMask([{ x: 4, y: 4 }], 4, 16, 16);
+    expect(mask.ok).toBe(true);
+    if (!mask.ok) return;
+
+    expect(
+      getMaskBlockCoverageAtLeastHalf(mask.value, inspection.value, 1),
+    ).toMatchObject({
+      ok: true,
+      value: new Uint8Array([1, 0, 0, 0]),
+    });
   });
 });

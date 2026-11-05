@@ -31,6 +31,10 @@ file bytes.
 This is an experimental image editor, not a general-purpose replacement
 for Photoshop. It should prioritize controllable, reproducible JPEG
 glitch techniques over a large collection of conventional filters.
+Its primary success criterion is whether photographers can explore and
+compare visual consequences of changing JPEG coding data. A standards-valid,
+universally decodable JPEG is one useful outcome, not a prerequisite for
+every experiment.
 
 ## 2. Product principles
 
@@ -53,6 +57,10 @@ glitch techniques over a large collection of conventional filters.
     silently discard the original or overwrite it.
 8.  **Browser-first privacy.** Process files locally in the browser
     where feasible. Do not upload user images to a server by default.
+9.  **Experiment before conformance.** Show the resulting JPEG when a
+    decoder can render it, but retain an encoded experiment for export
+    when preview decoding fails. Report the failure as an observed
+    outcome, not as proof that the visual experiment has no value.
 
 ## 3. Target users and use cases
 
@@ -96,7 +104,6 @@ The first usable version should support:
 
 - two-image workflow and DCT transplant;
 - AC-only and DC-only transplant;
-- component-specific editing (Y, Cb, Cr);
 - progressive JPEG scan inspection and experiments;
 - controlled entropy-stream manipulation;
 - raw byte editor;
@@ -304,6 +311,11 @@ warning that DC prediction and coefficient interpretation are
 component-specific; - AC operation: modify selected AC coefficients
 while leaving DC coefficients untouched.
 
+The initial glitch lab exposes zero, scale, and seeded randomize modes for
+selected coefficients, plus a signed DC offset. Coefficient ranges are
+bounded to the baseline representation supported by the current encoder.
+Randomize stores an unsigned 32-bit seed so replay is reproducible.
+
 **Block Transplant** - copy quantized coefficient blocks from a source
 region into a target region; - initially require compatible component
 layout and block geometry; - define policy for quantization-table
@@ -332,6 +344,13 @@ The UI must distinguish table editing from re-quantizing existing
 coefficients. The engine must document its chosen behavior and preserve
 the original coefficients so edits can be revised.
 
+The initial editor offers two explicit behaviors: reinterpret the retained
+quantized coefficients using the edited DQT, or approximately requantize
+using `round(oldCoefficient × oldQuantizer / newQuantizer)`. Neither mode
+restores information discarded before import. Flat, stripe, radial, and
+seeded-random matrix patterns are available in natural 8×8 coefficient
+order.
+
 ### 7.4 MCU and block tools
 
 **Block Corrupt** - affect selected 8×8 blocks; - operations: zero
@@ -346,6 +365,10 @@ repeat, omit/reconstruct where supported; - display MCU boundaries.
 **Block/MCU displacement** - remap coefficient blocks or MCUs
 spatially; - define edge handling and component alignment; - do not
 implement by moving arbitrary byte ranges.
+
+The first lab duplicates one quantized DCT block repeatedly within the
+same component. Source and every destination must fit that component's
+visible block grid. This does not copy an MCU or entropy-coded bytes.
 
 ### 7.5 Component tools
 
@@ -648,12 +671,14 @@ The MVP is complete when a user can:
     coefficients.
 4.  Paint a mask and apply at least one DCT operation to affected
     blocks.
-5.  Edit a quantization table and preview the result through a
-    documented re-encoding pipeline.
-6.  Undo and redo operations without changing the original file.
+5.  Run zero/scale/randomize, DC offset, AC manipulation, block repeat,
+    and DQT pattern experiments with undo/redo.
+6.  Distinguish DQT reinterpretation from coefficient requantization and
+    understand that neither recovers discarded detail.
 7.  Toggle and edit operations in the history/stack.
 8.  Reproduce seeded random edits.
-9.  Export a JPEG and understand whether it was re-encoded.
+9.  Export an encoded experiment even when the browser cannot preview
+    decode it, with that limitation clearly reported.
 10. Recover the original image at any time.
 11. Use the application without uploading the image to a remote server.
 
@@ -686,10 +711,11 @@ The implemented DCT operation zeros the selected natural-order AC band
 coefficients. The supported JPEG subset and re-encoding/metadata limits are
 recorded in `docs/ROADMAP.md` and ADR-005.
 
-### Milestone 5 --- Quantization and block operations
+### Milestone 5 --- First Glitch Lab (complete)
 
-- quantization matrix editing with explicit re-quantization semantics;
-- block duplicate/swap/repeat and component-specific operations with compatibility validation.
+- coefficient zero/scale/randomize and DC offset;
+- separate DC and AC targeting, component selection, and block repeat;
+- DQT matrix editing and pattern generation with explicit reinterpret/requantize semantics.
 
 ### Milestone 6 --- Two-image transplant
 
@@ -708,14 +734,13 @@ recorded in `docs/ROADMAP.md` and ADR-005.
 ## 16. Open technical decisions
 
 The initial codec and baseline-only process boundary are recorded in ADR-003
-and ADR-005. Remaining decisions include:
+and ADR-005. DQT semantics and the experiment-first product priority are
+recorded in ADR-006. Remaining decisions include:
 
-1.  How should changed quantization tables be applied to existing
-    coefficients?
-2.  Which operations can be evaluated incrementally, and which require
+1.  Which operations can be evaluated incrementally, and which require
     full re-encoding?
-3.  How much of the raw entropy stream should be exposed in the experimental release?
-4.  Should project files embed source JPEG bytes or reference a local
+2.  How much of the raw entropy stream should be exposed in the experimental release?
+3.  Should project files embed source JPEG bytes or reference a local
     file selected again on reopen?
 
 ## 17. Important terminology

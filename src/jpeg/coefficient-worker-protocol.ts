@@ -1,6 +1,5 @@
 import type { Result } from "../shared/result";
-import type { SpatialMask } from "../document/masks";
-import type { DctFrequencyBand } from "../operations/dct";
+import type { JpegGlitchOperation } from "../operations/jpeg-glitch";
 import type { JpegBlockGeometry } from "./block-geometry";
 
 export type CoefficientWorkerRequest =
@@ -21,11 +20,7 @@ export type CoefficientWorkerRequest =
       type: "encode";
       bytes: ArrayBuffer;
       geometry: JpegBlockGeometry;
-      edits: readonly {
-        componentIndex: number;
-        frequencyBand: DctFrequencyBand;
-        mask: SpatialMask;
-      }[];
+      operations: readonly JpegGlitchOperation[];
     };
 
 export type CoefficientWorkerValue =

@@ -607,6 +607,47 @@ h1 {
   font-weight: 700;
 }
 
+.quantization-table-view + .quantization-table-view {
+  margin-top: 16px;
+}
+
+.editable-quantization-table {
+  table-layout: fixed;
+}
+
+.editable-quantization-table td {
+  min-width: 0;
+  padding: 2px;
+}
+
+.editable-quantization-table input {
+  width: 100%;
+  min-width: 0;
+  padding: 3px 1px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: center;
+}
+
+.editable-quantization-table input:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.editable-quantization-table td.coefficient-dc input {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.quantization-pattern-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  margin: 12px 0 8px;
+}
+
 .coefficient-note {
   margin-bottom: 0;
 }

@@ -9,11 +9,35 @@ interface LibjpegCoefficientsModule {
     blockY: number,
     output: number,
   ): number;
-  _coefficient_zero_band(
+  _coefficient_apply(
     component: number,
+    mode: number,
+    domain: number,
     frequencyBand: number,
     blockMask: number,
     blockMaskSize: number,
+    strength: number,
+    seed: number,
+  ): number;
+  _coefficient_repeat_block(
+    component: number,
+    sourceX: number,
+    sourceY: number,
+    offsetX: number,
+    offsetY: number,
+    repetitions: number,
+  ): number;
+  _coefficient_permute_blocks(
+    component: number,
+    blockMask: number,
+    blockMaskSize: number,
+    seed: number,
+  ): number;
+  _coefficient_set_quantization(
+    tableId: number,
+    semantics: number,
+    values: number,
+    valuesSize: number,
   ): number;
   _coefficient_encode(): number;
   _coefficient_output_pointer(): number;

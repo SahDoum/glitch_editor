@@ -1,7 +1,18 @@
 import type createLibjpegCoefficients from "./codec/libjpeg-coefficients.js";
-import { getMaskBlockCoverage } from "./block-geometry";
+import {
+  getMaskBlockCoverage,
+  getMaskBlockCoverageAtLeastHalf,
+} from "./block-geometry";
 import { isSpatialMask } from "../document/masks";
-import { MAX_DCT_OPERATIONS } from "../operations/dct";
+import {
+  COEFFICIENT_DOMAINS,
+  COEFFICIENT_GLITCH_MODES,
+  GLITCH_FREQUENCY_BANDS,
+  MAX_GLITCH_OPERATIONS,
+  QUANTIZATION_PATTERNS,
+  QUANTIZATION_SEMANTICS,
+  type JpegGlitchOperation,
+} from "../operations/jpeg-glitch";
 import { failure, success } from "../shared/result";
 import type {
   CoefficientWorkerRequest,
@@ -16,15 +27,32 @@ const CODEC_ERRORS: Record<number, string> = {
   [-4]: "The selected component or DCT block is outside the decoded image.",
   [-5]: "The encoded JPEG exceeds the 50 MiB output limit.",
   [-6]: "The DCT edit parameters do not match the decoded JPEG.",
+  [-7]: "The selected quantization table or its 64 values are invalid.",
 };
 const MAX_JPEG_BYTES = 50 * 1024 * 1024;
 const MAX_EDITED_BLOCKS = 8 * 1024 * 1024;
-const MAX_EDIT_COUNT = MAX_DCT_OPERATIONS;
+const MAX_EDIT_COUNT = MAX_GLITCH_OPERATIONS;
 const FREQUENCY_BAND_INDEX = {
   low: 0,
   mid: 1,
   high: 2,
   all: 3,
+} as const;
+const GLITCH_MODE_INDEX = {
+  zero: 0,
+  scale: 1,
+  randomize: 2,
+  offset: 3,
+  invert: 4,
+  isolate: 5,
+} as const;
+const COEFFICIENT_DOMAIN_INDEX = {
+  ac: 0,
+  dc: 1,
+} as const;
+const QUANTIZATION_SEMANTICS_INDEX = {
+  reinterpret: 0,
+  requantize: 1,
 } as const;
 
 let codecPromise: ReturnType<typeof createLibjpegCoefficients> | null = null;
@@ -49,6 +77,27 @@ function getCodec() {
             ).href
           : path;
       },
+    }).then((codec) => {
+      const requiredExports = [
+        "_coefficient_open",
+        "_coefficient_read_block",
+        "_coefficient_apply",
+        "_coefficient_repeat_block",
+        "_coefficient_permute_blocks",
+        "_coefficient_set_quantization",
+        "_coefficient_encode",
+        "_coefficient_output_pointer",
+        "_coefficient_output_size",
+        "_coefficient_close",
+      ];
+      if (
+        requiredExports.some(
+          (name) => typeof Reflect.get(codec, name) !== "function",
+        )
+      ) {
+        throw new Error("The generated JPEG codec is outdated.");
+      }
+      return codec;
     });
   });
   return codecPromise;
@@ -74,79 +123,241 @@ function isRequest(value: unknown): value is CoefficientWorkerRequest {
     );
   }
   const geometry: unknown = Reflect.get(value, "geometry");
-  const edits: unknown = Reflect.get(value, "edits");
+  const operations: unknown = Reflect.get(value, "operations");
   const bytes: unknown = Reflect.get(value, "bytes");
   if (
     value.type !== "encode" ||
     !(bytes instanceof ArrayBuffer) ||
     !isGeometry(geometry) ||
-    !Array.isArray(edits) ||
-    edits.length > MAX_EDIT_COUNT ||
+    !Array.isArray(operations) ||
+    operations.length > MAX_EDIT_COUNT ||
     bytes.byteLength === 0 ||
     bytes.byteLength > MAX_JPEG_BYTES
   ) {
     return false;
   }
-  return edits.every((edit: unknown) => isCoefficientEdit(edit, geometry));
-}
-
-type EncodedCoefficientEdit = Extract<
-  CoefficientWorkerRequest,
-  { type: "encode" }
->["edits"][number];
-
-function isCoefficientEdit(
-  value: unknown,
-  geometry: JpegBlockGeometry,
-): value is EncodedCoefficientEdit {
-  if (typeof value !== "object" || value === null) return false;
-  const componentIndex = Reflect.get(value, "componentIndex");
-  const frequencyBand = Reflect.get(value, "frequencyBand");
-  const mask = Reflect.get(value, "mask");
   return (
-    typeof componentIndex === "number" &&
-    Number.isInteger(componentIndex) &&
-    componentIndex >= 0 &&
-    componentIndex < geometry.components.length &&
-    typeof frequencyBand === "string" &&
-    Object.hasOwn(FREQUENCY_BAND_INDEX, frequencyBand) &&
-    isSpatialMask(mask) &&
-    mask.width === geometry.width &&
-    mask.height === geometry.height
+    operations.every((operation: unknown) =>
+      isGlitchOperation(operation, geometry),
+    ) && isBoundedOperationWork(geometry, operations)
   );
 }
 
-function getEditWorkSize(
+function isGlitchOperation(
+  value: unknown,
   geometry: JpegBlockGeometry,
-  edits: readonly EncodedCoefficientEdit[],
-): number {
+): value is JpegGlitchOperation {
+  if (typeof value !== "object" || value === null) return false;
+  const kind = Reflect.get(value, "kind");
+  if (kind === "coefficients") {
+    const componentIndex = Reflect.get(value, "componentIndex");
+    const frequencyBand = Reflect.get(value, "frequencyBand");
+    const domain = Reflect.get(value, "domain");
+    const mode = Reflect.get(value, "mode");
+    const strength = Reflect.get(value, "strength");
+    const seed = Reflect.get(value, "seed");
+    const mask = Reflect.get(value, "mask");
+    return (
+      typeof componentIndex === "number" &&
+      Number.isInteger(componentIndex) &&
+      componentIndex >= 0 &&
+      componentIndex < geometry.components.length &&
+      typeof frequencyBand === "string" &&
+      GLITCH_FREQUENCY_BANDS.some((band) => band === frequencyBand) &&
+      typeof domain === "string" &&
+      COEFFICIENT_DOMAINS.some((candidate) => candidate === domain) &&
+      typeof mode === "string" &&
+      COEFFICIENT_GLITCH_MODES.some((candidate) => candidate === mode) &&
+      typeof strength === "number" &&
+      Number.isFinite(strength) &&
+      typeof seed === "number" &&
+      Number.isInteger(seed) &&
+      seed >= 0 &&
+      seed <= 0xffff_ffff &&
+      ((mode === "scale" && strength >= -8 && strength <= 8) ||
+        (mode === "randomize" && strength >= 1 && strength <= 2047) ||
+        (mode === "offset" &&
+          domain === "dc" &&
+          Number.isInteger(strength) &&
+          strength >= -2047 &&
+          strength <= 2047) ||
+        ((mode === "invert" || mode === "isolate") &&
+          domain === "ac" &&
+          strength === 0 &&
+          (mode !== "isolate" || frequencyBand !== "all")) ||
+        mode === "zero") &&
+      (mode !== "offset" || domain === "dc") &&
+      (mode !== "invert" || domain === "ac") &&
+      (mode !== "isolate" || domain === "ac") &&
+      (domain !== "dc" || frequencyBand === "all") &&
+      isSpatialMask(mask) &&
+      mask.width === geometry.width &&
+      mask.height === geometry.height
+    );
+  }
+  if (kind === "block-repeat") {
+    const componentIndex = Reflect.get(value, "componentIndex");
+    const sourceX = Reflect.get(value, "sourceX");
+    const sourceY = Reflect.get(value, "sourceY");
+    const offsetX = Reflect.get(value, "offsetX");
+    const offsetY = Reflect.get(value, "offsetY");
+    const repetitions = Reflect.get(value, "repetitions");
+    if (
+      typeof componentIndex !== "number" ||
+      !Number.isInteger(componentIndex) ||
+      componentIndex < 0 ||
+      componentIndex >= geometry.components.length ||
+      !isInteger(sourceX) ||
+      !isInteger(sourceY) ||
+      !isInteger(offsetX) ||
+      !isInteger(offsetY) ||
+      !isInteger(repetitions) ||
+      (offsetX === 0 && offsetY === 0) ||
+      Math.abs(offsetX) > 256 ||
+      Math.abs(offsetY) > 256 ||
+      repetitions < 1 ||
+      repetitions > 256
+    ) {
+      return false;
+    }
+    const component = geometry.components[componentIndex];
+    if (!component) return false;
+    const grid = getComponentBlockGrid(geometry, component);
+    if (
+      sourceX < 0 ||
+      sourceY < 0 ||
+      sourceX >= grid.columns ||
+      sourceY >= grid.rows
+    ) {
+      return false;
+    }
+    for (let repetition = 1; repetition <= repetitions; repetition += 1) {
+      const targetX = sourceX + offsetX * repetition;
+      const targetY = sourceY + offsetY * repetition;
+      if (
+        targetX < 0 ||
+        targetY < 0 ||
+        targetX >= grid.columns ||
+        targetY >= grid.rows
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (kind === "block-permutation") {
+    const componentIndex = Reflect.get(value, "componentIndex");
+    const mask = Reflect.get(value, "mask");
+    const seed = Reflect.get(value, "seed");
+    return (
+      isInteger(componentIndex) &&
+      componentIndex >= 0 &&
+      componentIndex < geometry.components.length &&
+      isSpatialMask(mask) &&
+      mask.width === geometry.width &&
+      mask.height === geometry.height &&
+      isInteger(seed) &&
+      seed >= 0 &&
+      seed <= 0xffff_ffff
+    );
+  }
+  if (kind !== "quantization") return false;
+  const tableId = Reflect.get(value, "tableId");
+  const values: unknown = Reflect.get(value, "values");
+  const semantics = Reflect.get(value, "semantics");
+  const pattern = Reflect.get(value, "pattern");
+  const seed = Reflect.get(value, "seed");
+  return (
+    typeof tableId === "number" &&
+    Number.isInteger(tableId) &&
+    tableId >= 0 &&
+    tableId <= 3 &&
+    geometry.components.some(
+      (component) => component.quantizationTable === tableId,
+    ) &&
+    Array.isArray(values) &&
+    values.length === 64 &&
+    values.every(isQuantizationValue) &&
+    typeof semantics === "string" &&
+    QUANTIZATION_SEMANTICS.some((candidate) => candidate === semantics) &&
+    (pattern === "manual" ||
+      (typeof pattern === "string" &&
+        QUANTIZATION_PATTERNS.some((candidate) => candidate === pattern))) &&
+    isInteger(seed) &&
+    seed >= 0 &&
+    seed <= 0xffff_ffff
+  );
+}
+
+function isInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value);
+}
+
+function isQuantizationValue(value: unknown): value is number {
+  return isInteger(value) && value >= 1 && value <= 255;
+}
+
+function getComponentBlockGrid(
+  geometry: JpegBlockGeometry,
+  component: JpegBlockGeometry["components"][number],
+) {
   const maxHorizontalSampling = Math.max(
     ...geometry.components.map(({ horizontalSampling }) => horizontalSampling),
   );
   const maxVerticalSampling = Math.max(
     ...geometry.components.map(({ verticalSampling }) => verticalSampling),
   );
-  return edits.reduce((total, edit) => {
-    const component = geometry.components[edit.componentIndex];
-    if (!component) return total;
-    return (
-      total +
-      Math.ceil(
-        (geometry.width * component.horizontalSampling) /
-          (8 * maxHorizontalSampling),
-      ) *
-        Math.ceil(
-          (geometry.height * component.verticalSampling) /
-            (8 * maxVerticalSampling),
-        )
-    );
+  return {
+    columns: Math.ceil(
+      (geometry.width * component.horizontalSampling) /
+        (8 * maxHorizontalSampling),
+    ),
+    rows: Math.ceil(
+      (geometry.height * component.verticalSampling) /
+        (8 * maxVerticalSampling),
+    ),
+  };
+}
+
+function getOperationWorkSize(
+  geometry: JpegBlockGeometry,
+  operation: JpegGlitchOperation,
+): number {
+  if (operation.kind === "coefficients") {
+    const component = geometry.components[operation.componentIndex];
+    if (!component) return 0;
+    const grid = getComponentBlockGrid(geometry, component);
+    return grid.columns * grid.rows;
+  }
+  if (operation.kind === "block-repeat") return operation.repetitions;
+  if (operation.kind === "block-permutation") {
+    const component = geometry.components[operation.componentIndex];
+    if (!component) return 0;
+    const grid = getComponentBlockGrid(geometry, component);
+    return grid.columns * grid.rows;
+  }
+  if (operation.semantics === "reinterpret") return 0;
+  return geometry.components.reduce((total, component) => {
+    if (component.quantizationTable !== operation.tableId) return total;
+    const grid = getComponentBlockGrid(geometry, component);
+    return total + grid.columns * grid.rows;
   }, 0);
 }
 
+function isBoundedOperationWork(
+  geometry: JpegBlockGeometry,
+  operations: readonly JpegGlitchOperation[],
+): boolean {
+  return (
+    operations.reduce(
+      (total, operation) => total + getOperationWorkSize(geometry, operation),
+      0,
+    ) <= MAX_EDITED_BLOCKS
+  );
+}
+
 function isGeometry(value: unknown): value is JpegBlockGeometry {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
+  if (typeof value !== "object" || value === null) return false;
   const width = Reflect.get(value, "width");
   const height = Reflect.get(value, "height");
   const components: unknown = Reflect.get(value, "components");
@@ -168,14 +379,18 @@ function isGeometry(value: unknown): value is JpegBlockGeometry {
     const id = Reflect.get(component, "id");
     const horizontalSampling = Reflect.get(component, "horizontalSampling");
     const verticalSampling = Reflect.get(component, "verticalSampling");
+    const quantizationTable = Reflect.get(component, "quantizationTable");
     return (
-      Number.isInteger(id) &&
-      Number.isInteger(horizontalSampling) &&
+      isInteger(id) &&
+      isInteger(horizontalSampling) &&
       horizontalSampling >= 1 &&
       horizontalSampling <= 4 &&
-      Number.isInteger(verticalSampling) &&
+      isInteger(verticalSampling) &&
       verticalSampling >= 1 &&
-      verticalSampling <= 4
+      verticalSampling <= 4 &&
+      isInteger(quantizationTable) &&
+      quantizationTable >= 0 &&
+      quantizationTable <= 3
     );
   });
 }
@@ -185,14 +400,14 @@ async function handleRequest(
 ): Promise<CoefficientWorkerResponse> {
   if (
     request.type === "encode" &&
-    getEditWorkSize(request.geometry, request.edits) > MAX_EDITED_BLOCKS
+    !isBoundedOperationWork(request.geometry, request.operations)
   ) {
     return {
       id: request.id,
       result: failure({
         code: "PROCESSING_FAILED",
         message:
-          "This DCT preview exceeds the worker's bounded processing limit. Use a smaller image or fewer DCT operations.",
+          "This JPEG glitch preview exceeds the worker's bounded processing limit. Use a smaller image or fewer operations.",
       }),
     };
   }
@@ -227,59 +442,137 @@ async function handleRequest(
         };
       }
 
-      for (const edit of request.edits) {
-        const component = request.geometry.components[edit.componentIndex];
-        if (!component) {
-          return {
-            id: request.id,
-            result: failure({
-              code: "INVALID_INPUT",
-              message: "The selected JPEG component is invalid.",
-            }),
-          };
-        }
-        const coverage = getMaskBlockCoverage(
-          edit.mask,
-          request.geometry,
-          component.id,
-        );
-        if (!coverage.ok) {
-          return {
-            id: request.id,
-            result: coverage,
-          };
-        }
-        const blockMask = coverage.value;
-        const maskPointer = codec._malloc(blockMask.byteLength);
-        if (maskPointer === 0) {
-          return {
-            id: request.id,
-            result: failure({
-              code: "PROCESSING_FAILED",
-              message: "There was not enough memory to prepare the DCT mask.",
-            }),
-          };
-        }
-        try {
-          codec.HEAPU8.set(blockMask, maskPointer);
-          status = codec._coefficient_zero_band(
-            edit.componentIndex,
-            FREQUENCY_BAND_INDEX[edit.frequencyBand],
-            maskPointer,
-            blockMask.byteLength,
+      for (const operation of request.operations) {
+        if (operation.kind === "coefficients") {
+          const component =
+            request.geometry.components[operation.componentIndex];
+          if (!component) {
+            return {
+              id: request.id,
+              result: failure({
+                code: "INVALID_INPUT",
+                message: "The selected JPEG component is invalid.",
+              }),
+            };
+          }
+          const coverage = getMaskBlockCoverage(
+            operation.mask,
+            request.geometry,
+            component.id,
           );
-        } finally {
-          codec._free(maskPointer);
+          if (!coverage.ok) return { id: request.id, result: coverage };
+          const blockMask = coverage.value;
+          const maskPointer = codec._malloc(blockMask.byteLength);
+          if (maskPointer === 0) {
+            return {
+              id: request.id,
+              result: failure({
+                code: "PROCESSING_FAILED",
+                message: "There was not enough memory to prepare the DCT mask.",
+              }),
+            };
+          }
+          try {
+            codec.HEAPU8.set(blockMask, maskPointer);
+            status = codec._coefficient_apply(
+              operation.componentIndex,
+              GLITCH_MODE_INDEX[operation.mode],
+              COEFFICIENT_DOMAIN_INDEX[operation.domain],
+              FREQUENCY_BAND_INDEX[operation.frequencyBand],
+              maskPointer,
+              blockMask.byteLength,
+              operation.strength,
+              operation.seed,
+            );
+          } finally {
+            codec._free(maskPointer);
+          }
+        } else if (operation.kind === "block-repeat") {
+          status = codec._coefficient_repeat_block(
+            operation.componentIndex,
+            operation.sourceX,
+            operation.sourceY,
+            operation.offsetX,
+            operation.offsetY,
+            operation.repetitions,
+          );
+        } else if (operation.kind === "block-permutation") {
+          const component =
+            request.geometry.components[operation.componentIndex];
+          if (!component) {
+            return {
+              id: request.id,
+              result: failure({
+                code: "INVALID_INPUT",
+                message: "The selected JPEG component is invalid.",
+              }),
+            };
+          }
+          const coverage = getMaskBlockCoverageAtLeastHalf(
+            operation.mask,
+            request.geometry,
+            component.id,
+          );
+          if (!coverage.ok) return { id: request.id, result: coverage };
+          const maskPointer = codec._malloc(coverage.value.byteLength);
+          if (maskPointer === 0) {
+            return {
+              id: request.id,
+              result: failure({
+                code: "PROCESSING_FAILED",
+                message:
+                  "There was not enough memory to prepare the block-permutation mask.",
+              }),
+            };
+          }
+          try {
+            codec.HEAPU8.set(coverage.value, maskPointer);
+            status = codec._coefficient_permute_blocks(
+              operation.componentIndex,
+              maskPointer,
+              coverage.value.byteLength,
+              operation.seed,
+            );
+          } finally {
+            codec._free(maskPointer);
+          }
+        } else {
+          const values = Uint8Array.from(operation.values);
+          const valuesPointer = codec._malloc(values.byteLength);
+          if (valuesPointer === 0) {
+            return {
+              id: request.id,
+              result: failure({
+                code: "PROCESSING_FAILED",
+                message:
+                  "There was not enough memory to prepare the quantization table.",
+              }),
+            };
+          }
+          try {
+            codec.HEAPU8.set(values, valuesPointer);
+            status = codec._coefficient_set_quantization(
+              operation.tableId,
+              QUANTIZATION_SEMANTICS_INDEX[operation.semantics],
+              valuesPointer,
+              values.byteLength,
+            );
+          } finally {
+            codec._free(valuesPointer);
+          }
         }
 
         if (status !== 0) {
           return {
             id: request.id,
             result: failure({
-              code: "PROCESSING_FAILED",
+              code:
+                status === -4 || status === -7
+                  ? "INVALID_INPUT"
+                  : "PROCESSING_FAILED",
               message:
                 CODEC_ERRORS[status] ??
-                "The DCT edit could not be applied to this JPEG.",
+                "The JPEG glitch operation could not be applied.",
             }),
           };
         }

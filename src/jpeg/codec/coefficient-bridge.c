@@ -4,11 +4,13 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #include <jpeglib.h>
 
 #define MAX_COEFFICIENT_BYTES (128ULL * 1024ULL * 1024ULL)
 #define MAX_JPEG_BYTES (50ULL * 1024ULL * 1024ULL)
+#define MAX_EDITED_BLOCKS (8U * 1024U * 1024U)
 
 enum {
   CODEC_OK = 0,
@@ -17,7 +19,8 @@ enum {
   CODEC_RESOURCE_LIMIT = -3,
   CODEC_INVALID_BLOCK = -4,
   CODEC_OUTPUT_LIMIT = -5,
-  CODEC_INVALID_OPERATION = -6
+  CODEC_INVALID_OPERATION = -6,
+  CODEC_INVALID_QUANTIZATION = -7
 };
 
 struct bridge_error_mgr {
@@ -32,6 +35,8 @@ struct bridge_state {
   unsigned char *input;
   unsigned char *output;
   unsigned long output_size;
+  unsigned int quantization_tables[NUM_QUANT_TBLS][DCTSIZE2];
+  int has_quantization_table[NUM_QUANT_TBLS];
   int created;
 };
 
@@ -112,6 +117,17 @@ int coefficient_open(const unsigned char *input, unsigned int input_size) {
     }
   }
 
+  for (int table = 0; table < NUM_QUANT_TBLS; table++) {
+    JQUANT_TBL *quantization_table = state.cinfo.quant_tbl_ptrs[table];
+    if (quantization_table != NULL) {
+      state.has_quantization_table[table] = 1;
+      for (int index = 0; index < DCTSIZE2; index++) {
+        state.quantization_tables[table][index] =
+            quantization_table->quantval[index];
+      }
+    }
+  }
+
   state.coefficients = jpeg_read_coefficients(&state.cinfo);
   if (state.coefficients == NULL) {
     coefficient_close();
@@ -146,21 +162,56 @@ int coefficient_read_block(int component, unsigned int block_x,
   return CODEC_OK;
 }
 
-int coefficient_zero_band(int component, int frequency_band,
-                           const unsigned char *block_mask,
-                           unsigned int block_mask_size) {
+static int clamp_coefficient(int value, unsigned int index) {
+  int limit = index == 0 ? 2047 : 1023;
+  if (value > limit) return limit;
+  if (value < -limit) return -limit;
+  return value;
+}
+
+static unsigned int next_random(unsigned int *state_value) {
+  unsigned int value = *state_value;
+  if (value == 0) value = 0x6d2b79f5U;
+  value ^= value << 13;
+  value ^= value >> 17;
+  value ^= value << 5;
+  *state_value = value;
+  return value;
+}
+
+int coefficient_apply(int component, int mode, int domain, int frequency_band,
+                      const unsigned char *block_mask,
+                      unsigned int block_mask_size, double strength,
+                      unsigned int seed) {
   unsigned int minimum_frequency;
   unsigned int maximum_frequency;
+  unsigned int random_state = seed;
   const jpeg_component_info *info;
 
   if (!state.created || state.coefficients == NULL || block_mask == NULL ||
-      component < 0 || component >= state.cinfo.num_components ||
-      frequency_band < 0 || frequency_band > 3) {
+      component < 0 || component >= state.cinfo.num_components || mode < 0 ||
+      mode > 5 || domain < 0 || domain > 1 || frequency_band < 0 ||
+      frequency_band > 3 || !isfinite(strength)) {
     return CODEC_INVALID_OPERATION;
   }
 
   info = &state.cinfo.comp_info[component];
-  if (block_mask_size != info->width_in_blocks * info->height_in_blocks) {
+  if ((uint64_t)info->width_in_blocks * info->height_in_blocks !=
+      block_mask_size) {
+    return CODEC_INVALID_OPERATION;
+  }
+  if ((domain == 0 && mode == 3) ||
+      (domain == 1 && frequency_band != 3) ||
+      (mode == 1 && (strength < -8.0 || strength > 8.0)) ||
+      (mode == 2 &&
+       (strength < 1.0 || strength > 2047.0 ||
+        (double)(int)strength != strength)) ||
+      (mode == 3 &&
+       (domain != 1 || strength < -2047.0 || strength > 2047.0 ||
+        (double)(int)strength != strength)) ||
+      ((mode == 4 || mode == 5) &&
+       (domain != 0 || strength != 0.0 ||
+        (mode == 5 && frequency_band == 3)))) {
     return CODEC_INVALID_OPERATION;
   }
 
@@ -196,14 +247,208 @@ int coefficient_zero_band(int component, int frequency_band,
       if (block_mask[block_y * info->width_in_blocks + block_x] == 0) {
         continue;
       }
-      for (unsigned int index = 1; index < DCTSIZE2; index++) {
-        unsigned int frequency = index / DCTSIZE + index % DCTSIZE;
-        if (frequency >= minimum_frequency &&
-            frequency <= maximum_frequency) {
-          block_row[0][block_x][index] = 0;
+      for (unsigned int index = 0; index < DCTSIZE2; index++) {
+        int is_dc = index == 0;
+        if ((domain == 1 && !is_dc) || (domain == 0 && is_dc)) continue;
+        if (!is_dc) {
+          unsigned int frequency = index / DCTSIZE + index % DCTSIZE;
+          if (mode == 5) {
+            if (frequency >= minimum_frequency &&
+                frequency <= maximum_frequency) {
+              continue;
+            }
+          } else if (frequency < minimum_frequency ||
+                     frequency > maximum_frequency) {
+            continue;
+          }
+        }
+
+        int value = block_row[0][block_x][index];
+        if (mode == 0) {
+          value = 0;
+        } else if (mode == 1) {
+          double scaled = value * strength;
+          value = scaled >= 0 ? (int)(scaled + 0.5) : (int)(scaled - 0.5);
+        } else if (mode == 2) {
+          unsigned int range = (unsigned int)strength * 2U + 1U;
+          value = (int)(next_random(&random_state) % range) -
+                  (int)strength;
+        } else if (mode == 3) {
+          value += (int)strength;
+        } else if (mode == 4) {
+          value = -value;
+        } else {
+          value = 0;
+        }
+        block_row[0][block_x][index] =
+            (JCOEF)clamp_coefficient(value, index);
+      }
+    }
+  }
+  return CODEC_OK;
+}
+
+int coefficient_repeat_block(int component, unsigned int source_x,
+                             unsigned int source_y, int offset_x, int offset_y,
+                             unsigned int repetitions) {
+  JBLOCK source_block;
+  const jpeg_component_info *info;
+
+  if (!state.created || state.coefficients == NULL || component < 0 ||
+      component >= state.cinfo.num_components || repetitions == 0 ||
+      repetitions > 256 || (offset_x == 0 && offset_y == 0) ||
+      offset_x < -256 || offset_x > 256 || offset_y < -256 ||
+      offset_y > 256) {
+    return CODEC_INVALID_OPERATION;
+  }
+  info = &state.cinfo.comp_info[component];
+  if (source_x >= info->width_in_blocks || source_y >= info->height_in_blocks) {
+    return CODEC_INVALID_OPERATION;
+  }
+  for (unsigned int repetition = 1; repetition <= repetitions; repetition++) {
+    int64_t target_x = (int64_t)source_x + (int64_t)offset_x * repetition;
+    int64_t target_y = (int64_t)source_y + (int64_t)offset_y * repetition;
+    if (target_x < 0 || target_y < 0 ||
+        target_x >= info->width_in_blocks ||
+        target_y >= info->height_in_blocks) {
+      return CODEC_INVALID_OPERATION;
+    }
+  }
+
+  if (setjmp(state.error.jump_buffer) != 0) {
+    return CODEC_MALFORMED;
+  }
+  JBLOCKARRAY source_row = state.cinfo.mem->access_virt_barray(
+      (j_common_ptr)&state.cinfo, state.coefficients[component], source_y, 1,
+      FALSE);
+  memcpy(source_block, source_row[0][source_x], sizeof(JBLOCK));
+  for (unsigned int repetition = 1; repetition <= repetitions; repetition++) {
+    unsigned int target_x =
+        (unsigned int)((int64_t)source_x + (int64_t)offset_x * repetition);
+    unsigned int target_y =
+        (unsigned int)((int64_t)source_y + (int64_t)offset_y * repetition);
+    JBLOCKARRAY target_row = state.cinfo.mem->access_virt_barray(
+        (j_common_ptr)&state.cinfo, state.coefficients[component], target_y, 1,
+        TRUE);
+    memcpy(target_row[0][target_x], source_block, sizeof(JBLOCK));
+  }
+  return CODEC_OK;
+}
+
+static unsigned int random_bounded(unsigned int *random_state,
+                                   unsigned int bound) {
+  unsigned int threshold = (unsigned int)(-bound) % bound;
+  for (;;) {
+    unsigned int value = next_random(random_state);
+    if (value >= threshold) return value % bound;
+  }
+}
+
+int coefficient_permute_blocks(int component,
+                               const unsigned char *block_mask,
+                               unsigned int block_mask_size,
+                               unsigned int seed) {
+  unsigned int * volatile block_indices = NULL;
+  unsigned int selected_count = 0;
+  unsigned int random_state = seed;
+  const jpeg_component_info *info;
+
+  if (!state.created || state.coefficients == NULL || block_mask == NULL ||
+      component < 0 || component >= state.cinfo.num_components) {
+    return CODEC_INVALID_OPERATION;
+  }
+  info = &state.cinfo.comp_info[component];
+  if ((uint64_t)info->width_in_blocks * info->height_in_blocks !=
+          block_mask_size ||
+      block_mask_size > MAX_EDITED_BLOCKS) {
+    return CODEC_INVALID_OPERATION;
+  }
+  for (unsigned int index = 0; index < block_mask_size; index++) {
+    if (block_mask[index] != 0) selected_count++;
+  }
+  if (selected_count < 2) return CODEC_OK;
+  if (setjmp(state.error.jump_buffer) != 0) {
+    free((void *)block_indices);
+    return CODEC_MALFORMED;
+  }
+
+  block_indices =
+      (unsigned int *)malloc((size_t)selected_count * sizeof(unsigned int));
+  if (block_indices == NULL) return CODEC_RESOURCE_LIMIT;
+  unsigned int next_index = 0;
+  for (unsigned int index = 0; index < block_mask_size; index++) {
+    if (block_mask[index] != 0) block_indices[next_index++] = index;
+  }
+
+  for (unsigned int remaining = selected_count; remaining > 1; remaining--) {
+    unsigned int first_index = remaining - 1;
+    unsigned int second_index = random_bounded(&random_state, remaining);
+    unsigned int first_flat = block_indices[first_index];
+    unsigned int second_flat = block_indices[second_index];
+    unsigned int first_x = first_flat % info->width_in_blocks;
+    unsigned int first_y = first_flat / info->width_in_blocks;
+    unsigned int second_x = second_flat % info->width_in_blocks;
+    unsigned int second_y = second_flat / info->width_in_blocks;
+    JBLOCKARRAY first_row = state.cinfo.mem->access_virt_barray(
+        (j_common_ptr)&state.cinfo, state.coefficients[component], first_y, 1,
+        TRUE);
+    JBLOCKARRAY second_row = state.cinfo.mem->access_virt_barray(
+        (j_common_ptr)&state.cinfo, state.coefficients[component], second_y, 1,
+        TRUE);
+    JBLOCK temporary;
+    memcpy(temporary, first_row[0][first_x], sizeof(JBLOCK));
+    memcpy(first_row[0][first_x], second_row[0][second_x], sizeof(JBLOCK));
+    memcpy(second_row[0][second_x], temporary, sizeof(JBLOCK));
+  }
+
+  free((void *)block_indices);
+  return CODEC_OK;
+}
+
+int coefficient_set_quantization(unsigned int table_id, int semantics,
+                                 const unsigned char *values,
+                                 unsigned int values_size) {
+  if (!state.created || state.coefficients == NULL ||
+      table_id >= NUM_QUANT_TBLS || semantics < 0 || semantics > 1 ||
+      values == NULL || values_size != DCTSIZE2 ||
+      !state.has_quantization_table[table_id]) {
+    return CODEC_INVALID_QUANTIZATION;
+  }
+  for (unsigned int index = 0; index < DCTSIZE2; index++) {
+    if (values[index] == 0) return CODEC_INVALID_QUANTIZATION;
+  }
+
+  if (semantics == 1) {
+    for (int component = 0; component < state.cinfo.num_components;
+         component++) {
+      const jpeg_component_info *info = &state.cinfo.comp_info[component];
+      if (info->quant_tbl_no != (int)table_id) continue;
+      if (setjmp(state.error.jump_buffer) != 0) return CODEC_MALFORMED;
+      for (unsigned int block_y = 0; block_y < info->height_in_blocks;
+           block_y++) {
+        JBLOCKARRAY block_row = state.cinfo.mem->access_virt_barray(
+            (j_common_ptr)&state.cinfo, state.coefficients[component],
+            block_y, 1, TRUE);
+        for (unsigned int block_x = 0; block_x < info->width_in_blocks;
+             block_x++) {
+          for (unsigned int index = 0; index < DCTSIZE2; index++) {
+            int coefficient = block_row[0][block_x][index];
+            unsigned int numerator =
+                (unsigned int)abs(coefficient) *
+                state.quantization_tables[table_id][index];
+            unsigned int quantized =
+                (numerator + values[index] / 2U) / values[index];
+            int signed_value =
+                coefficient < 0 ? -(int)quantized : (int)quantized;
+            block_row[0][block_x][index] =
+                (JCOEF)clamp_coefficient(signed_value, index);
+          }
         }
       }
     }
+  }
+  for (unsigned int index = 0; index < DCTSIZE2; index++) {
+    state.quantization_tables[table_id][index] = values[index];
   }
   return CODEC_OK;
 }
@@ -244,6 +489,17 @@ int coefficient_encode(void) {
   compressor_created = 1;
   jpeg_mem_dest(&compressor, &output, &output_size);
   jpeg_copy_critical_parameters(&state.cinfo, &compressor);
+  for (int table = 0; table < NUM_QUANT_TBLS; table++) {
+    if (!state.has_quantization_table[table] ||
+        compressor.quant_tbl_ptrs[table] == NULL) {
+      continue;
+    }
+    for (int index = 0; index < DCTSIZE2; index++) {
+      compressor.quant_tbl_ptrs[table]->quantval[index] =
+          (UINT16)state.quantization_tables[table][index];
+    }
+    compressor.quant_tbl_ptrs[table]->sent_table = FALSE;
+  }
   jpeg_write_coefficients(&compressor, state.coefficients);
   for (jpeg_saved_marker_ptr marker = state.cinfo.marker_list; marker != NULL;
        marker = marker->next) {

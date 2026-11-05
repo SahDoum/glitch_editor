@@ -136,22 +136,45 @@ Input/output JPEGs are capped at 50 MiB, coefficient storage at 128 MiB, and
 worker DCT processing is bounded. See ADR-005 for the codec decision and
 export behavior.
 
-## Milestone 5 — Quantization and block operations
+## Milestone 5 — First Glitch Lab (implementation complete; codec rebuild pending)
 
 ### Tasks
 
-- [ ] Build 8×8 quantization matrix inspector/editor.
-- [ ] Define and implement quantization edit semantics.
-- [ ] Add controlled re-quantization/re-encoding.
-- [ ] Add block duplicate/swap/repeat with compatibility checks.
-- [ ] Add DC-only and AC-only operations.
-- [ ] Add Y/Cb/Cr component controls.
+- [x] Inspect and edit natural-order 8×8 DQT matrices.
+- [x] Define table reinterpretation and controlled re-quantization semantics.
+- [x] Add coefficient zero, scale, seeded randomize, AC inversion, and frequency isolation.
+- [x] Add DC offset and independent DC/AC targeting.
+- [x] Add component-specific DCT block duplicate/repeat.
+- [x] Add seeded whole-block Fisher–Yates permutation inside a selected component mask.
+- [x] Support independent coefficient edits to a selected chroma component.
+- [x] Add flat, stripe, radial, and seeded-random DQT patterns.
+- [x] Preserve/export encoded experiments when the browser decoder cannot preview them.
+- [x] Rebuild the generated WebAssembly bridge with Emscripten 4.0.23 and smoke-test representative operations in the browser.
 
 ### Acceptance
 
-- Table edits never masquerade as direct recovery of discarded information.
-- Coefficient/table behavior is documented and covered by tests.
-- Incompatible block operations are rejected with actionable explanations.
+- Original JPEG bytes remain unchanged and every operation is undoable/replayable.
+- Coefficient results and seeded patterns are deterministic and tested at the representation being edited.
+- Block permutation moves whole quantized 8×8 blocks including DC, preserves the selected block multiset, and leaves blocks outside the mask untouched.
+- AC inversion changes signs only; frequency isolation retains one selected AC band and leaves DC unchanged.
+- DQT reinterpretation and requantization are distinct, documented operations; neither claims to restore discarded detail.
+- Block operations stay within one component and reject out-of-grid destinations with an actionable explanation.
+- A failed browser preview does not discard an encoded experiment; export remains available.
+- The default output encoder currently supports only 8-bit baseline sequential Huffman JPEG with one grayscale or three-component frame and one interleaved scan.
+
+The product goal is visual experimentation, not a guarantee that every
+intervention produces a universally decodable JPEG. This slice keeps the
+coefficient re-encoder for predictable previews, while retaining an encoded
+result for export even when browser preview decoding fails. Raw entropy/byte
+corruption remains isolated to Milestone 7. The generated bridge was rebuilt
+with Emscripten 4.0.23; the production browser preview imported a synthetic
+JPEG and successfully applied block repeat, AC inversion, frequency isolation,
+block permutation, and a radial DQT edit. Each operation appeared as applied
+in history, and export became available. Native C semantic checks and
+independent `djpeg`/ImageMagick decoding also passed. Browser export capture
+produced a 667-byte JPEG with SOI and EOI markers. The operation catalog,
+parameters, examples, and experiment results are recorded in
+`GLITCH_EXPERIMENTS.md`.
 
 ## Milestone 6 — Two-image DCT transplant
 

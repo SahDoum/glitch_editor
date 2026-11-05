@@ -1,6 +1,9 @@
 # JPEG Test Strategy
 
-**Purpose:** verify that the editor manipulates JPEG structures correctly, produces valid exports where promised, and never loses the original asset.
+**Purpose:** verify that the editor changes the intended JPEG representation,
+records reproducible visual experiments, reports decode/conformance outcomes
+honestly, and never loses the original asset. Standards-valid output is tested
+where promised, but is not the sole success criterion for glitch operations.
 
 ## 1. Testing principles
 
@@ -23,6 +26,8 @@
 - Quantization matrix indexing and transformations.
 - Mask-to-block/MCU coverage.
 - DCT operation math and parameter validation.
+- Zero, scale, randomize, DC offset, AC inversion, frequency isolation,
+  block repeat/permutation, and DQT pattern semantics.
 - Seeded random number generation.
 - Operation serialization, replay, undo/redo.
 - Worker message validation and stale-result rejection.
@@ -110,14 +115,22 @@ and 4:2:0, 4:2:2, and 4:4:4 sampling, including odd image dimensions. The
 native reader's coefficients were cross-checked against `jpegio` 0.2.8 on the
 synthetic fixture set.
 
-Milestone 4 adds a registered operation that zeros selected AC coefficients
-for one component and frequency band (`u + v` ranges 1–2, 3–5, 6–14, or
-1–14); DC is retained. Every encode reopens the original bytes and replays
-enabled operations. The C bridge writes a new JPEG; the input bytes are not
-modified. Input/output files are limited to 50 MiB, and worker DCT work is
-bounded. Progressive, arithmetic-coded, multi-scan, and other unsupported
-processes remain rejected. Saved APP/COM markers are copied except APP0 and
-APP14, so metadata preservation is not guaranteed.
+Milestone 4 adds the initial masked AC-zero operation. Milestone 5 extends the
+same replay-from-original path with zero/scale/seeded randomize for DC or AC,
+DC offset, AC inversion, frequency isolation, in-component block duplicate
+and repeat, seeded block permutation, component-specific editing, and DQT
+matrix edits. Block permutation applies seeded Fisher–Yates to whole quantized
+8×8 blocks including DC, with the selected block multiset preserved. A
+rectangle includes a block at 50% coverage; brush coverage uses deterministic
+8×8 spatial samples and the same 50% threshold. DQT reinterpretation retains
+quantized coefficients; requantization uses
+`round(oldCoefficient × oldQuantizer / newQuantizer)` with baseline coefficient
+range clamping. Neither recovers information lost before import. Every edit
+creates new encoded bytes without mutating the source. The UI can export those
+bytes when browser preview decoding fails. Progressive, arithmetic-coded,
+multi-scan, and other unsupported processes remain rejected. Saved APP/COM
+markers are copied except APP0 and APP14, so metadata preservation is not
+guaranteed.
 
 Native bridge exports for grayscale, 4:2:0 (including odd dimensions), 4:2:2,
 and 4:4:4 synthetic fixtures were reopened by ImageMagick and macOS `sips`.
@@ -172,6 +185,8 @@ For each supported sampling mode:
 - map image-space points and masks to intersecting blocks;
 - test DCT coefficient index `(u, v)` mapping to the 8×8 array;
 - preserve DC/AC distinction.
+- test block-permutation mask thresholding at 50%, including component-specific
+  block footprint and odd visible edges.
 
 Use small synthetic images where expected coefficients can be reasoned about and cross-check with an independent coefficient reader.
 
@@ -182,9 +197,11 @@ Verify:
 - 64 table entries and valid value ranges for the chosen JPEG process;
 - correct zigzag/natural-order mapping at parser/encoder boundaries;
 - table selectors and component assignments;
-- documented semantics for edits to existing coefficients;
+- both documented semantics for edits to existing coefficients;
 - no claim that DQT marker replacement recovers discarded data;
-- output decodes and its actual quantization tables match the intended export.
+- parsed output tables match the edited natural-order matrix when the codec
+  bridge can be exercised;
+- seeded matrix patterns match exactly.
 
 Test extreme but legal values and reject invalid values.
 
@@ -199,6 +216,10 @@ For every operation:
 - toggling or reordering recomputes downstream state correctly;
 - masks and component restrictions are respected;
 - operation version can be migrated or rejected explicitly.
+- block permutation moves whole 64-coefficient blocks, includes DC, preserves
+  the selected block multiset, and is deterministic for the same seed.
+- AC inversion changes only selected AC signs; frequency isolation clears
+  out-of-band AC coefficients and preserves DC.
 
 Test operation failure midway and verify document remains recoverable.
 
@@ -211,6 +232,16 @@ For normal coefficient/re-encoding workflows:
 - dimensions/components match expected policy;
 - output tables and scan organization match the selected encoder settings;
 - export status accurately says re-encoded or stream-preserved.
+
+For glitch experiments:
+
+- compare coefficient arrays or DQT tables to prove the requested
+  representation changed;
+- verify repeated seeds reproduce identical coefficient edits;
+- keep browser preview-decode failure separate from encode failure and retain
+  the encoded bytes for export;
+- record decoder-specific outcomes instead of treating decode failure as
+  evidence that no useful experiment occurred.
 
 For raw-byte/entropy experiments:
 

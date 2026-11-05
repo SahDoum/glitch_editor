@@ -33,12 +33,18 @@ export interface JpegScan {
   }>;
 }
 
+export interface JpegQuantizationTable {
+  id: number;
+  values: number[];
+}
+
 export interface JpegInspection {
   process: "Baseline sequential DCT Huffman";
   width: number;
   height: number;
   precision: number;
   components: JpegComponent[];
+  quantizationTables: JpegQuantizationTable[];
   markers: JpegMarker[];
   scans: JpegScan[];
   restartInterval: number;
@@ -50,6 +56,13 @@ export interface JpegInspection {
   blockWidth: number;
   blockHeight: number;
 }
+
+const ZIGZAG_TO_NATURAL = [
+  0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40,
+  48, 41, 34, 27, 20, 13, 6, 7, 14, 21, 28, 35, 42, 49, 56, 57, 50, 43, 36, 29,
+  22, 15, 23, 30, 37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54,
+  47, 55, 62, 63,
+] as const;
 
 const MARKER_NAMES: Record<number, string> = {
   0xc0: "SOF0",
@@ -225,7 +238,7 @@ function parseQuantizationTables(
   bytes: Uint8Array,
   payloadStart: number,
   segmentEnd: number,
-  tables: Set<number>,
+  tables: Map<number, number[]>,
 ): Result<undefined> {
   let offset = payloadStart;
   let tableCount = 0;
@@ -244,12 +257,15 @@ function parseQuantizationTables(
     if (precision !== 0) {
       return unsupported("16-bit quantization tables are not supported.");
     }
+    const values = new Array<number>(64);
     for (let index = 0; index < 64; index += 1) {
-      if (bytes[offset + index] === 0) {
+      const value = bytes[offset + index]!;
+      if (value === 0) {
         return malformed("A JPEG quantization table contains a zero value.");
       }
+      values[ZIGZAG_TO_NATURAL[index]!] = value;
     }
-    tables.add(tableId);
+    tables.set(tableId, values);
     tableCount += 1;
     offset += tableBytes;
   }
@@ -315,7 +331,7 @@ function parseScanHeader(
   payloadStart: number,
   segmentEnd: number,
   frame: Frame,
-  quantizationTables: Set<number>,
+  quantizationTables: ReadonlyMap<number, number[]>,
   huffmanTables: Set<string>,
 ): Result<JpegScan["components"]> {
   const payloadLength = segmentEnd - payloadStart;
@@ -403,7 +419,7 @@ export function inspectJpeg(bytes: Uint8Array): Result<JpegInspection> {
     },
   ];
   const scans: JpegScan[] = [];
-  const quantizationTables = new Set<number>();
+  const quantizationTables = new Map<number, number[]>();
   const huffmanTables = new Set<string>();
   let frame: Frame | null = null;
   let restartInterval = 0;
@@ -653,6 +669,10 @@ export function inspectJpeg(bytes: Uint8Array): Result<JpegInspection> {
     height: frame.height,
     precision: frame.precision,
     components,
+    quantizationTables: [...quantizationTables].map(([id, values]) => ({
+      id,
+      values,
+    })),
     markers,
     scans,
     restartInterval,
