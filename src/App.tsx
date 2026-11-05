@@ -8,10 +8,13 @@ import {
   type PointerEvent,
 } from "react";
 import {
+  encodeJpegCoefficients,
   createJpegCoefficientReader,
+  type JpegCoefficientEdit,
   type JpegCoefficientReader,
 } from "./application/coefficient-reader";
 import {
+  applyDctZeroBandOperation,
   applyMaskToDocument,
   createJpegDocumentSession,
   type JpegEditableState,
@@ -20,10 +23,13 @@ import { importJpeg, type ImportedJpeg } from "./application/import-jpeg";
 import {
   getJpegComponentBlockGrid,
   mapJpegBlockCoordinate,
+  snapSelectionToComponentBlocks,
+  type JpegBlockGeometry,
   type JpegBlockCoordinate,
 } from "./jpeg/block-geometry";
 import type { JpegInspection } from "./jpeg/inspect";
 import {
+  createBrushMask,
   createRectangleSelection,
   createSpatialMask,
   getMaskFromParameters,
@@ -33,8 +39,19 @@ import {
 } from "./document/masks";
 import type { ProjectDocument } from "./document/model";
 import { OperationHistory } from "./operations/history";
+import {
+  DCT_FREQUENCY_BAND_RANGES,
+  DCT_FREQUENCY_BANDS,
+  getDctFrequencyBand,
+  type DctFrequencyBand,
+} from "./operations/dct";
 
 const MARKER_LIMIT = 250;
+const EMPTY_DCT_OPERATIONS: JpegEditableState["dctOperations"] = Object.freeze(
+  [],
+);
+type ImagePoint = { x: number; y: number };
+type CanvasTool = "select" | "brush" | "pan";
 
 function formatOffset(offset: number): string {
   return `0x${offset.toString(16).padStart(6, "0").toUpperCase()}`;
@@ -46,12 +63,16 @@ function ImageOverlays({
   showMcus,
   selection,
   mask,
+  brushDraft,
+  brushRadius,
 }: {
   inspection: JpegInspection;
   showBlocks: boolean;
   showMcus: boolean;
   selection: SpatialSelection | null;
   mask: SpatialMask | null;
+  brushDraft: readonly ImagePoint[];
+  brushRadius: number;
 }) {
   const blockPatternWidth = inspection.blockWidth;
   const blockPatternHeight = inspection.blockHeight;
@@ -109,16 +130,29 @@ function ImageOverlays({
       )}
       {mask?.width === inspection.width &&
         mask.height === inspection.height &&
-        mask.shapes.map((shape, index) => (
-          <rect
-            className="active-mask-overlay"
-            key={`${mask.id}-${index}`}
-            x={shape.x}
-            y={shape.y}
-            width={shape.width}
-            height={shape.height}
-          />
-        ))}
+        mask.shapes.map((shape, index) =>
+          shape.kind === "rectangle" ? (
+            <rect
+              className="active-mask-overlay"
+              key={`${mask.id}-${index}`}
+              x={shape.x}
+              y={shape.y}
+              width={shape.width}
+              height={shape.height}
+            />
+          ) : (
+            <g className="active-mask-overlay" key={`${mask.id}-${index}`}>
+              {shape.points.map((point, pointIndex) => (
+                <circle
+                  key={pointIndex}
+                  cx={point.x}
+                  cy={point.y}
+                  r={shape.radius}
+                />
+              ))}
+            </g>
+          ),
+        )}
       {selection && (
         <rect
           className="selection-overlay"
@@ -128,8 +162,43 @@ function ImageOverlays({
           height={selection.height}
         />
       )}
+      {brushDraft.map((point, index) => (
+        <circle
+          className="brush-draft-overlay"
+          key={index}
+          cx={point.x}
+          cy={point.y}
+          r={brushRadius}
+        />
+      ))}
     </svg>
   );
+}
+
+function describeMask(mask: SpatialMask): string {
+  const shape = mask.shapes[0];
+  if (!shape) return "Empty image-space mask";
+  if (shape.kind === "rectangle") {
+    return `Image-pixel rectangle · ${shape.width.toFixed(1)} × ${shape.height.toFixed(1)}`;
+  }
+  return `Image-pixel brush · radius ${shape.radius.toFixed(1)} px · ${shape.points.length} samples`;
+}
+
+function getDctOperationDetails(
+  value: unknown,
+): { componentIndex: number; frequencyBand: DctFrequencyBand } | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const componentIndex = Reflect.get(value, "componentIndex");
+  const frequencyBand = Reflect.get(value, "frequencyBand");
+  if (typeof componentIndex !== "number" || !Number.isInteger(componentIndex)) {
+    return null;
+  }
+  const parsedBand = getDctFrequencyBand(frequencyBand);
+  return parsedBand.ok
+    ? { componentIndex, frequencyBand: parsedBand.value }
+    : null;
 }
 
 function MetadataInspector({ inspection }: { inspection: JpegInspection }) {
@@ -506,17 +575,28 @@ function App() {
   const [document, setDocument] = useState<ImportedJpeg | null>(null);
   const [historyDocument, setHistoryDocument] =
     useState<ProjectDocument<JpegEditableState> | null>(null);
+  const [editedPreviewUrl, setEditedPreviewUrl] = useState<string | null>(null);
+  const [editedBytes, setEditedBytes] = useState<Uint8Array | null>(null);
   const [historyAvailability, setHistoryAvailability] = useState({
     canUndo: false,
     canRedo: false,
   });
   const [errorMessage, setErrorMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isEncoding, setIsEncoding] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [showBlocks, setShowBlocks] = useState(false);
   const [showMcus, setShowMcus] = useState(false);
-  const [isSelecting, setIsSelecting] = useState(false);
+  const [showOriginal, setShowOriginal] = useState(false);
+  const [toolMode, setToolMode] = useState<CanvasTool>("select");
+  const [snapToBlocks, setSnapToBlocks] = useState(false);
+  const [componentIndex, setComponentIndex] = useState(0);
+  const [frequencyBand, setFrequencyBand] = useState<DctFrequencyBand>("all");
+  const [brushSize, setBrushSize] = useState(32);
+  const [zoom, setZoom] = useState(1);
   const [selection, setSelection] = useState<SpatialSelection | null>(null);
+  const [paintedMask, setPaintedMask] = useState<SpatialMask | null>(null);
+  const [brushDraft, setBrushDraft] = useState<readonly ImagePoint[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
   const requestId = useRef(0);
   const dragDepth = useRef(0);
@@ -525,6 +605,16 @@ function App() {
     null,
   );
   const selectionStart = useRef<{ x: number; y: number } | null>(null);
+  const brushPoints = useRef<ImagePoint[]>([]);
+  const panStart = useRef<{
+    x: number;
+    y: number;
+    scrollLeft: number;
+    scrollTop: number;
+  } | null>(null);
+  const imageStage = useRef<HTMLDivElement>(null);
+  const dctOperations =
+    historyDocument?.currentState.dctOperations ?? EMPTY_DCT_OPERATIONS;
 
   useEffect(
     () => () => {
@@ -532,6 +622,86 @@ function App() {
     },
     [document],
   );
+
+  useEffect(
+    () => () => {
+      if (editedPreviewUrl) URL.revokeObjectURL(editedPreviewUrl);
+    },
+    [editedPreviewUrl],
+  );
+
+  useEffect(() => {
+    if (!document || dctOperations.length === 0) return;
+
+    const controller = new AbortController();
+    const geometry: JpegBlockGeometry = {
+      width: document.inspection.width,
+      height: document.inspection.height,
+      components: document.inspection.components.map(
+        ({ id, horizontalSampling, verticalSampling }) => ({
+          id,
+          horizontalSampling,
+          verticalSampling,
+        }),
+      ),
+    };
+    const edits: JpegCoefficientEdit[] = dctOperations.map((operation) => ({
+      componentIndex: operation.componentIndex,
+      frequencyBand: operation.frequencyBand,
+      mask: operation.mask,
+    }));
+
+    void (async () => {
+      const encoded = await encodeJpegCoefficients(
+        document.originalAsset.readBytes(),
+        geometry,
+        edits,
+        controller.signal,
+      );
+      if (controller.signal.aborted) return;
+      if (!encoded.ok) {
+        setErrorMessage(encoded.error.message);
+        setIsEncoding(false);
+        return;
+      }
+
+      const outputBuffer = new ArrayBuffer(encoded.value.byteLength);
+      new Uint8Array(outputBuffer).set(encoded.value);
+      const previewUrl = URL.createObjectURL(
+        new Blob([outputBuffer], { type: "image/jpeg" }),
+      );
+      try {
+        const preview = new Image();
+        preview.src = previewUrl;
+        await preview.decode();
+        if (
+          preview.naturalWidth !== document.inspection.width ||
+          preview.naturalHeight !== document.inspection.height
+        ) {
+          throw new Error("The re-encoded preview dimensions do not match.");
+        }
+      } catch {
+        URL.revokeObjectURL(previewUrl);
+        if (!controller.signal.aborted) {
+          setErrorMessage(
+            "The re-encoded JPEG could not be decoded for preview. The original remains unchanged.",
+          );
+          setIsEncoding(false);
+        }
+        return;
+      }
+      if (controller.signal.aborted) {
+        URL.revokeObjectURL(previewUrl);
+        return;
+      }
+
+      setEditedPreviewUrl(previewUrl);
+      setEditedBytes(encoded.value);
+      setIsEncoding(false);
+    })();
+
+    return () => controller.abort();
+  }, [document, dctOperations]);
 
   useEffect(
     () => () => {
@@ -570,14 +740,25 @@ function App() {
 
     operationHistory.current = history.value;
     setHistoryDocument(history.value.snapshot);
+    setEditedPreviewUrl(null);
+    setEditedBytes(null);
+    setIsEncoding(false);
     setHistoryAvailability({
       canUndo: history.value.canUndo,
       canRedo: history.value.canRedo,
     });
     setSelection(null);
-    setIsSelecting(false);
+    setPaintedMask(null);
+    setBrushDraft([]);
+    setComponentIndex(0);
+    setFrequencyBand("all");
+    setBrushSize(32);
+    setToolMode("select");
+    setSnapToBlocks(false);
     setShowBlocks(false);
     setShowMcus(false);
+    setShowOriginal(false);
+    setZoom(1);
     setDocument(result.value);
   }
 
@@ -587,6 +768,13 @@ function App() {
     if (!result.ok) {
       setErrorMessage(result.error.message);
       return;
+    }
+    const previousDctOperations = historyDocument?.currentState.dctOperations;
+    if (result.value.currentState.dctOperations !== previousDctOperations) {
+      setEditedPreviewUrl(null);
+      setEditedBytes(null);
+      setIsEncoding(result.value.currentState.dctOperations.length > 0);
+      setShowOriginal(false);
     }
     setErrorMessage("");
     setHistoryDocument(result.value);
@@ -640,28 +828,129 @@ function App() {
       setErrorMessage(result.error.message);
       return;
     }
-    setSelection(result.value);
+    let nextSelection = result.value;
+    if (snapToBlocks && nextSelection) {
+      const component = document.inspection.components[componentIndex];
+      if (!component) {
+        setErrorMessage("The selected JPEG component is invalid.");
+        return;
+      }
+      const snapped = snapSelectionToComponentBlocks(
+        nextSelection,
+        document.inspection,
+        component.id,
+      );
+      if (!snapped.ok) {
+        setErrorMessage(snapped.error.message);
+        return;
+      }
+      nextSelection = snapped.value;
+    }
+    setPaintedMask(null);
+    setSelection(nextSelection);
     const history = operationHistory.current;
-    if (history) updateHistory(history.setSelection(result.value));
+    if (history) updateHistory(history.setSelection(nextSelection));
   }
 
   function onImagePointerDown(event: PointerEvent<HTMLDivElement>) {
-    if (!isSelecting || event.button !== 0) return;
+    if (event.button !== 0) return;
+    if (toolMode === "pan") {
+      const stage = imageStage.current;
+      if (!stage) return;
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      panStart.current = {
+        x: event.clientX,
+        y: event.clientY,
+        scrollLeft: stage.scrollLeft,
+        scrollTop: stage.scrollTop,
+      };
+      return;
+    }
     const point = getImagePoint(event);
     if (!point) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
-    selectionStart.current = point;
-    updateSelection(point, point);
+    if (toolMode === "select") {
+      selectionStart.current = point;
+      updateSelection(point, point);
+      return;
+    }
+    setSelection(null);
+    const history = operationHistory.current;
+    if (history) updateHistory(history.setSelection(null));
+    brushPoints.current = [point];
+    setBrushDraft([point]);
   }
 
   function onImagePointerMove(event: PointerEvent<HTMLDivElement>) {
+    const pan = panStart.current;
+    if (pan && imageStage.current) {
+      imageStage.current.scrollLeft = pan.scrollLeft - (event.clientX - pan.x);
+      imageStage.current.scrollTop = pan.scrollTop - (event.clientY - pan.y);
+      return;
+    }
+    const point = getImagePoint(event);
+    if (toolMode === "brush" && brushPoints.current.length > 0 && point) {
+      const points = brushPoints.current;
+      const previous = points[points.length - 1]!;
+      const distance = Math.hypot(point.x - previous.x, point.y - previous.y);
+      const spacing = Math.max(1, brushSize / 8);
+      const steps = Math.ceil(distance / spacing);
+      if (points.length + steps > 10_000) {
+        setErrorMessage(
+          "This brush stroke is too long. Finish it in shorter strokes.",
+        );
+        brushPoints.current = [];
+        setBrushDraft([]);
+        return;
+      }
+      for (let step = 1; step <= steps; step += 1) {
+        const ratio = step / steps;
+        points.push({
+          x: previous.x + (point.x - previous.x) * ratio,
+          y: previous.y + (point.y - previous.y) * ratio,
+        });
+      }
+      setBrushDraft([...points]);
+      return;
+    }
     const start = selectionStart.current;
-    const end = getImagePoint(event);
-    if (start && end) updateSelection(start, end);
+    if (toolMode === "select" && start && point) updateSelection(start, point);
   }
 
   function onImagePointerUp(event: PointerEvent<HTMLDivElement>) {
+    if (panStart.current) {
+      panStart.current = null;
+      return;
+    }
+    if (toolMode === "brush" && brushPoints.current.length > 0) {
+      const point = getImagePoint(event);
+      if (point) {
+        const previous = brushPoints.current[brushPoints.current.length - 1]!;
+        if (previous.x !== point.x || previous.y !== point.y) {
+          brushPoints.current.push(point);
+        }
+      }
+      const points = brushPoints.current;
+      brushPoints.current = [];
+      setBrushDraft([]);
+      if (!document) return;
+      const mask = createBrushMask(
+        points,
+        brushSize / 2,
+        document.inspection.width,
+        document.inspection.height,
+      );
+      if (!mask.ok) {
+        setErrorMessage(mask.error.message);
+        return;
+      }
+      setPaintedMask(mask.value);
+      const history = operationHistory.current;
+      if (history) updateHistory(applyMaskToDocument(history, mask.value));
+      return;
+    }
     const start = selectionStart.current;
     const end = getImagePoint(event);
     if (start && end) updateSelection(start, end);
@@ -679,9 +968,53 @@ function App() {
       setErrorMessage(mask.error.message);
       return;
     }
+    setPaintedMask(mask.value);
     const history = operationHistory.current;
     if (!history) return;
     updateHistory(applyMaskToDocument(history, mask.value));
+  }
+
+  function activateTool(tool: CanvasTool) {
+    selectionStart.current = null;
+    brushPoints.current = [];
+    panStart.current = null;
+    setBrushDraft([]);
+    if (tool === "brush") {
+      setSelection(null);
+      const history = operationHistory.current;
+      if (history) updateHistory(history.setSelection(null));
+    }
+    setToolMode(tool);
+  }
+
+  function applyDctOperation() {
+    const history = operationHistory.current;
+    let mask = paintedMask ?? historyDocument?.currentState.activeMask ?? null;
+    if (document && selection) {
+      const selectedMask = createSpatialMask(
+        selection,
+        document.inspection.width,
+        document.inspection.height,
+      );
+      if (!selectedMask.ok) {
+        setErrorMessage(selectedMask.error.message);
+        return;
+      }
+      mask = selectedMask.value;
+    }
+    if (!history || !mask) {
+      setErrorMessage(
+        "Paint a mask or create a selection before applying a DCT operation.",
+      );
+      return;
+    }
+    updateHistory(
+      applyDctZeroBandOperation(history, {
+        mask,
+        componentIndex,
+        frequencyBand,
+      }),
+    );
   }
 
   function clearSelection() {
@@ -716,6 +1049,18 @@ function App() {
     if (history) updateHistory(history.redo());
   }
 
+  function downloadEditedJpeg() {
+    if (!editedBytes || !document) return;
+    const output = new ArrayBuffer(editedBytes.byteLength);
+    new Uint8Array(output).set(editedBytes);
+    const url = URL.createObjectURL(new Blob([output], { type: "image/jpeg" }));
+    const link = window.document.createElement("a");
+    link.href = url;
+    link.download = `${document.originalAsset.fileName.replace(/\.[^.]+$/, "")}.edited.jpg`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   function onFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.currentTarget.files?.[0];
     event.currentTarget.value = "";
@@ -745,6 +1090,9 @@ function App() {
     }
     if (files[0]) void loadFile(files[0]);
   }
+
+  const activeMaskForOverlay =
+    paintedMask ?? historyDocument?.currentState.activeMask ?? null;
 
   return (
     <main className="workspace">
@@ -800,8 +1148,19 @@ function App() {
             onClick={() => fileInput.current?.click()}
             disabled={isLoading}
           >
-            {isLoading ? "Inspecting…" : document ? "Open JPEG" : "Open JPEG"}
+            {isLoading ? "Inspecting…" : "Open JPEG"}
           </button>
+          {document && (
+            <button
+              className="export-button"
+              type="button"
+              onClick={downloadEditedJpeg}
+              disabled={!editedBytes || isEncoding}
+              title="Download the edited JPEG after coefficient-domain re-encoding"
+            >
+              {isEncoding ? "Encoding…" : "Export JPEG"}
+            </button>
+          )}
           <span className="local-badge">
             <span className="status-dot" aria-hidden="true" />
             Local workspace
@@ -848,23 +1207,89 @@ function App() {
             <div className="preview-workspace">
               <div className="preview-toolbar">
                 <div>
-                  <div className="section-kicker">DECODED PIXEL PREVIEW</div>
+                  <div className="section-kicker">
+                    {editedPreviewUrl && !showOriginal
+                      ? "RE-ENCODED JPEG PREVIEW"
+                      : "DECODED PIXEL PREVIEW"}
+                  </div>
                   <p>
-                    Browser decode · source JPEG bytes are preserved separately
+                    {isEncoding
+                      ? "Applying quantized DCT edits in the local JPEG worker…"
+                      : editedPreviewUrl
+                        ? "libjpeg-turbo re-encoding · source bytes remain unchanged"
+                        : "Original JPEG · no pixel-only editing"}
                   </p>
                 </div>
                 <div className="overlay-controls">
                   <button
-                    className={`tool-toggle ${isSelecting ? "is-active" : ""}`}
+                    className={`tool-toggle ${toolMode === "select" ? "is-active" : ""}`}
                     type="button"
-                    aria-pressed={isSelecting}
-                    onClick={() => {
-                      setIsSelecting((active) => !active);
-                      selectionStart.current = null;
-                    }}
+                    aria-pressed={toolMode === "select"}
+                    onClick={() => activateTool("select")}
                   >
-                    {isSelecting ? "Selecting region…" : "Select region"}
+                    Select
                   </button>
+                  <button
+                    className={`tool-toggle ${toolMode === "brush" ? "is-active" : ""}`}
+                    type="button"
+                    aria-pressed={toolMode === "brush"}
+                    onClick={() => activateTool("brush")}
+                  >
+                    Brush
+                  </button>
+                  <button
+                    className={`tool-toggle ${toolMode === "pan" ? "is-active" : ""}`}
+                    type="button"
+                    aria-pressed={toolMode === "pan"}
+                    onClick={() => activateTool("pan")}
+                  >
+                    Hand
+                  </button>
+                  <button
+                    className="tool-toggle"
+                    type="button"
+                    onClick={() =>
+                      setZoom((current) => Math.max(0.25, current - 0.25))
+                    }
+                    aria-label="Zoom out"
+                  >
+                    −
+                  </button>
+                  <span className="zoom-readout">
+                    {Math.round(zoom * 100)}%
+                  </span>
+                  <button
+                    className="tool-toggle"
+                    type="button"
+                    onClick={() =>
+                      setZoom((current) => Math.min(4, current + 0.25))
+                    }
+                    aria-label="Zoom in"
+                  >
+                    +
+                  </button>
+                  <button
+                    className="tool-toggle"
+                    type="button"
+                    onClick={() => setZoom(1)}
+                  >
+                    Fit
+                  </button>
+                  {editedPreviewUrl && (
+                    <button
+                      className="tool-toggle"
+                      type="button"
+                      aria-pressed={showOriginal}
+                      onClick={() => setShowOriginal((current) => !current)}
+                    >
+                      {showOriginal ? "Show edited" : "Show original"}
+                    </button>
+                  )}
+                  {isEncoding && (
+                    <span className="encoding-indicator" role="status">
+                      Re-encoding…
+                    </span>
+                  )}
                   <label>
                     <input
                       type="checkbox"
@@ -873,7 +1298,7 @@ function App() {
                         setShowBlocks(event.currentTarget.checked)
                       }
                     />
-                    <span>8×8 blocks</span>
+                    <span>8×8 DCT blocks</span>
                   </label>
                   <label>
                     <input
@@ -887,27 +1312,37 @@ function App() {
                   </label>
                 </div>
               </div>
-              <div className="image-stage">
+              <div className="image-stage" ref={imageStage}>
                 <div
-                  className={`preview-image-wrap ${isSelecting ? "is-selecting" : ""}`}
+                  className={`preview-image-wrap ${toolMode === "select" ? "is-selecting" : ""} ${toolMode === "brush" ? "is-brushing" : ""} ${toolMode === "pan" ? "is-panning" : ""}`}
+                  style={{ transform: `scale(${zoom})` }}
                   onPointerDown={onImagePointerDown}
                   onPointerMove={onImagePointerMove}
                   onPointerUp={onImagePointerUp}
                   onPointerCancel={() => {
                     selectionStart.current = null;
+                    brushPoints.current = [];
+                    panStart.current = null;
+                    setBrushDraft([]);
                   }}
                 >
                   <img
                     className="preview-image"
-                    src={document.previewUrl}
-                    alt={`Decoded preview of ${document.originalAsset.fileName}`}
+                    src={
+                      showOriginal || !editedPreviewUrl
+                        ? document.previewUrl
+                        : editedPreviewUrl
+                    }
+                    alt={`${showOriginal || !editedPreviewUrl ? "Original" : "Re-encoded"} JPEG preview of ${document.originalAsset.fileName}`}
                   />
                   <ImageOverlays
                     inspection={document.inspection}
                     showBlocks={showBlocks}
                     showMcus={showMcus}
                     selection={selection}
-                    mask={historyDocument?.currentState.activeMask ?? null}
+                    mask={activeMaskForOverlay}
+                    brushDraft={brushDraft}
+                    brushRadius={brushSize / 2}
                   />
                 </div>
               </div>
@@ -915,7 +1350,11 @@ function App() {
                 <span>
                   {document.inspection.width} × {document.inspection.height}
                 </span>
-                <span>Pixel preview · no JPEG re-encoding</span>
+                <span>
+                  {editedPreviewUrl && !showOriginal
+                    ? "Quantized DCT operation · JPEG re-encoded"
+                    : "Original decoded preview · source bytes unchanged"}
+                </span>
               </div>
             </div>
           )}
@@ -938,13 +1377,75 @@ function App() {
           {document ? (
             <>
               <section className="inspector-section selection-panel">
-                <div className="section-kicker">SPATIAL SELECTION</div>
-                <h2>Selection &amp; mask</h2>
+                <div className="section-kicker">DCT COEFFICIENT EDIT</div>
+                <h2>Mask &amp; operation</h2>
                 <p className="operation-description">
-                  Draw a rectangle in image-pixel coordinates. Applying it
-                  stores an editable mask operation; it does not change JPEG
-                  coefficients or pixels.
+                  Paint or select in image-pixel coordinates. The mask is mapped
+                  to intersecting 8×8 DCT blocks for the chosen component.
+                  Zeroing coefficients requires JPEG re-encoding.
                 </p>
+                <label className="coefficient-field">
+                  <span>Component</span>
+                  <select
+                    value={componentIndex}
+                    onChange={(event) =>
+                      setComponentIndex(Number(event.currentTarget.value))
+                    }
+                  >
+                    {document.inspection.components.map((component, index) => (
+                      <option key={component.id} value={index}>
+                        Component {index} · ID {component.id} ·{" "}
+                        {component.horizontalSampling}×
+                        {component.verticalSampling} sampling
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="coefficient-field tool-field">
+                  <span>AC frequency band</span>
+                  <select
+                    value={frequencyBand}
+                    onChange={(event) => {
+                      const result = getDctFrequencyBand(
+                        event.currentTarget.value,
+                      );
+                      if (result.ok) setFrequencyBand(result.value);
+                    }}
+                  >
+                    {DCT_FREQUENCY_BANDS.map((band) => {
+                      const range = DCT_FREQUENCY_BAND_RANGES[band];
+                      return (
+                        <option key={band} value={band}>
+                          {band === "all" ? "All AC" : band} · u+v{" "}
+                          {range.minimum}–{range.maximum}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </label>
+                <label className="coefficient-field tool-field">
+                  <span>Brush diameter · {brushSize} image pixels</span>
+                  <input
+                    type="range"
+                    min="4"
+                    max="256"
+                    step="4"
+                    value={brushSize}
+                    onChange={(event) =>
+                      setBrushSize(Number(event.currentTarget.value))
+                    }
+                  />
+                </label>
+                <label className="snap-control">
+                  <input
+                    type="checkbox"
+                    checked={snapToBlocks}
+                    onChange={(event) =>
+                      setSnapToBlocks(event.currentTarget.checked)
+                    }
+                  />
+                  <span>Snap selection to component DCT blocks</span>
+                </label>
                 {selection ? (
                   <p className="selection-readout">
                     x {selection.x.toFixed(1)} · y {selection.y.toFixed(1)} ·{" "}
@@ -953,7 +1454,12 @@ function App() {
                   </p>
                 ) : (
                   <p className="operation-empty">
-                    Enable Select region and drag over the decoded preview.
+                    Use Select to draw a region or Brush to paint a mask.
+                  </p>
+                )}
+                {activeMaskForOverlay && (
+                  <p className="selection-readout">
+                    {describeMask(activeMaskForOverlay)}
                   </p>
                 )}
                 <div className="operation-actions">
@@ -963,12 +1469,25 @@ function App() {
                     disabled={!selection}
                     onClick={addSelectionMask}
                   >
-                    Apply mask operation
+                    Add selection mask
+                  </button>
+                  <button
+                    className="operation-button"
+                    type="button"
+                    disabled={
+                      (!selection &&
+                        !paintedMask &&
+                        !historyDocument?.currentState.activeMask) ||
+                      isEncoding
+                    }
+                    onClick={applyDctOperation}
+                  >
+                    Zero selected AC band
                   </button>
                   <button
                     className="operation-button secondary"
                     type="button"
-                    disabled={!selection}
+                    disabled={!selection && !paintedMask}
                     onClick={clearSelection}
                   >
                     Clear selection
@@ -995,6 +1514,11 @@ function App() {
                   <ol className="operation-list">
                     {historyDocument.operations.map((operation, index) => {
                       const mask = getMaskFromParameters(operation.parameters);
+                      const isDctOperation =
+                        operation.type === "jpeg/coefficients/zero-band";
+                      const dctDetails = isDctOperation
+                        ? getDctOperationDetails(operation.parameters)
+                        : null;
                       return (
                         <li
                           className="operation-entry"
@@ -1015,7 +1539,11 @@ function App() {
                                   )
                                 }
                               />
-                              <span>Spatial mask</span>
+                              <span>
+                                {isDctOperation
+                                  ? "Zero DCT frequency band"
+                                  : "Spatial mask"}
+                              </span>
                             </label>
                             <span className="operation-status">
                               {operation.status}
@@ -1023,8 +1551,14 @@ function App() {
                           </div>
                           {mask && (
                             <p className="operation-parameters">
-                              Image-pixel rectangle · {mask.shapes[0]!.width} ×{" "}
-                              {mask.shapes[0]!.height}
+                              {describeMask(mask)}
+                            </p>
+                          )}
+                          {dctDetails && (
+                            <p className="operation-parameters">
+                              Component {dctDetails.componentIndex} ·{" "}
+                              {dctDetails.frequencyBand} AC band · quantized
+                              coefficients · re-encoded
                             </p>
                           )}
                           <div className="operation-actions">
@@ -1060,7 +1594,7 @@ function App() {
                             <button
                               className="operation-button secondary"
                               type="button"
-                              disabled={!selection}
+                              disabled={!selection || isDctOperation}
                               onClick={() => editMaskOperation(operation.id)}
                             >
                               Update from selection
@@ -1155,7 +1689,7 @@ function App() {
         <span className="statusbar-right">
           <span>JPEG DOMAIN</span>
           <span className="status-divider" aria-hidden="true" />
-          <span>{document ? "DOCUMENT HISTORY" : "MILESTONE 3"}</span>
+          <span>{document ? "DOCUMENT HISTORY" : "MILESTONE 4"}</span>
         </span>
       </footer>
     </main>

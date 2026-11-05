@@ -1,7 +1,16 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { mapJpegBlockCoordinate } from "../../src/jpeg/block-geometry";
+import {
+  getMaskBlockCoverage,
+  mapJpegBlockCoordinate,
+  snapSelectionToComponentBlocks,
+} from "../../src/jpeg/block-geometry";
 import { inspectJpeg } from "../../src/jpeg/inspect";
+import {
+  createBrushMask,
+  createRectangleSelection,
+  createSpatialMask,
+} from "../../src/document/masks";
 
 async function fixtureBytes(fileName: string): Promise<Uint8Array> {
   const buffer = await readFile(
@@ -173,5 +182,69 @@ describe("JPEG block coordinates", () => {
       ok: false,
       error: { code: "INVALID_INPUT" },
     });
+  });
+
+  it("snaps a pixel selection to the selected component's block geometry", async () => {
+    const inspection = inspectJpeg(
+      await fixtureBytes("synthetic-color-420.jpg"),
+    );
+    expect(inspection.ok).toBe(true);
+    if (!inspection.ok) return;
+    const selection = createRectangleSelection(8, 4, 9, 6, 16, 16);
+    expect(selection.ok).toBe(true);
+    if (!selection.ok || !selection.value) return;
+
+    expect(
+      snapSelectionToComponentBlocks(selection.value, inspection.value, 2),
+    ).toEqual({
+      ok: true,
+      value: {
+        kind: "rectangle",
+        coordinateSpace: "image-pixel",
+        x: 0,
+        y: 0,
+        width: 16,
+        height: 16,
+      },
+    });
+  });
+
+  it("maps rectangular masks to visible component blocks, including odd edges", async () => {
+    const inspection = inspectJpeg(
+      await fixtureBytes("synthetic-color-odd-420.jpg"),
+    );
+    expect(inspection.ok).toBe(true);
+    if (!inspection.ok) return;
+    const selection = createRectangleSelection(16, 8, 17, 9, 17, 9);
+    expect(selection.ok).toBe(true);
+    if (!selection.ok || !selection.value) return;
+    const mask = createSpatialMask(selection.value, 17, 9);
+    expect(mask.ok).toBe(true);
+    if (!mask.ok) return;
+
+    expect(getMaskBlockCoverage(mask.value, inspection.value, 1)).toMatchObject(
+      { ok: true, value: new Uint8Array([0, 0, 0, 0, 0, 1]) },
+    );
+    expect(getMaskBlockCoverage(mask.value, inspection.value, 2)).toMatchObject(
+      { ok: true, value: new Uint8Array([0, 1]) },
+    );
+  });
+
+  it("maps brush coverage in image pixels to component-specific blocks", async () => {
+    const inspection = inspectJpeg(
+      await fixtureBytes("synthetic-color-420.jpg"),
+    );
+    expect(inspection.ok).toBe(true);
+    if (!inspection.ok) return;
+    const mask = createBrushMask([{ x: 8, y: 8 }], 0.1, 16, 16);
+    expect(mask.ok).toBe(true);
+    if (!mask.ok) return;
+
+    expect(getMaskBlockCoverage(mask.value, inspection.value, 1)).toMatchObject(
+      { ok: true, value: new Uint8Array([1, 1, 1, 1]) },
+    );
+    expect(getMaskBlockCoverage(mask.value, inspection.value, 2)).toMatchObject(
+      { ok: true, value: new Uint8Array([1]) },
+    );
   });
 });

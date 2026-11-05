@@ -71,14 +71,10 @@ Web Worker.
 - Coordinate mapping is tested for grayscale and common subsampling modes.
 - No production codec choice is made without a written decision record.
 
-The read-only libjpeg-turbo C bridge, worker adapter, block inspector UI, and
-coordinate mapping are implemented. The native bridge matched `jpegio` 0.2.8
-for all 37 coefficient blocks across five synthetic fixtures. The Emscripten
-4.0.23 WebAssembly module was built and exercised in a browser; the worker
-successfully opened a baseline 4:2:0 fixture and displayed its selected 8×8
-coefficient block. The generated JS and WASM are 33,281 and 105,948 bytes
-respectively (10,657 and 41,405 bytes with gzip). See `docs/DECISIONS.md`
-ADR-003 and `docs/DEVELOPMENT.md` for the local build procedure.
+The libjpeg-turbo C bridge, worker adapter, block inspector UI, and coordinate
+mapping were introduced here. The native bridge matched `jpegio` 0.2.8 for all
+37 coefficient blocks across five synthetic fixtures. Milestone 4 extends this
+bridge to coefficient edits and re-encoding; see ADR-003 and ADR-005.
 
 ## Milestone 3 — Document model and operation history
 
@@ -99,29 +95,46 @@ ADR-003 and `docs/DEVELOPMENT.md` for the local build procedure.
 - [x] Original bytes are always recoverable.
 
 The immutable document model, version-1 operation registry/serializer,
-ordered replay history, image-pixel rectangular selection and mask operation,
-seeded random utility, and stale-preview coordinator are implemented. The UI
-can apply, edit, toggle, reorder, undo/redo, delete, and reset spatial mask
-operations. These operations only affect spatial-mask state: coefficient
-editing and JPEG re-encoding remain deferred because the current coefficient
-bridge is read-only. See `docs/DECISIONS.md` ADR-004.
+ordered replay history, image-pixel selections and masks, seeded random
+utility, and stale-preview coordinator are implemented. Spatial masks and DCT
+operations are replayed from the immutable original; coefficient edits do not
+mutate the imported bytes. See `docs/DECISIONS.md` ADR-004 and ADR-005.
 
 ## Milestone 4 — First DCT editing vertical slice
 
 ### Tasks
 
-- [ ] Add canvas navigation and block overlay.
-- [ ] Add brush mask and block-aware selection.
-- [ ] Implement one simple DCT operation (e.g. zero or scale selected coefficients).
-- [ ] Add component and frequency-band selection.
-- [ ] Preview by encoding/decoding through the selected codec.
-- [ ] Export and reopen the resulting JPEG.
+- [x] Add canvas navigation and block overlay.
+- [x] Add brush mask and block-aware selection.
+- [x] Implement zeroing selected AC coefficients in one frequency band.
+- [x] Add component and frequency-band selection.
+- [x] Preview by encoding/decoding through the selected codec.
+- [x] Export the resulting JPEG.
 
 ### Acceptance
 
-- User can import a supported JPEG, paint a mask, apply a DCT operation, compare before/after, undo/redo, and export.
-- Export opens in an independent decoder.
-- UI explicitly identifies the result as re-encoded.
+- [x] User can import a supported JPEG, paint a mask, apply a DCT operation, compare before/after, undo/redo, and export.
+- [x] Export opens in independent decoders in native bridge validation.
+- [x] UI explicitly identifies the result as re-encoded.
+
+The initial operation zeros AC coefficients whose natural-order `u + v`
+frequency falls in the selected band (low 1–2, mid 3–5, high 6–14, or all
+1–14); DC is retained. The mask is in image-pixel coordinates and is mapped to
+visible 8×8 DCT blocks for the chosen component, accounting for sampling
+factors. The current supported subset remains 8-bit baseline sequential
+Huffman JPEG with grayscale or three components and one interleaved scan.
+Progressive, arithmetic-coded, multi-scan, and other unsupported inputs are
+rejected.
+
+Each preview/export starts from the original JPEG, replays enabled operations
+in order, writes a new JPEG, then decodes that output for preview. The original
+asset remains byte-for-byte unchanged. Re-encoding does not promise metadata
+preservation: the bridge copies saved APP/COM markers except APP0 and APP14;
+the codec may generate its own JFIF marker. The app lazily loads the generated
+WASM codec, built with `npm run build:jpeg-codec` using Emscripten 4.0.23.
+Input/output JPEGs are capped at 50 MiB, coefficient storage at 128 MiB, and
+worker DCT processing is bounded. See ADR-005 for the codec decision and
+export behavior.
 
 ## Milestone 5 — Quantization and block operations
 

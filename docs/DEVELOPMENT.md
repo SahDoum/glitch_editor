@@ -37,23 +37,120 @@ The selected stack follows `docs/ARCHITECTURE.md`:
 - React and React DOM are MIT-licensed, actively maintained browser runtime dependencies used for the UI. Their code is included in the production bundle. A framework-free DOM UI was the alternative; React was selected to match the architecture's UI recommendation and support the planned editor surfaces.
 - Vite and its React plugin are MIT-licensed, actively maintained development/build tools. They are not runtime services; Vite emits static browser assets.
 - TypeScript is Apache-2.0 licensed. ESLint, typescript-eslint, the React Hooks plugin, Prettier, and Vitest are MIT-licensed, actively maintained development-only tools for type checking, linting, formatting, and tests. None is shipped as a browser runtime dependency.
-- No JPEG parser, codec, WASM module, telemetry, analytics, or upload dependency is included in Milestone 0. Codec selection remains deferred to the documented evaluation milestone.
+- No JPEG parser, codec, WASM module, telemetry, analytics, or upload dependency was included in Milestone 0. The coefficient codec choice and current editing scope are recorded in ADR-003 and ADR-005.
 
 Direct dependency versions are pinned in `package.json` and the complete dependency graph is locked in `package-lock.json`. The `minimatch` override pins the patched 11.0.1 release throughout the development toolchain. Reassess bundle/runtime cost and JPEG codec licensing before introducing any image-processing dependency.
 
-The Milestone 2 coefficient reader links the pinned
+The coefficient reader and editor link the pinned
 `@ai-ecoverse/wasm-libjpeg-turbo` static WebAssembly library at build time. It
-is a development dependency; the browser receives only the generated,
-read-only coefficient bridge module. Regenerating that module additionally
-requires Emscripten 4.0.23 (`emcc`) and can be done with `npm run
-build:jpeg-codec`. The Emscripten SDK is not installed by the normal project
-install. The command writes `public/codec/libjpeg-coefficients.js` and
-`public/codec/libjpeg-coefficients.wasm`; include these generated assets in
-production output. The editor remains usable without the generated codec, but
-coefficient inspection reports that the module must be built instead of
-substituting a pixel-only preview. The bridge uses libjpeg-turbo under its
-IJG/BSD-3-Clause/Zlib licenses; product documentation must include: “This
-software is based in part on the work of the Independent JPEG Group.”
+is a development dependency; the browser receives the generated coefficient
+read/write bridge module. Regenerating that module requires Emscripten 4.0.23
+(`emcc`), which is not installed by the normal project install. Run
+`npm run build:jpeg-codec`; the command writes
+`public/codec/libjpeg-coefficients.js` and
+`public/codec/libjpeg-coefficients.wasm`. Include these generated assets in
+production output. If the codec is missing or fails, coefficient inspection
+and re-encoding report an error rather than falling back to pixel-only edits.
+The bridge uses libjpeg-turbo under its IJG/BSD-3-Clause/Zlib licenses; product
+documentation must include: “This software is based in part on the work of the
+Independent JPEG Group.”
+
+### Rebuilding the WebAssembly bridge
+
+The bridge is compiled locally from
+`src/jpeg/codec/coefficient-bridge.c`, using headers and the static
+`libjpeg.a` shipped in the pinned npm development dependency. Emscripten is an
+external build tool and is not installed by `npm ci`; use version 4.0.23 to
+match the generated module. First check whether the compiler is already
+available:
+
+```bash
+emcc --version
+```
+
+If `emcc` is missing, one tested approach on this computer was to clone the
+official Emscripten SDK into a temporary directory, install and activate
+version 4.0.23 there, then source its environment. This did not use Homebrew
+or install Emscripten globally:
+
+```bash
+git clone https://github.com/emscripten-core/emsdk.git /tmp/jpeg-glitch-emsdk
+cd /tmp/jpeg-glitch-emsdk
+./emsdk install 4.0.23
+./emsdk activate 4.0.23
+source ./emsdk_env.sh
+cd /path/to/glitch_editor
+export PATH="$HOME/.nvm/versions/node/v20.20.0/bin:$PATH"
+npm ci
+npm run build:jpeg-codec
+```
+
+Replace `/path/to/glitch_editor` with the repository path. The Node path above
+matches this machine's nvm installation; on another machine, activate the
+repository's Node version with nvm (or use another supported Node.js 20.19+ or
+22.12+ installation) before running npm.
+
+The official SDK installer uses a prebuilt toolchain when available for the
+host platform. Availability can vary: if `emsdk install 4.0.23` reports that
+it must build LLVM or another large toolchain component from source, stop
+rather than starting an unbounded build. The successful local build used
+Emscripten 4.0.23 from `/tmp/jpeg-glitch-emsdk`; the SDK directory was removed
+after verification, so it must be installed again to repeat the build. If the
+SDK cannot provide a prebuilt toolchain in the current environment, use a
+compatible machine or CI runner with adequate disk space. If Emscripten is
+already installed and `emcc` is on `PATH`, the SDK installation steps can be
+skipped; `npm ci` is needed only if project dependencies are not installed.
+Alternatively, select a specific compiler without changing `PATH`:
+
+```bash
+EMCC=/absolute/path/to/emsdk/upstream/emscripten/emcc npm run build:jpeg-codec
+```
+
+The script links the C bridge to the packaged static library and emits a
+modularized ES-module factory for browser and worker use. It disables the
+virtual filesystem, exports the bridge functions and `HEAPU8`, and enables
+bounded growable WASM memory (64 MiB initial, 512 MiB maximum). Emscripten
+writes the JavaScript glue at
+`public/codec/libjpeg-coefficients.js` and its sibling WASM binary at
+`public/codec/libjpeg-coefficients.wasm`. The build script exits with an
+actionable error if the npm library is missing or `emcc` cannot be run.
+
+The codec artifacts are checked in, but `npm run build` does not rebuild them:
+it only copies the current files from `public/codec/` into `dist/`. Whenever
+the C bridge adds or changes an exported function, rebuild both artifacts with
+`npm run build:jpeg-codec` and commit the updated JavaScript and WASM together.
+Otherwise the TypeScript declarations and worker can expect an API that the
+older WASM binary does not export; native C tests or a successful production
+build alone do not catch that mismatch.
+
+After rebuilding, confirm both assets exist and run the production build so
+Vite copies them into `dist/`:
+
+```bash
+ls -lh public/codec/libjpeg-coefficients.js public/codec/libjpeg-coefficients.wasm
+npm run build
+ls -lh dist/codec/libjpeg-coefficients.js dist/codec/libjpeg-coefficients.wasm
+```
+
+Commit regenerated codec assets when the bridge or codec changes; they are
+required by the browser app and are not generated by the normal Vite build.
+The exact compiler arguments and exported C functions are maintained in
+`scripts/build-coefficient-codec.mjs`.
+
+If a rebuild cannot be performed on the current host, do not claim the new
+WASM API is browser-ready. Keep the existing generated files unchanged, use a
+toolchain-capable machine to regenerate them, and verify the resulting browser
+workflow there. At minimum, exercise each newly added operation in the browser
+and confirm that preview/export succeeds; `npm run check` does not test the
+runtime exports inside the WASM binary.
+
+The current re-encoder accepts only 8-bit baseline sequential Huffman JPEGs
+with one interleaved scan and grayscale or three components. Input/output
+JPEGs are limited to 50 MiB, coefficient storage to 128 MiB, and worker glitch
+processing is bounded. The edited export is a new JPEG; saved APP/COM markers
+are copied except APP0 and APP14, and metadata preservation is not guaranteed.
+The browser preview may fail even when encoded bytes are retained for export.
+See ADR-005 and ADR-006 for codec limits, experiment semantics, and DQT modes.
 
 ## Fixture corpus
 

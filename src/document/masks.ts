@@ -15,15 +15,26 @@ export interface SpatialMask {
   readonly id: string;
   readonly width: number;
   readonly height: number;
-  readonly shapes: readonly {
-    readonly kind: "rectangle";
-    readonly mode: "add";
-    readonly x: number;
-    readonly y: number;
-    readonly width: number;
-    readonly height: number;
-  }[];
+  readonly shapes: readonly SpatialMaskShape[];
 }
+
+export type SpatialMaskShape =
+  | {
+      readonly kind: "rectangle";
+      readonly mode: "add";
+      readonly x: number;
+      readonly y: number;
+      readonly width: number;
+      readonly height: number;
+    }
+  | {
+      readonly kind: "brush";
+      readonly mode: "add";
+      readonly radius: number;
+      readonly points: readonly { readonly x: number; readonly y: number }[];
+    };
+
+const MAX_BRUSH_POINTS = 10_000;
 
 function isValidDimensions(width: number, height: number): boolean {
   return (
@@ -135,19 +146,73 @@ export function createSpatialMask(
   );
 }
 
+export function createBrushMask(
+  points: readonly { readonly x: number; readonly y: number }[],
+  radius: number,
+  imageWidth: number,
+  imageHeight: number,
+): Result<SpatialMask> {
+  if (
+    !isValidDimensions(imageWidth, imageHeight) ||
+    !Number.isFinite(radius) ||
+    radius <= 0 ||
+    radius > 512 ||
+    points.length === 0 ||
+    points.length > MAX_BRUSH_POINTS ||
+    !points.every(
+      ({ x, y }) =>
+        Number.isFinite(x) &&
+        Number.isFinite(y) &&
+        x >= 0 &&
+        y >= 0 &&
+        x <= imageWidth &&
+        y <= imageHeight,
+    )
+  ) {
+    return failure({
+      code: "INVALID_INPUT",
+      message: "The image-space brush mask is invalid.",
+    });
+  }
+
+  return success(
+    Object.freeze({
+      schemaVersion: 1,
+      id: crypto.randomUUID(),
+      width: imageWidth,
+      height: imageHeight,
+      shapes: Object.freeze([
+        Object.freeze({
+          kind: "brush" as const,
+          mode: "add" as const,
+          radius,
+          points: Object.freeze(
+            points.map((point) => Object.freeze({ ...point })),
+          ),
+        }),
+      ]),
+    }),
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function isSpatialMask(value: unknown): value is SpatialMask {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const width = Reflect.get(value, "width");
+  const height = Reflect.get(value, "height");
   if (
     !isRecord(value) ||
     value.schemaVersion !== 1 ||
     typeof value.id !== "string" ||
     value.id.length === 0 ||
-    typeof value.width !== "number" ||
-    typeof value.height !== "number" ||
-    !isValidDimensions(value.width, value.height) ||
+    typeof width !== "number" ||
+    typeof height !== "number" ||
+    !isValidDimensions(width, height) ||
     !Array.isArray(value.shapes) ||
     value.shapes.length !== 1
   ) {
@@ -155,26 +220,50 @@ export function isSpatialMask(value: unknown): value is SpatialMask {
   }
 
   const shape = value.shapes[0];
-  if (
-    !isRecord(shape) ||
-    shape.kind !== "rectangle" ||
-    shape.mode !== "add" ||
-    typeof shape.x !== "number" ||
-    typeof shape.y !== "number" ||
-    typeof shape.width !== "number" ||
-    typeof shape.height !== "number" ||
-    ![shape.x, shape.y, shape.width, shape.height].every(Number.isFinite)
-  ) {
-    return false;
+  if (!isRecord(shape) || shape.mode !== "add") return false;
+
+  if (shape.kind === "rectangle") {
+    if (
+      typeof shape.x !== "number" ||
+      typeof shape.y !== "number" ||
+      typeof shape.width !== "number" ||
+      typeof shape.height !== "number" ||
+      ![shape.x, shape.y, shape.width, shape.height].every(Number.isFinite)
+    ) {
+      return false;
+    }
+
+    return (
+      shape.x >= 0 &&
+      shape.y >= 0 &&
+      shape.width > 0 &&
+      shape.height > 0 &&
+      shape.x + shape.width <= width &&
+      shape.y + shape.height <= height
+    );
   }
 
   return (
-    shape.x >= 0 &&
-    shape.y >= 0 &&
-    shape.width > 0 &&
-    shape.height > 0 &&
-    shape.x + shape.width <= value.width &&
-    shape.y + shape.height <= value.height
+    shape.kind === "brush" &&
+    typeof shape.radius === "number" &&
+    Number.isFinite(shape.radius) &&
+    shape.radius > 0 &&
+    shape.radius <= 512 &&
+    Array.isArray(shape.points) &&
+    shape.points.length > 0 &&
+    shape.points.length <= MAX_BRUSH_POINTS &&
+    shape.points.every(
+      (point) =>
+        isRecord(point) &&
+        typeof point.x === "number" &&
+        typeof point.y === "number" &&
+        Number.isFinite(point.x) &&
+        Number.isFinite(point.y) &&
+        point.x >= 0 &&
+        point.y >= 0 &&
+        point.x <= width &&
+        point.y <= height,
+    )
   );
 }
 
@@ -183,21 +272,26 @@ export function getMaskFromParameters(value: unknown): SpatialMask | null {
   return isSpatialMask(value.mask) ? value.mask : null;
 }
 
-export function spatialMaskParameters(mask: SpatialMask): JsonValue {
+export function spatialMaskToJson(mask: SpatialMask): JsonValue {
   return {
-    mask: {
-      schemaVersion: mask.schemaVersion,
-      id: mask.id,
-      width: mask.width,
-      height: mask.height,
-      shapes: mask.shapes.map((shape) => ({
-        kind: shape.kind,
-        mode: shape.mode,
-        x: shape.x,
-        y: shape.y,
-        width: shape.width,
-        height: shape.height,
-      })),
-    },
+    schemaVersion: mask.schemaVersion,
+    id: mask.id,
+    width: mask.width,
+    height: mask.height,
+    shapes: mask.shapes.map((shape) => ({
+      ...shape,
+      ...(shape.kind === "brush"
+        ? {
+            points: shape.points.map((point) => ({
+              x: point.x,
+              y: point.y,
+            })),
+          }
+        : {}),
+    })),
   };
+}
+
+export function spatialMaskParameters(mask: SpatialMask): JsonValue {
+  return { mask: spatialMaskToJson(mask) };
 }

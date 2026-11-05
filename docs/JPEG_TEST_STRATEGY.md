@@ -101,15 +101,30 @@ are 50 MiB per JPEG file, 40 megapixels per frame, and 10,000 marker entries.
 Parser tests cover the pixel and marker limits; import tests verify oversized
 files are rejected before reading.
 
-The Milestone 2 coefficient prototype reads only 8-bit baseline sequential
-Huffman JPEGs with one interleaved scan and one or three components. Its
-libjpeg-turbo WebAssembly bridge rejects coefficient arrays exceeding 128 MiB.
-It reads quantized coefficients in natural 8×8 block order; it does not edit or
-re-encode them. Coordinate mapping is tested for grayscale and 4:2:0, 4:2:2,
-and 4:4:4 sampling, including odd image dimensions and the distinction between
-visible coefficient blocks and MCU padding. The native C bridge's coefficient
-blocks were cross-checked against `jpegio` 0.2.8 on the synthetic fixture set;
-the generated WebAssembly module still requires its own runtime validation.
+The libjpeg-turbo coefficient bridge accepts only 8-bit baseline sequential
+Huffman JPEGs with one interleaved scan and one or three components. It rejects
+coefficient arrays exceeding 128 MiB. Coefficients are read in natural 8×8
+block order; image-space masks map to visible component blocks, distinct from
+MCU padding. Coordinate mapping and mask coverage are tested for grayscale
+and 4:2:0, 4:2:2, and 4:4:4 sampling, including odd image dimensions. The
+native reader's coefficients were cross-checked against `jpegio` 0.2.8 on the
+synthetic fixture set.
+
+Milestone 4 adds a registered operation that zeros selected AC coefficients
+for one component and frequency band (`u + v` ranges 1–2, 3–5, 6–14, or
+1–14); DC is retained. Every encode reopens the original bytes and replays
+enabled operations. The C bridge writes a new JPEG; the input bytes are not
+modified. Input/output files are limited to 50 MiB, and worker DCT work is
+bounded. Progressive, arithmetic-coded, multi-scan, and other unsupported
+processes remain rejected. Saved APP/COM markers are copied except APP0 and
+APP14, so metadata preservation is not guaranteed.
+
+Native bridge exports for grayscale, 4:2:0 (including odd dimensions), 4:2:2,
+and 4:4:4 synthetic fixtures were reopened by ImageMagick and macOS `sips`.
+The generated Emscripten 4.0.23 module was loaded in a browser and exercised
+through import, brush mask, DCT operation, re-encoded preview, and undo/redo.
+This smoke check did not validate browser download capture; browser export
+automation remains a follow-up.
 
 Do not use unlicensed photographs in a public test corpus. Tiny synthetic images are preferred for deterministic tests.
 

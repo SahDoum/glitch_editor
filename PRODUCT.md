@@ -13,15 +13,15 @@ itself**, not merely on decoded RGB pixels.
 The interaction model should feel familiar to users of Paint, Photoshop,
 or other raster editors:
 
--   open or drag-and-drop a JPEG;
--   see it on a central canvas;
--   choose tools from a toolbar;
--   paint, select, transform, and apply effects;
--   adjust tool parameters;
--   work with layers or an ordered stack of operations;
--   undo and redo;
--   compare the result with the original;
--   export the edited image.
+- open or drag-and-drop a JPEG;
+- see it on a central canvas;
+- choose tools from a toolbar;
+- paint, select, transform, and apply effects;
+- adjust tool parameters;
+- work with layers or an ordered stack of operations;
+- undo and redo;
+- compare the result with the original;
+- export the edited image.
 
 The defining difference is that the tools operate on JPEG structures and
 coding data: quantization tables, DCT coefficients, 8×8 blocks, MCU
@@ -58,20 +58,20 @@ glitch techniques over a large collection of conventional filters.
 
 ### Primary users
 
--   photographers and visual artists experimenting with digital image
-    degradation;
--   glitch-art practitioners and databending artists;
--   developers and researchers exploring JPEG internals.
+- photographers and visual artists experimenting with digital image
+  degradation;
+- glitch-art practitioners and databending artists;
+- developers and researchers exploring JPEG internals.
 
 ### Core use cases
 
--   apply a controlled JPEG glitch to a photograph;
--   paint an effect into a selected region;
--   transplant JPEG coefficient structures from one image to another;
--   explore how individual JPEG parameters affect the decoded image;
--   combine several operations and reorder or disable them;
--   compare multiple parameter variations;
--   export a result and reproduce it later.
+- apply a controlled JPEG glitch to a photograph;
+- paint an effect into a selected region;
+- transplant JPEG coefficient structures from one image to another;
+- explore how individual JPEG parameters affect the decoded image;
+- combine several operations and reorder or disable them;
+- compare multiple parameter variations;
+- export a result and reproduce it later.
 
 ## 4. Scope
 
@@ -79,39 +79,39 @@ glitch techniques over a large collection of conventional filters.
 
 The first usable version should support:
 
--   JPEG import through file picker and drag-and-drop;
--   canvas display, zoom, pan, fit-to-screen;
--   original-image preservation;
--   JPEG metadata and coding-parameter inspection;
--   block-level DCT coefficient editing;
--   quantization-table editing and re-encoding;
--   region selection and brush masks;
--   block/MCU-aware operations;
--   operation history with undo/redo;
--   deterministic random seed;
--   before/after preview;
--   JPEG export, with clear indication that export re-encodes the image.
+- JPEG import through file picker and drag-and-drop;
+- canvas display, zoom, pan, fit-to-screen;
+- original-image preservation;
+- JPEG metadata and coding-parameter inspection;
+- block-level DCT coefficient editing;
+- quantization-table editing and re-encoding;
+- region selection and brush masks;
+- block/MCU-aware operations;
+- operation history with undo/redo;
+- deterministic random seed;
+- before/after preview;
+- JPEG export, with clear indication that export re-encodes the image.
 
 ### Later releases
 
--   two-image workflow and DCT transplant;
--   AC-only and DC-only transplant;
--   component-specific editing (Y, Cb, Cr);
--   progressive JPEG scan inspection and experiments;
--   controlled entropy-stream manipulation;
--   raw byte editor;
--   presets and parameter variation browser;
--   save/load project files;
--   optional desktop wrapper.
+- two-image workflow and DCT transplant;
+- AC-only and DC-only transplant;
+- component-specific editing (Y, Cb, Cr);
+- progressive JPEG scan inspection and experiments;
+- controlled entropy-stream manipulation;
+- raw byte editor;
+- presets and parameter variation browser;
+- save/load project files;
+- optional desktop wrapper.
 
 ### Explicitly out of scope for MVP
 
--   general vector editing;
--   full Photoshop-compatible layer model;
--   RAW camera processing;
--   video datamoshing;
--   arbitrary support for every JPEG-family extension;
--   guarantee that malformed JPEGs render identically in all decoders.
+- general vector editing;
+- full Photoshop-compatible layer model;
+- RAW camera processing;
+- video datamoshing;
+- arbitrary support for every JPEG-family extension;
+- guarantee that malformed JPEGs render identically in all decoders.
 
 ## 5. JPEG concepts the application must model
 
@@ -122,15 +122,15 @@ The implementation must understand at least the following concepts.
 A JPEG file is a sequence of marker segments and coded data. Relevant
 markers include:
 
--   `SOI` (`FF D8`) --- start of image;
--   `APPn` --- application metadata, including EXIF in common files;
--   `DQT` --- quantization tables;
--   `SOF` --- frame parameters, dimensions, components and sampling;
--   `DHT` --- Huffman tables;
--   `SOS` --- start of scan;
--   `DRI` --- restart interval;
--   `RSTn` --- restart markers;
--   `EOI` (`FF D9`) --- end of image.
+- `SOI` (`FF D8`) --- start of image;
+- `APPn` --- application metadata, including EXIF in common files;
+- `DQT` --- quantization tables;
+- `SOF` --- frame parameters, dimensions, components and sampling;
+- `DHT` --- Huffman tables;
+- `SOS` --- start of scan;
+- `DRI` --- restart interval;
+- `RSTn` --- restart markers;
+- `EOI` (`FF D9`) --- end of image.
 
 The parser must not assume that every JPEG has one simple scan or that
 all bytes after SOS are ordinary marker segments. Entropy-coded scan
@@ -143,9 +143,9 @@ blocks of quantized DCT coefficients.
 
 Each block contains:
 
--   one DC coefficient, representing the block's average level relative
-    to the component's prediction context;
--   63 AC coefficients, representing spatial-frequency information.
+- one DC coefficient, representing the block's average level relative
+  to the component's prediction context;
+- 63 AC coefficients, representing spatial-frequency information.
 
 The editor should expose coefficient coordinates (`u`, `v`) and a
 frequency visualization. It must not describe AC coefficients as literal
@@ -194,15 +194,15 @@ coordinates; - MCU coordinates; - byte/bit offsets in the encoded file.
 
 A desktop-oriented responsive workspace:
 
--   **Top bar:** file name, open/import, save project, export, undo,
-    redo, compare.
--   **Left toolbar:** pointer, selection, brush/mask, block tools,
-    glitch tools.
--   **Center canvas:** image preview with zoom and pan.
--   **Right inspector:** parameters for the selected tool or selected
-    JPEG structure.
--   **Bottom panel:** operation/layer stack, history, optional
-    coefficient/stream inspector.
+- **Top bar:** file name, open/import, save project, export, undo,
+  redo, compare.
+- **Left toolbar:** pointer, selection, brush/mask, block tools,
+  glitch tools.
+- **Center canvas:** image preview with zoom and pan.
+- **Right inspector:** parameters for the selected tool or selected
+  JPEG structure.
+- **Bottom panel:** operation/layer stack, history, optional
+  coefficient/stream inspector.
 
 On narrow screens, side panels may collapse into drawers. The
 application is primarily designed for desktop browsers.
@@ -211,15 +211,15 @@ application is primarily designed for desktop browsers.
 
 Required interactions:
 
--   zoom in/out and fit image;
--   pan;
--   pixel-accurate cursor coordinates;
--   optional overlay for 8×8 block grid;
--   optional MCU grid;
--   selection rectangle and freehand mask;
--   show/hide original;
--   split-view or difference preview;
--   indicate when the displayed preview is approximate or stale.
+- zoom in/out and fit image;
+- pan;
+- pixel-accurate cursor coordinates;
+- optional overlay for 8×8 block grid;
+- optional MCU grid;
+- selection rectangle and freehand mask;
+- show/hide original;
+- split-view or difference preview;
+- indicate when the displayed preview is approximate or stale.
 
 The canvas displays a decoded preview. The source JPEG data remains a
 separate authoritative document model.
@@ -228,14 +228,14 @@ separate authoritative document model.
 
 Every tool exposes:
 
--   tool name and short explanation;
--   target domain (DCT, quantization, MCU, entropy stream, raw bytes);
--   parameters with sensible ranges;
--   affected component(s);
--   blend/application mode where meaningful;
--   deterministic seed for random behavior;
--   Apply/preview controls where computation is expensive;
--   Reset tool settings.
+- tool name and short explanation;
+- target domain (DCT, quantization, MCU, entropy stream, raw bytes);
+- parameters with sensible ranges;
+- affected component(s);
+- blend/application mode where meaningful;
+- deterministic seed for random behavior;
+- Apply/preview controls where computation is expensive;
+- Reset tool settings.
 
 ### 6.4 History and operation stack
 
@@ -243,25 +243,25 @@ The editor needs both a user-facing operation stack and undo/redo.
 
 Each operation record should contain:
 
--   unique ID;
--   operation type and version;
--   parameters;
--   affected region/mask;
--   target component(s);
--   random seed, if any;
--   input document revision;
--   status (previewing, applied, failed);
--   optional execution diagnostics.
+- unique ID;
+- operation type and version;
+- parameters;
+- affected region/mask;
+- target component(s);
+- random seed, if any;
+- input document revision;
+- status (previewing, applied, failed);
+- optional execution diagnostics.
 
 Users can:
 
--   undo and redo;
--   toggle an operation on/off;
--   reorder operations when the operation type supports it;
--   duplicate an operation;
--   edit its parameters;
--   delete an operation;
--   revert to the original.
+- undo and redo;
+- toggle an operation on/off;
+- reorder operations when the operation type supports it;
+- duplicate an operation;
+- edit its parameters;
+- delete an operation;
+- revert to the original.
 
 Reordering may change results. The UI must recompute downstream
 operations and must not promise that all operations commute.
@@ -388,14 +388,14 @@ a sandbox preview that never overwrites the source.
 
 ### 7.7 Raw byte tools (advanced mode)
 
--   hex view of file bytes;
--   search for JPEG markers;
--   select byte ranges;
--   flip, replace, insert, delete, repeat or shuffle bytes;
--   seed-controlled random corruption;
--   protect SOI/EOI and structural segments by default;
--   allow expert override with an explicit warning;
--   maintain exact original bytes for recovery.
+- hex view of file bytes;
+- search for JPEG markers;
+- select byte ranges;
+- flip, replace, insert, delete, repeat or shuffle bytes;
+- seed-controlled random corruption;
+- protect SOI/EOI and structural segments by default;
+- allow expert override with an explicit warning;
+- maintain exact original bytes for recovery.
 
 Raw-byte operations should be treated as experimental. The application
 must expect decoder failure and retain the ability to reset to the
@@ -403,13 +403,13 @@ original.
 
 ### 7.8 Re-encoding and degradation tools
 
--   export at selected JPEG quality;
--   select chroma subsampling where supported;
--   repeat encode/decode generations;
--   control quantization tables;
--   optionally compare each generation;
--   label this family as re-encoding effects, not direct bitstream
-    corruption.
+- export at selected JPEG quality;
+- select chroma subsampling where supported;
+- repeat encode/decode generations;
+- control quantization tables;
+- optionally compare each generation;
+- label this family as re-encoding effects, not direct bitstream
+  corruption.
 
 ## 8. Two-image workflow: transplant
 
@@ -444,7 +444,7 @@ IndexedDB for optional local project persistence.
 
 ### 9.2 Processing pipeline
 
-``` text
+```text
 JPEG file
    |
    v
@@ -510,7 +510,7 @@ Represent the open document separately from its current preview.
 
 Suggested conceptual model:
 
-``` ts
+```ts
 type JpegDocument = {
   id: string;
   originalBytes: ArrayBuffer;
@@ -551,16 +551,16 @@ differ.
 
 ### 9.5 Operation execution
 
--   Operations should be deterministic for a given input revision and
-    seed.
--   Cache intermediate coefficient states where memory permits.
--   Invalidate downstream cache entries when an earlier operation
-    changes.
--   Use immutable snapshots or reversible deltas for reliable undo/redo.
--   Avoid copying large coefficient arrays for every small UI
-    interaction.
--   Separate fast interactive preview from final-quality export.
--   Use worker messages with progress and cancellation support.
+- Operations should be deterministic for a given input revision and
+  seed.
+- Cache intermediate coefficient states where memory permits.
+- Invalidate downstream cache entries when an earlier operation
+  changes.
+- Use immutable snapshots or reversible deltas for reliable undo/redo.
+- Avoid copying large coefficient arrays for every small UI
+  interaction.
+- Separate fast interactive preview from final-quality export.
+- Use worker messages with progress and cancellation support.
 
 ### 9.6 Preview strategy
 
@@ -600,16 +600,16 @@ version and warn that exact output may differ.
 
 ## 11. Performance and memory
 
--   Parse and decode in Web Workers.
--   Avoid blocking the UI thread.
--   Use transferable buffers where practical.
--   Generate lower-resolution previews for large images.
--   Debounce slider and brush updates.
--   Provide cancellation for expensive operations.
--   Display progress for full-image re-encoding.
--   Establish a documented maximum supported image size for the first
-    release.
--   Handle browser memory pressure and release temporary buffers.
+- Parse and decode in Web Workers.
+- Avoid blocking the UI thread.
+- Use transferable buffers where practical.
+- Generate lower-resolution previews for large images.
+- Debounce slider and brush updates.
+- Provide cancellation for expensive operations.
+- Display progress for full-image re-encoding.
+- Establish a documented maximum supported image size for the first
+  release.
+- Handle browser memory pressure and release temporary buffers.
 
 The Milestone 1 inspector accepts JPEG files up to 50 MiB, frame dimensions
 up to 40 megapixels, and at most 10,000 markers. The marker parser runs in a
@@ -617,25 +617,25 @@ cancellable Web Worker; oversized inputs are rejected before preview decoding.
 
 ## 12. Error handling and safety
 
--   Keep original bytes immutable.
--   Validate marker lengths and segment boundaries.
--   Detect truncated files and malformed segments.
--   Guard against oversized dimensions and decompression/memory
-    exhaustion.
--   Never trust declared image dimensions without bounds checks.
--   Isolate parser and decoder failures from the UI.
--   Provide a reset-to-original action that always remains available.
--   Explain when a result is decoder-dependent.
--   Do not claim that a corrupted JPEG is standards-compliant.
+- Keep original bytes immutable.
+- Validate marker lengths and segment boundaries.
+- Detect truncated files and malformed segments.
+- Guard against oversized dimensions and decompression/memory
+  exhaustion.
+- Never trust declared image dimensions without bounds checks.
+- Isolate parser and decoder failures from the UI.
+- Provide a reset-to-original action that always remains available.
+- Explain when a result is decoder-dependent.
+- Do not claim that a corrupted JPEG is standards-compliant.
 
 ## 13. Accessibility and usability
 
--   Keyboard shortcuts for undo/redo, zoom, hand tool and export;
--   tooltips and concise explanations of JPEG terminology;
--   numeric parameter entry in addition to sliders;
--   visible focus states;
--   high-contrast overlays for block and selection boundaries;
--   avoid relying on color alone to distinguish components or states.
+- Keyboard shortcuts for undo/redo, zoom, hand tool and export;
+- tooltips and concise explanations of JPEG terminology;
+- numeric parameter entry in addition to sliders;
+- visible focus states;
+- high-contrast overlays for block and selection boundaries;
+- avoid relying on color alone to distinguish components or states.
 
 ## 14. MVP acceptance criteria
 
@@ -659,93 +659,85 @@ The MVP is complete when a user can:
 
 ## 15. Suggested implementation milestones
 
-### Milestone 1 --- JPEG inspection
+### Milestone 1 --- JPEG inspection (complete)
 
--   import and parse JPEG;
--   show metadata and marker/scan structure;
--   decode a separate browser pixel preview;
--   show component-aware block and MCU overlays.
+- import supported JPEGs, parse structure, and show a separate decoded-pixel preview;
+- show component-aware block and MCU overlays.
 
-DCT coefficient-array inspection is deferred until the codec evaluation
-milestone. A browser-decoded pixel preview is not a substitute for quantized
-DCT coefficients.
+### Milestone 2 --- Coefficient access prototype (complete)
 
-### Milestone 2 --- Editing foundation
+- inspect quantized DCT coefficients through the libjpeg-turbo WebAssembly bridge;
+- keep coefficient data distinct from the pixel preview and source bytes.
 
--   operation stack;
--   undo/redo;
--   masks and selections;
--   DCT brush with zero, scale and randomize modes;
--   exact preview via encode/decode.
+### Milestone 3 --- Document and operation history (complete)
 
-### Milestone 3 --- Quantization editor
+- preserve immutable source bytes and implement versioned, replayable operation history;
+- support image-pixel selections/masks, undo/redo, and reset.
 
--   8×8 matrix UI;
--   editable values and procedural patterns;
--   controlled re-quantization/re-encoding;
--   before/after comparison.
+### Milestone 4 --- First DCT editing vertical slice (complete)
 
-### Milestone 4 --- Block and component operations
+- brush masks and sampling-aware mapping from image pixels to visible DCT blocks;
+- component and AC frequency-band selection;
+- zero selected AC coefficients and preview/export by JPEG re-encoding;
+- before/after comparison, undo/redo, and explicit re-encoding status.
 
--   block duplicate/swap/repeat;
--   DC-only and AC-only operations;
--   Y/Cb/Cr controls;
--   compatibility validation.
+The implemented DCT operation zeros the selected natural-order AC band
+(`u + v` 1–2, 3–5, 6–14, or 1–14); it does not yet scale or randomize
+coefficients. The supported JPEG subset and re-encoding/metadata limits are
+recorded in `docs/ROADMAP.md` and ADR-005.
 
-### Milestone 5 --- Two-image transplant
+### Milestone 5 --- Quantization and block operations
 
--   source and target documents;
--   DCT block transplant;
--   AC/DC transplant;
--   quantization and sampling compatibility handling.
+- quantization matrix editing with explicit re-quantization semantics;
+- block duplicate/swap/repeat and component-specific operations with compatibility validation.
 
-### Milestone 6 --- Experimental bitstream lab
+### Milestone 6 --- Two-image transplant
 
--   marker and scan inspector;
--   restart-marker visualization;
--   raw byte/bit corruption;
--   entropy-stream transplant experiments;
--   decoder recovery diagnostics.
+- source/target documents and DCT block or AC/DC transplant;
+- validate component layout, sampling, block geometry, quantization assignments, and scan/process compatibility.
+
+### Milestone 7 --- Experimental bitstream lab
+
+- marker/scan and restart-marker inspection;
+- isolated raw-byte and bitstream experiments with decoder recovery diagnostics.
+
+### Milestone 8 --- Project persistence and polish
+
+- versioned local project persistence and remaining product polish.
 
 ## 16. Open technical decisions
 
-Resolve these during prototyping:
+The initial codec and baseline-only process boundary are recorded in ADR-003
+and ADR-005. Remaining decisions include:
 
-1.  Which WASM codec provides the best balance of coefficient access,
-    progressive JPEG support and encoding control?
-2.  Should the initial MVP support baseline JPEG only, or baseline plus
-    progressive?
-3.  What is the canonical internal representation: quantized
-    coefficients plus coding metadata, or a richer parsed scan model?
-4.  How should changed quantization tables be applied to existing
+1.  How should changed quantization tables be applied to existing
     coefficients?
-5.  Which operations can be evaluated incrementally, and which require
+2.  Which operations can be evaluated incrementally, and which require
     full re-encoding?
-6.  How much of the raw entropy stream should be exposed in the first
-    experimental release?
-7.  Should project files embed source JPEG bytes or reference a local
+3.  How much of the raw entropy stream should be exposed in the experimental release?
+4.  Should project files embed source JPEG bytes or reference a local
     file selected again on reopen?
 
 ## 17. Important terminology
 
 Use these terms consistently in the UI and documentation:
 
--   **Pixel:** decoded image sample.
--   **DCT block:** 8×8 coefficient block for one component.
--   **MCU:** Minimum Coded Unit, determined by component sampling
-    factors.
--   **Quantized DCT coefficient:** integer coefficient after
-    quantization.
--   **Quantization table (DQT):** 64 values controlling quantization.
--   **Entropy-coded scan:** compressed bitstream for a JPEG scan.
--   **Marker segment:** structural JPEG element.
--   **Re-encoding:** decoding and encoding a new JPEG representation.
--   **Databending:** artistic manipulation of encoded file data; not a
-    single standardized algorithm.
--   **Stream transplant:** experimental transfer of encoded scan data,
-    requiring bitstream-aware handling.
+- **Pixel:** decoded image sample.
+- **DCT block:** 8×8 coefficient block for one component.
+- **MCU:** Minimum Coded Unit, determined by component sampling
+  factors.
+- **Quantized DCT coefficient:** integer coefficient after
+  quantization.
+- **Quantization table (DQT):** 64 values controlling quantization.
+- **Entropy-coded scan:** compressed bitstream for a JPEG scan.
+- **Marker segment:** structural JPEG element.
+- **Re-encoding:** decoding and encoding a new JPEG representation.
+- **Databending:** artistic manipulation of encoded file data; not a
+  single standardized algorithm.
+- **Stream transplant:** experimental transfer of encoded scan data,
+  requiring bitstream-aware handling.
 
-------------------------------------------------------------------------
+---
 
 ## Product definition in one sentence
 

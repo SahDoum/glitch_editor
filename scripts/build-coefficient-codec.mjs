@@ -11,7 +11,7 @@ const packageRoot = resolve(
 const compiler = process.env.EMCC || "emcc";
 const outputDirectory = resolve(root, "public/codec");
 const output = resolve(outputDirectory, "libjpeg-coefficients.js");
-const source = resolve(root, "src/jpeg/codec/coefficient-reader.c");
+const source = resolve(root, "src/jpeg/codec/coefficient-bridge.c");
 const include = resolve(packageRoot, "include");
 const library = resolve(packageRoot, "lib/libjpeg.a");
 
@@ -41,7 +41,7 @@ if (!existsSync(library) || !existsSync(resolve(include, "jpeglib.h"))) {
       "-sINITIAL_MEMORY=67108864",
       "-sMAXIMUM_MEMORY=536870912",
       "-sSTACK_SIZE=1048576",
-      "-sEXPORTED_FUNCTIONS=_malloc,_free,_coefficient_open,_coefficient_read_block,_coefficient_close",
+      "-sEXPORTED_FUNCTIONS=_malloc,_free,_coefficient_open,_coefficient_read_block,_coefficient_zero_band,_coefficient_encode,_coefficient_output_pointer,_coefficient_output_size,_coefficient_close",
       "-o",
       output,
     ],

@@ -135,6 +135,7 @@ input:focus-visible {
 }
 
 .open-button,
+.export-button,
 .welcome-button {
   display: inline-flex;
   align-items: center;
@@ -155,6 +156,23 @@ input:focus-visible {
 .open-button {
   min-height: 34px;
   padding: 0 13px;
+}
+
+.export-button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid #46513a;
+  border-radius: 5px;
+  background: #20261d;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.export-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: #293322;
 }
 
 .open-button:hover:not(:disabled),
@@ -329,6 +347,18 @@ h1 {
   accent-color: var(--accent);
 }
 
+.zoom-readout,
+.encoding-indicator {
+  color: #aeb4b0;
+  font-family: var(--mono);
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.encoding-indicator {
+  color: var(--accent);
+}
+
 .tool-toggle {
   min-height: 28px;
   padding: 0 9px;
@@ -359,12 +389,23 @@ h1 {
   display: inline-block;
   max-width: 100%;
   line-height: 0;
+  transform-origin: center;
   box-shadow: 0 14px 55px rgb(0 0 0 / 38%);
 }
 
-.preview-image-wrap.is-selecting {
+.preview-image-wrap.is-selecting,
+.preview-image-wrap.is-brushing {
   cursor: crosshair;
   touch-action: none;
+}
+
+.preview-image-wrap.is-panning {
+  cursor: grab;
+  touch-action: none;
+}
+
+.preview-image-wrap.is-panning:active {
+  cursor: grabbing;
 }
 
 .preview-image {
@@ -394,6 +435,13 @@ h1 {
   fill: rgb(200 241 105 / 13%);
   stroke: var(--accent);
   stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.brush-draft-overlay {
+  fill: rgb(139 192 255 / 28%);
+  stroke: #8bc0ff;
+  stroke-width: 0.8;
   vector-effect: non-scaling-stroke;
 }
 
@@ -469,6 +517,31 @@ h1 {
   background: #111413;
   color: #d7dad5;
   font-size: 10px;
+}
+
+.coefficient-field input[type="range"] {
+  min-height: 22px;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.tool-field,
+.snap-control {
+  margin-top: 12px;
+}
+
+.snap-control {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  color: #b7bdb9;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.snap-control input {
+  margin: 1px 0 0;
+  accent-color: var(--accent);
 }
 
 .coefficient-read-button {
@@ -986,6 +1059,12 @@ h1 {
     min-height: 32px;
     padding: 0 9px;
     font-size: 10px;
+  }
+
+  .export-button {
+    min-height: 32px;
+    padding: 0 8px;
+    font-size: 9px;
   }
 
   .editor {

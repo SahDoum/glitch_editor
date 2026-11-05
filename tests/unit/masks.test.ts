@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createRectangleSelection,
   createSpatialMask,
+  createBrushMask,
   isSpatialMask,
 } from "../../src/document/masks";
 
@@ -52,6 +53,47 @@ describe("spatial selections and masks", () => {
     expect(
       createSpatialMask({ ...selection.value, width: 30 }, 20, 16),
     ).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_INPUT" },
+    });
+  });
+
+  it("creates and validates a bounded freehand brush mask", () => {
+    const mask = createBrushMask(
+      [
+        { x: 2, y: 3 },
+        { x: 5, y: 3 },
+      ],
+      2,
+      20,
+      16,
+    );
+    expect(mask).toMatchObject({
+      ok: true,
+      value: {
+        schemaVersion: 1,
+        width: 20,
+        height: 16,
+        shapes: [
+          {
+            kind: "brush",
+            mode: "add",
+            radius: 2,
+            points: [
+              { x: 2, y: 3 },
+              { x: 5, y: 3 },
+            ],
+          },
+        ],
+      },
+    });
+    if (mask.ok) expect(isSpatialMask(mask.value)).toBe(true);
+
+    expect(createBrushMask([{ x: 21, y: 3 }], 2, 20, 16)).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_INPUT" },
+    });
+    expect(createBrushMask([{ x: 2, y: 3 }], 513, 20, 16)).toMatchObject({
       ok: false,
       error: { code: "INVALID_INPUT" },
     });

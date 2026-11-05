@@ -3,6 +3,9 @@ import type {
   CoefficientWorkerResponse,
   CoefficientWorkerValue,
 } from "../jpeg/coefficient-worker-protocol";
+import type { DctFrequencyBand } from "../operations/dct";
+import type { SpatialMask } from "../document/masks";
+import type { JpegBlockGeometry } from "../jpeg/block-geometry";
 
 type CoefficientWorkerRequestPayload =
   | { type: "open"; bytes: ArrayBuffer }
@@ -21,6 +24,131 @@ export interface JpegCoefficientReader {
     blockY: number,
   ): Promise<Result<number[]>>;
   close(): void;
+}
+
+export interface JpegCoefficientEdit {
+  readonly componentIndex: number;
+  readonly frequencyBand: DctFrequencyBand;
+  readonly mask: SpatialMask;
+}
+
+export async function encodeJpegCoefficients(
+  bytes: Uint8Array,
+  geometry: JpegBlockGeometry,
+  edits: readonly JpegCoefficientEdit[],
+  signal?: AbortSignal,
+): Promise<Result<Uint8Array>> {
+  if (typeof Worker === "undefined") {
+    return failure({
+      code: "PROCESSING_FAILED",
+      message: "This browser does not support background JPEG re-encoding.",
+    });
+  }
+
+  if (signal?.aborted) {
+    return failure({
+      code: "CANCELLED",
+      message: "JPEG re-encoding was cancelled.",
+    });
+  }
+
+  let worker: Worker;
+  try {
+    worker = new Worker(
+      new URL("../jpeg/coefficient.worker.ts", import.meta.url),
+      { type: "module" },
+    );
+  } catch {
+    return failure({
+      code: "PROCESSING_FAILED",
+      message: "The JPEG re-encoding worker could not be started.",
+    });
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result: Result<Uint8Array>) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      worker.terminate();
+      resolve(result);
+    };
+    const onAbort = () =>
+      finish(
+        failure({
+          code: "CANCELLED",
+          message: "JPEG re-encoding was cancelled.",
+        }),
+      );
+
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+    worker.onmessage = (event: MessageEvent<CoefficientWorkerResponse>) => {
+      const { result } = event.data;
+      if (!result.ok) {
+        finish(result);
+        return;
+      }
+      if (
+        result.value.type !== "encoded" ||
+        !(result.value.bytes instanceof ArrayBuffer) ||
+        result.value.bytes.byteLength === 0
+      ) {
+        finish(
+          failure({
+            code: "PROCESSING_FAILED",
+            message: "The JPEG encoder returned an invalid response.",
+          }),
+        );
+        return;
+      }
+      finish(success(new Uint8Array(result.value.bytes)));
+    };
+    worker.onerror = (event) => {
+      event.preventDefault();
+      finish(
+        failure({
+          code: "PROCESSING_FAILED",
+          message: "JPEG re-encoding stopped unexpectedly.",
+        }),
+      );
+    };
+    worker.onmessageerror = () =>
+      finish(
+        failure({
+          code: "PROCESSING_FAILED",
+          message: "The JPEG encoder returned an unreadable response.",
+        }),
+      );
+
+    let inputBuffer: ArrayBuffer;
+    try {
+      inputBuffer = new ArrayBuffer(bytes.byteLength);
+      new Uint8Array(inputBuffer).set(bytes);
+      worker.postMessage(
+        {
+          type: "encode",
+          id: 0,
+          bytes: inputBuffer,
+          geometry,
+          edits,
+        },
+        [inputBuffer],
+      );
+    } catch {
+      finish(
+        failure({
+          code: "PROCESSING_FAILED",
+          message: "JPEG data could not be sent to the re-encoding worker.",
+        }),
+      );
+    }
+  });
 }
 
 interface PendingRequest {

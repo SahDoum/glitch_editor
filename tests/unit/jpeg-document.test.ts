@@ -1,12 +1,14 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import {
+  applyDctZeroBandOperation,
   applyMaskToDocument,
   createJpegDocumentSession,
 } from "../../src/application/jpeg-document";
 import {
   createRectangleSelection,
   createSpatialMask,
+  createBrushMask,
 } from "../../src/document/masks";
 import { OriginalAsset } from "../../src/document/model";
 import { inspectJpeg } from "../../src/jpeg/inspect";
@@ -75,6 +77,74 @@ describe("JPEG document operation session", () => {
     expect(history.redo()).toMatchObject({
       ok: true,
       value: { currentState: { activeMask: null, masks: [] } },
+    });
+    expect(Array.from(history.snapshot.originalAsset.readBytes())).toEqual(
+      Array.from(original),
+    );
+  });
+
+  it("applies a typed DCT operation and restores it through undo and redo", async () => {
+    const bytes = new Uint8Array(
+      await readFile(
+        new URL("../fixtures/synthetic-color-420.jpg", import.meta.url),
+      ),
+    );
+    const original = bytes.slice();
+    const inspection = inspectJpeg(bytes);
+    const asset = OriginalAsset.create({
+      fileName: "synthetic-color-420.jpg",
+      sha256: "e".repeat(64),
+      bytes,
+    });
+    expect(inspection.ok).toBe(true);
+    expect(asset.ok).toBe(true);
+    if (!inspection.ok || !asset.ok) return;
+
+    const created = createJpegDocumentSession({
+      originalAsset: asset.value,
+      inspection: inspection.value,
+      previewUrl: "blob:local-test",
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const history = created.value;
+    const mask = createBrushMask([{ x: 4, y: 4 }], 3, 16, 16);
+    expect(mask.ok).toBe(true);
+    if (!mask.ok) return;
+
+    const applied = applyDctZeroBandOperation(history, {
+      mask: mask.value,
+      componentIndex: 0,
+      frequencyBand: "mid",
+    });
+    expect(applied).toMatchObject({
+      ok: true,
+      value: {
+        currentState: {
+          dctOperations: [
+            {
+              mask: { id: mask.value.id },
+              componentIndex: 0,
+              frequencyBand: "mid",
+            },
+          ],
+        },
+        operations: [
+          {
+            type: "jpeg/coefficients/zero-band",
+            status: "applied",
+          },
+        ],
+      },
+    });
+
+    expect(history.undo()).toMatchObject({
+      ok: true,
+      value: { currentState: { dctOperations: [] } },
+    });
+    expect(history.redo()).toMatchObject({
+      ok: true,
+      value: { currentState: { dctOperations: [{ frequencyBand: "mid" }] } },
     });
     expect(Array.from(history.snapshot.originalAsset.readBytes())).toEqual(
       Array.from(original),
