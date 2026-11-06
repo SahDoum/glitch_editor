@@ -97,6 +97,21 @@ import {
   type CanvasTool,
 } from "./ui/workspace-state";
 import { getRectangleSelection } from "./ui/selection-overlay";
+import {
+  corruptEncodedJpeg,
+  ScanCorruptionHistory,
+} from "./application/scan-corruption";
+import {
+  MAX_SCAN_CORRUPTION_BYTES,
+  MAX_SCAN_CORRUPTION_STAGES,
+  type ScanCorruptionParameters,
+  type ScanCorruptionReport,
+} from "./jpeg/scan-corruption";
+import type { ScanDecodeDiagnostic } from "./jpeg/scan-corruption-worker-protocol";
+import {
+  getScanDecodeDiagnosticMessage,
+  getScanDecodeWarningLabels,
+} from "./jpeg/scan-decode-diagnostic";
 
 const MARKER_LIMIT = 250;
 const EMPTY_JPEG_OPERATIONS: JpegEditableState["jpegOperations"] =
@@ -153,6 +168,15 @@ function getToolIconPaths(tool: CanvasTool): readonly string[] {
         "M4 9.3h16",
         "M4 14.7h16",
       ];
+    case "scan-corrupt":
+      return [
+        "M4 6h16",
+        "M4 12h5",
+        "M15 12h5",
+        "M4 18h16",
+        "m10 9 4 6",
+        "m14 9-4 6",
+      ];
   }
 }
 
@@ -200,6 +224,12 @@ function CollapsibleSection({
 
 function formatOffset(offset: number): string {
   return `0x${offset.toString(16).padStart(6, "0").toUpperCase()}`;
+}
+
+function createJpegPreviewUrl(bytes: Uint8Array): string {
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return URL.createObjectURL(new Blob([buffer], { type: "image/jpeg" }));
 }
 
 function getComponentControlLabel(
@@ -1087,6 +1117,23 @@ function App() {
   const [editedPreviewUrl, setEditedPreviewUrl] = useState<string | null>(null);
   const [editedBytes, setEditedBytes] = useState<Uint8Array | null>(null);
   const [editedPreviewError, setEditedPreviewError] = useState("");
+  const [cleanEncodedPreviewUrl, setCleanEncodedPreviewUrl] = useState<
+    string | null
+  >(null);
+  const [cleanEncodedPreviewError, setCleanEncodedPreviewError] = useState("");
+  const [scanCorruptionReports, setScanCorruptionReports] = useState<
+    readonly ScanCorruptionReport[]
+  >([]);
+  const [scanDecodeDiagnostic, setScanDecodeDiagnostic] =
+    useState<ScanDecodeDiagnostic | null>(null);
+  const [scanCorruptionMode, setScanCorruptionMode] =
+    useState<ScanCorruptionParameters["mode"]>("bit-flip");
+  const [scanCorruptionCount, setScanCorruptionCount] = useState(4);
+  const [scanCorruptionRangeStart, setScanCorruptionRangeStart] = useState(0);
+  const [scanCorruptionRangeEnd, setScanCorruptionRangeEnd] = useState(1);
+  const [scanCorruptionSeed, setScanCorruptionSeed] = useState(1);
+  const [isScanCorrupting, setIsScanCorrupting] = useState(false);
+  const [showCleanEncoded, setShowCleanEncoded] = useState(false);
   const [historyAvailability, setHistoryAvailability] = useState({
     canUndo: false,
     canRedo: false,
@@ -1181,6 +1228,9 @@ function App() {
   const operationHistory = useRef<OperationHistory<JpegEditableState> | null>(
     null,
   );
+  const scanCorruptionHistory = useRef(new ScanCorruptionHistory());
+  const cleanEncodedBytes = useRef<Uint8Array | null>(null);
+  const scanCorruptionController = useRef<AbortController | null>(null);
   const selectionStart = useRef<{ x: number; y: number } | null>(null);
   const blockTransformGesture = useRef<BlockTransformGesture | null>(null);
   const brushPoints = useRef<ImagePoint[]>([]);
@@ -1227,7 +1277,18 @@ function App() {
     [editedPreviewUrl],
   );
 
+  useEffect(
+    () => () => {
+      if (cleanEncodedPreviewUrl) URL.revokeObjectURL(cleanEncodedPreviewUrl);
+    },
+    [cleanEncodedPreviewUrl],
+  );
+
   useEffect(() => {
+    scanCorruptionController.current?.abort();
+    scanCorruptionController.current = null;
+    scanCorruptionHistory.current.clear();
+    cleanEncodedBytes.current = null;
     if (!document || jpegOperations.length === 0) return;
 
     const controller = new AbortController();
@@ -1258,6 +1319,7 @@ function App() {
         return;
       }
 
+      cleanEncodedBytes.current = encoded.value.slice();
       const outputBuffer = new ArrayBuffer(encoded.value.byteLength);
       new Uint8Array(outputBuffer).set(encoded.value);
       const previewUrl = URL.createObjectURL(
@@ -1289,9 +1351,17 @@ function App() {
         URL.revokeObjectURL(previewUrl);
         setEditedPreviewUrl(null);
         setEditedPreviewError(previewError);
+        setCleanEncodedPreviewUrl(null);
+        setCleanEncodedPreviewError(previewError);
       } else {
         setEditedPreviewUrl(previewUrl);
         setEditedPreviewError("");
+        setCleanEncodedPreviewUrl(
+          URL.createObjectURL(
+            new Blob([outputBuffer.slice(0)], { type: "image/jpeg" }),
+          ),
+        );
+        setCleanEncodedPreviewError("");
       }
       setIsEncoding(false);
     })();
@@ -1302,11 +1372,13 @@ function App() {
   useEffect(
     () => () => {
       importController.current?.abort();
+      scanCorruptionController.current?.abort();
     },
     [],
   );
 
   async function loadFile(file: File) {
+    cancelScanCorruption();
     const currentRequest = ++requestId.current;
     importController.current?.abort();
     const controller = new AbortController();
@@ -1334,11 +1406,21 @@ function App() {
       return;
     }
 
+    scanCorruptionController.current?.abort();
+    scanCorruptionController.current = null;
+    scanCorruptionHistory.current.clear();
+    cleanEncodedBytes.current = null;
     operationHistory.current = history.value;
     setHistoryDocument(history.value.snapshot);
     setEditedPreviewUrl(null);
     setEditedBytes(null);
     setEditedPreviewError("");
+    setCleanEncodedPreviewUrl(null);
+    setCleanEncodedPreviewError("");
+    setScanCorruptionReports([]);
+    setScanDecodeDiagnostic(null);
+    setIsScanCorrupting(false);
+    setShowCleanEncoded(false);
     setIsEncoding(false);
     setHistoryAvailability({
       canUndo: history.value.canUndo,
@@ -1388,18 +1470,47 @@ function App() {
     }
     const previousJpegOperations = historyDocument?.currentState.jpegOperations;
     if (result.value.currentState.jpegOperations !== previousJpegOperations) {
+      if (scanCorruptionHistory.current.activeStages.length > 0) {
+        const rolledBack = operationHistory.current?.undo();
+        if (rolledBack?.ok) setHistoryDocument(rolledBack.value);
+        const history = operationHistory.current;
+        setHistoryAvailability({
+          canUndo:
+            (history?.canUndo ?? false) ||
+            scanCorruptionHistory.current.canUndo,
+          canRedo:
+            (history?.canRedo ?? false) ||
+            scanCorruptionHistory.current.canRedo,
+        });
+        setErrorMessage(
+          "Undo Scan Corrupt before changing coefficient or DQT operations.",
+        );
+        return;
+      }
+      scanCorruptionController.current?.abort();
+      scanCorruptionController.current = null;
+      scanCorruptionHistory.current.clear();
+      cleanEncodedBytes.current = null;
+      setScanCorruptionReports([]);
+      setScanDecodeDiagnostic(null);
       setEditedPreviewUrl(null);
       setEditedBytes(null);
       setEditedPreviewError("");
+      setCleanEncodedPreviewUrl(null);
+      setCleanEncodedPreviewError("");
       setIsEncoding(result.value.currentState.jpegOperations.length > 0);
+      setIsScanCorrupting(false);
       setShowOriginal(false);
+      setShowCleanEncoded(false);
     }
     setErrorMessage("");
     setHistoryDocument(result.value);
     const history = operationHistory.current;
     setHistoryAvailability({
-      canUndo: history?.canUndo ?? false,
-      canRedo: history?.canRedo ?? false,
+      canUndo:
+        (history?.canUndo ?? false) || scanCorruptionHistory.current.canUndo,
+      canRedo:
+        (history?.canRedo ?? false) || scanCorruptionHistory.current.canRedo,
     });
   }
 
@@ -1408,6 +1519,12 @@ function App() {
       history: OperationHistory<JpegEditableState>,
     ) => ReturnType<OperationHistory<JpegEditableState>["add"]>,
   ) {
+    if (scanCorruptionHistory.current.activeStages.length > 0) {
+      setErrorMessage(
+        "Undo Scan Corrupt before changing coefficient or DQT operations.",
+      );
+      return;
+    }
     const history = operationHistory.current;
     if (!history) return;
     updateHistory(mutate(history));
@@ -1581,6 +1698,7 @@ function App() {
     readonly x: number;
     readonly y: number;
   }) {
+    if (!ensureCoefficientPhase()) return;
     const history = operationHistory.current;
     const source = blockTransferSource;
     if (!history || !source) return;
@@ -1954,6 +2072,7 @@ function App() {
   }
 
   function applyCoefficientOperation(mask = activeMask) {
+    if (!ensureCoefficientPhase()) return false;
     const history = operationHistory.current;
     if (!history || !mask) {
       setErrorMessage(
@@ -2082,6 +2201,7 @@ function App() {
   }
 
   function applyBlockRepeat() {
+    if (!ensureCoefficientPhase()) return;
     const history = operationHistory.current;
     if (!history || !repeatSource || !repeatDestination) {
       setErrorMessage(
@@ -2103,6 +2223,7 @@ function App() {
   }
 
   function applyBlockPermutation() {
+    if (!ensureCoefficientPhase()) return;
     const history = operationHistory.current;
     const mask = activeMask;
     if (!history || !mask) {
@@ -2126,6 +2247,7 @@ function App() {
     pattern: QuantizationPattern | "manual",
     seed: number,
   ) {
+    if (!ensureCoefficientPhase()) return;
     const history = operationHistory.current;
     if (!history) return;
     updateHistory(
@@ -2248,6 +2370,7 @@ function App() {
   }
 
   function applySelectedRecipe() {
+    if (!ensureCoefficientPhase()) return;
     const history = operationHistory.current;
     if (!history || !activeMask || !selectedRecipe) {
       setErrorMessage(
@@ -2264,12 +2387,251 @@ function App() {
     );
   }
 
+  function ensureCoefficientPhase(): boolean {
+    if (scanCorruptionHistory.current.activeStages.length === 0) return true;
+    setErrorMessage(
+      "Undo Scan Corrupt before changing coefficient or DQT operations.",
+    );
+    return false;
+  }
+
+  async function showCorruptedResult(
+    bytes: Uint8Array,
+    reports: readonly ScanCorruptionReport[],
+    diagnostic: ScanDecodeDiagnostic,
+    signal: AbortSignal,
+  ) {
+    setEditedBytes(bytes);
+    setScanCorruptionReports(reports);
+    setScanDecodeDiagnostic(diagnostic);
+    const latestReport = reports.at(-1);
+    if (latestReport) {
+      setScanCorruptionMode(latestReport.mode);
+      setScanCorruptionCount(latestReport.count);
+      setScanCorruptionRangeStart(latestReport.rangeStart);
+      setScanCorruptionRangeEnd(latestReport.rangeEnd);
+      setScanCorruptionSeed(latestReport.seed);
+    }
+    setShowOriginal(false);
+    setShowCleanEncoded(false);
+    let previewUrl: string;
+    try {
+      previewUrl = createJpegPreviewUrl(bytes);
+    } catch {
+      setEditedPreviewUrl(null);
+      setEditedPreviewError(
+        "A preview could not be created for the corrupted scan. The corrupt bytes remain available to export; the clean encoded preview remains separate.",
+      );
+      setErrorMessage("");
+      setIsEncoding(false);
+      setIsScanCorrupting(false);
+      scanCorruptionController.current = null;
+      const history = operationHistory.current;
+      setHistoryAvailability({
+        canUndo:
+          (history?.canUndo ?? false) || scanCorruptionHistory.current.canUndo,
+        canRedo:
+          (history?.canRedo ?? false) || scanCorruptionHistory.current.canRedo,
+      });
+      return;
+    }
+    let previewError = "";
+    try {
+      const preview = new Image();
+      preview.src = previewUrl;
+      await preview.decode();
+      if (
+        document &&
+        (preview.naturalWidth !== document.inspection.width ||
+          preview.naturalHeight !== document.inspection.height)
+      ) {
+        previewError =
+          "The corrupted JPEG preview dimensions differ from the source image.";
+      }
+    } catch {
+      previewError =
+        "The browser decoder could not render the corrupted scan. The corrupt bytes remain available to export; the clean encoded preview is shown for comparison.";
+    }
+
+    if (signal.aborted) {
+      URL.revokeObjectURL(previewUrl);
+      return;
+    }
+    if (previewError) {
+      URL.revokeObjectURL(previewUrl);
+      setEditedPreviewUrl(null);
+      setEditedPreviewError(previewError);
+    } else {
+      setEditedPreviewUrl(previewUrl);
+      setEditedPreviewError("");
+    }
+    setShowOriginal(false);
+    setShowCleanEncoded(false);
+    setErrorMessage("");
+    setIsEncoding(false);
+    setIsScanCorrupting(false);
+    scanCorruptionController.current = null;
+    const history = operationHistory.current;
+    setHistoryAvailability({
+      canUndo:
+        (history?.canUndo ?? false) || scanCorruptionHistory.current.canUndo,
+      canRedo:
+        (history?.canRedo ?? false) || scanCorruptionHistory.current.canRedo,
+    });
+  }
+
+  async function replayScanStages(
+    stages: readonly ScanCorruptionParameters[],
+    commitHistory: () => boolean,
+  ) {
+    const cleanBytes = cleanEncodedBytes.current;
+    if (!cleanBytes) {
+      setErrorMessage(
+        "Apply a coefficient or DQT operation and wait for its clean JPEG encoding before using Scan Corrupt.",
+      );
+      return;
+    }
+    if (stages.length === 0) {
+      if (!commitHistory()) {
+        setErrorMessage("The Scan Corrupt history could not be updated.");
+        return;
+      }
+      const restoredBytes = cleanBytes.slice();
+      setEditedBytes(restoredBytes);
+      setScanCorruptionReports([]);
+      setScanDecodeDiagnostic(null);
+      setEditedPreviewError(cleanEncodedPreviewError);
+      if (cleanEncodedPreviewError) {
+        setEditedPreviewUrl(null);
+      } else {
+        try {
+          setEditedPreviewUrl(createJpegPreviewUrl(restoredBytes));
+        } catch {
+          setEditedPreviewUrl(null);
+          setEditedPreviewError(
+            "The clean encoded JPEG remains available to export, but its preview could not be created.",
+          );
+        }
+      }
+      setShowOriginal(false);
+      setShowCleanEncoded(false);
+      setErrorMessage("");
+      setIsEncoding(false);
+      setIsScanCorrupting(false);
+      const history = operationHistory.current;
+      setHistoryAvailability({
+        canUndo:
+          (history?.canUndo ?? false) || scanCorruptionHistory.current.canUndo,
+        canRedo:
+          (history?.canRedo ?? false) || scanCorruptionHistory.current.canRedo,
+      });
+      return;
+    }
+
+    const controller = new AbortController();
+    scanCorruptionController.current?.abort();
+    scanCorruptionController.current = controller;
+    setIsEncoding(true);
+    setIsScanCorrupting(true);
+    setErrorMessage("");
+    const corrupted = await corruptEncodedJpeg(
+      cleanBytes,
+      stages,
+      controller.signal,
+    );
+    if (controller.signal.aborted) return;
+    if (!corrupted.ok) {
+      setErrorMessage(corrupted.error.message);
+      setIsEncoding(false);
+      setIsScanCorrupting(false);
+      scanCorruptionController.current = null;
+      return;
+    }
+    if (!commitHistory()) {
+      setErrorMessage("The Scan Corrupt history could not be updated.");
+      setIsEncoding(false);
+      setIsScanCorrupting(false);
+      scanCorruptionController.current = null;
+      return;
+    }
+    scanCorruptionController.current = null;
+    setIsScanCorrupting(false);
+    await showCorruptedResult(
+      corrupted.value.bytes,
+      corrupted.value.reports,
+      corrupted.value.diagnostic,
+      controller.signal,
+    );
+  }
+
+  function applyScanCorruption() {
+    const history = scanCorruptionHistory.current;
+    if (history.activeStages.length >= MAX_SCAN_CORRUPTION_STAGES) {
+      setErrorMessage(
+        `A maximum of ${MAX_SCAN_CORRUPTION_STAGES} entropy-corruption stages can be stacked.`,
+      );
+      return;
+    }
+    const parameters: ScanCorruptionParameters = {
+      mode: scanCorruptionMode,
+      count: scanCorruptionCount,
+      rangeStart: scanCorruptionRangeStart,
+      rangeEnd: scanCorruptionRangeEnd,
+      seed: scanCorruptionSeed,
+    };
+    const stages = [...history.activeStages, parameters];
+    void replayScanStages(stages, () => history.record(parameters).ok);
+  }
+
+  function updateLastScanCorruption() {
+    const history = scanCorruptionHistory.current;
+    if (history.activeStages.length === 0) return;
+    const parameters: ScanCorruptionParameters = {
+      mode: scanCorruptionMode,
+      count: scanCorruptionCount,
+      rangeStart: scanCorruptionRangeStart,
+      rangeEnd: scanCorruptionRangeEnd,
+      seed: scanCorruptionSeed,
+    };
+    const stages = [...history.activeStages.slice(0, -1), parameters];
+    void replayScanStages(stages, () => history.replaceLast(parameters).ok);
+  }
+
+  function undoScanCorruption() {
+    const history = scanCorruptionHistory.current;
+    if (!history.canUndo) return false;
+    void replayScanStages(history.undoTarget, () => history.commitUndo());
+    return true;
+  }
+
+  function redoScanCorruption() {
+    const history = scanCorruptionHistory.current;
+    if (!history.canRedo) return false;
+    void replayScanStages(history.redoTarget, () => history.commitRedo());
+    return true;
+  }
+
+  function cancelScanCorruption() {
+    const controller = scanCorruptionController.current;
+    if (!controller) return;
+    controller.abort();
+    scanCorruptionController.current = null;
+    setIsScanCorrupting(false);
+    setIsEncoding(false);
+    setErrorMessage(
+      "Scan corruption was cancelled; the prior JPEG bytes are unchanged.",
+    );
+  }
+
   function handleUndo() {
+    if (undoScanCorruption()) return;
     const history = operationHistory.current;
     if (history) updateHistory(history.undo());
   }
 
   function handleRedo() {
+    if (redoScanCorruption()) return;
+    if (scanCorruptionHistory.current.activeStages.length > 0) return;
     const history = operationHistory.current;
     if (history) updateHistory(history.redo());
   }
@@ -2375,6 +2737,15 @@ function App() {
     TOOL_GROUPS.flatMap((group) => group.tools).find(
       (tool) => tool.id === panelTool,
     )?.label ?? "Tool settings";
+  const hasScanCorruption = scanCorruptionReports.length > 0;
+  const hasCleanEncodedResult =
+    editedBytes !== null && jpegOperations.length > 0;
+  const previewUrlToDisplay = showOriginal
+    ? document?.previewUrl
+    : showCleanEncoded
+      ? cleanEncodedPreviewUrl
+      : (editedPreviewUrl ??
+        (hasScanCorruption ? cleanEncodedPreviewUrl : document?.previewUrl));
   return (
     <main className={`workspace ${document ? "has-tool-bar" : ""}`}>
       <header className="topbar">
@@ -2398,7 +2769,7 @@ function App() {
               className="history-toolbar-button"
               type="button"
               onClick={handleUndo}
-              disabled={!historyAvailability.canUndo}
+              disabled={!historyAvailability.canUndo || isEncoding}
               aria-label="Undo"
               title="Undo"
             >
@@ -2408,7 +2779,7 @@ function App() {
               className="history-toolbar-button"
               type="button"
               onClick={handleRedo}
-              disabled={!historyAvailability.canRedo}
+              disabled={!historyAvailability.canRedo || isEncoding}
               aria-label="Redo"
               title="Redo"
             >
@@ -2437,9 +2808,17 @@ function App() {
               type="button"
               onClick={downloadEditedJpeg}
               disabled={!editedBytes || isEncoding}
-              title="Download the encoded JPEG experiment; the original is unchanged"
+              title={
+                hasScanCorruption
+                  ? "Download the entropy-corrupted JPEG bytes; the original remains unchanged"
+                  : "Download the encoded JPEG experiment; the original is unchanged"
+              }
             >
-              {isEncoding ? "Encoding…" : "Export JPEG"}
+              {isEncoding
+                ? isScanCorrupting
+                  ? "Corrupting…"
+                  : "Encoding…"
+                : "Export JPEG"}
             </button>
           )}
         </div>
@@ -2535,18 +2914,26 @@ function App() {
               <div className="preview-toolbar">
                 <div>
                   <div className="section-kicker">
-                    {editedBytes && !showOriginal
-                      ? "ENCODED JPEG EXPERIMENT"
-                      : "DECODED PIXEL PREVIEW"}
+                    {hasScanCorruption && showCleanEncoded
+                      ? "CLEAN ENCODED COMPARISON"
+                      : hasScanCorruption && !showOriginal
+                        ? "ENTROPY SCAN EXPERIMENT"
+                        : editedBytes && !showOriginal
+                          ? "ENCODED JPEG EXPERIMENT"
+                          : "DECODED PIXEL PREVIEW"}
                   </div>
                   <p>
                     {isEncoding
-                      ? "Applying JPEG-domain operations in the local worker…"
+                      ? isScanCorrupting
+                        ? "Corrupting a verified entropy-coded scan in the local worker…"
+                        : "Applying JPEG-domain operations in the local worker…"
                       : editedBytes && editedPreviewError
                         ? editedPreviewError
-                        : editedBytes && !showOriginal
-                          ? "libjpeg-turbo re-encoding · source bytes remain unchanged"
-                          : "Original JPEG · no pixel-only editing"}
+                        : hasScanCorruption
+                          ? "Bounded entropy-coded scan corruption · JPEG structure protected · source bytes remain unchanged"
+                          : editedBytes && !showOriginal
+                            ? "libjpeg-turbo re-encoding · source bytes remain unchanged"
+                            : "Original JPEG · no pixel-only editing"}
                     {" · "}
                     {document.inspection.width} × {document.inspection.height}
                   </p>
@@ -2582,19 +2969,37 @@ function App() {
                   >
                     Fit
                   </button>
-                  {editedPreviewUrl && (
+                  {hasScanCorruption && cleanEncodedPreviewUrl && (
+                    <button
+                      className="tool-toggle"
+                      type="button"
+                      aria-pressed={showCleanEncoded}
+                      onClick={() => {
+                        setShowOriginal(false);
+                        setShowCleanEncoded((current) => !current);
+                      }}
+                    >
+                      {showCleanEncoded
+                        ? "Show corrupt result"
+                        : "Show clean encoded"}
+                    </button>
+                  )}
+                  {editedBytes && (
                     <button
                       className="tool-toggle"
                       type="button"
                       aria-pressed={showOriginal}
-                      onClick={() => setShowOriginal((current) => !current)}
+                      onClick={() => {
+                        setShowCleanEncoded(false);
+                        setShowOriginal((current) => !current);
+                      }}
                     >
                       {showOriginal ? "Show edited" : "Show original"}
                     </button>
                   )}
                   {isEncoding && (
                     <span className="encoding-indicator" role="status">
-                      Re-encoding…
+                      {isScanCorrupting ? "Corrupting scan…" : "Re-encoding…"}
                     </span>
                   )}
                   <label>
@@ -2637,15 +3042,19 @@ function App() {
                     setBrushDraft([]);
                   }}
                 >
-                  <img
-                    className="preview-image"
-                    src={
-                      showOriginal || !editedPreviewUrl
-                        ? document.previewUrl
-                        : editedPreviewUrl
-                    }
-                    alt={`${showOriginal || !editedPreviewUrl ? "Original" : "Re-encoded"} JPEG preview of ${document.originalAsset.fileName}`}
-                  />
+                  {previewUrlToDisplay ? (
+                    <img
+                      className="preview-image"
+                      src={previewUrlToDisplay}
+                      alt={`${showOriginal ? "Original" : showCleanEncoded ? "Clean encoded" : hasScanCorruption ? "Entropy-corrupted" : "Re-encoded"} JPEG preview of ${document.originalAsset.fileName}`}
+                    />
+                  ) : (
+                    <div className="scan-preview-unavailable" role="status">
+                      {cleanEncodedPreviewError ||
+                        editedPreviewError ||
+                        "No decoded preview is available. The clean and corrupted JPEG bytes remain separate from the original."}
+                    </div>
+                  )}
                   <ImageOverlays
                     inspection={document.inspection}
                     showBlocks={showBlocks}
@@ -3578,11 +3987,205 @@ function App() {
                       )}
                     </section>
                   )}
+                  {toolMode === "scan-corrupt" && (
+                    <section className="inspector-section scan-corrupt-panel">
+                      <div className="section-kicker">
+                        ENTROPY-CODED SCAN BYTES
+                      </div>
+                      <h2>Scan Corrupt</h2>
+                      <p className="operation-description">
+                        A bounded byte-domain experiment applied after the
+                        coefficient/DQT JPEG encoder. This does not target
+                        pixels, DCT blocks, MCUs, or source-file offsets. The
+                        decoder may show a different region or fail entirely.
+                        The original and clean encoded JPEG remain unchanged.
+                      </p>
+                      {!hasCleanEncodedResult && (
+                        <p className="operation-empty" role="status">
+                          {isEncoding
+                            ? "The clean JPEG is being encoded. You can configure Scan Corrupt now; applying it will be available when encoding finishes."
+                            : "You can configure Scan Corrupt now. Apply a coefficient or DQT operation and wait for its clean JPEG encoding before applying corruption."}
+                        </p>
+                      )}
+                      <label className="coefficient-field tool-field">
+                        <span>Corruption mode</span>
+                        <select
+                          value={scanCorruptionMode}
+                          onChange={(event) => {
+                            if (
+                              event.currentTarget.value === "bit-flip" ||
+                              event.currentTarget.value === "byte-replacement"
+                            ) {
+                              setScanCorruptionMode(event.currentTarget.value);
+                            }
+                          }}
+                        >
+                          <option value="bit-flip">Flip one bit</option>
+                          <option value="byte-replacement">
+                            Replace entropy byte
+                          </option>
+                        </select>
+                      </label>
+                      <label className="coefficient-field tool-field">
+                        <span>
+                          Changed bytes (1–{MAX_SCAN_CORRUPTION_BYTES})
+                        </span>
+                        <input
+                          type="number"
+                          min="1"
+                          max={MAX_SCAN_CORRUPTION_BYTES}
+                          step="1"
+                          value={scanCorruptionCount}
+                          onChange={(event) =>
+                            setScanCorruptionCount(
+                              Number(event.currentTarget.value),
+                            )
+                          }
+                        />
+                      </label>
+                      <div className="scan-range-fields">
+                        <label className="coefficient-field">
+                          <span>Scan range start (0–1)</span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.01"
+                            value={scanCorruptionRangeStart}
+                            onChange={(event) =>
+                              setScanCorruptionRangeStart(
+                                Number(event.currentTarget.value),
+                              )
+                            }
+                          />
+                        </label>
+                        <label className="coefficient-field">
+                          <span>Scan range end (0–1)</span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.01"
+                            value={scanCorruptionRangeEnd}
+                            onChange={(event) =>
+                              setScanCorruptionRangeEnd(
+                                Number(event.currentTarget.value),
+                              )
+                            }
+                          />
+                        </label>
+                      </div>
+                      <label className="coefficient-field tool-field">
+                        <span>Unsigned 32-bit seed</span>
+                        <input
+                          type="number"
+                          min="0"
+                          max="4294967295"
+                          step="1"
+                          value={scanCorruptionSeed}
+                          onChange={(event) =>
+                            setScanCorruptionSeed(
+                              Number(event.currentTarget.value),
+                            )
+                          }
+                        />
+                      </label>
+                      <div className="scan-corrupt-actions">
+                        <button
+                          className="operation-button"
+                          type="button"
+                          disabled={
+                            !hasCleanEncodedResult ||
+                            isEncoding ||
+                            scanCorruptionReports.length >=
+                              MAX_SCAN_CORRUPTION_STAGES
+                          }
+                          onClick={applyScanCorruption}
+                        >
+                          Apply scan corruption
+                        </button>
+                        {hasScanCorruption && (
+                          <button
+                            className="operation-button secondary"
+                            type="button"
+                            disabled={isEncoding}
+                            onClick={updateLastScanCorruption}
+                          >
+                            Update last stage
+                          </button>
+                        )}
+                        {isScanCorrupting && (
+                          <button
+                            className="operation-button secondary"
+                            type="button"
+                            onClick={cancelScanCorruption}
+                          >
+                            Cancel
+                          </button>
+                        )}
+                      </div>
+                      <p className="operation-parameters" role="status">
+                        {hasScanCorruption
+                          ? `Stage ${scanCorruptionReports.length} of ${MAX_SCAN_CORRUPTION_STAGES} · ${isEncoding ? "corrupting and checking decode…" : editedPreviewError ? "preview decode failed" : "corruption complete · preview decoded"}`
+                          : "No entropy-stream stage applied."}
+                      </p>
+                      {scanCorruptionReports.map((report, index) => (
+                        <p
+                          className="scan-corruption-report"
+                          key={`${index}-${report.seed}`}
+                        >
+                          Stage {index + 1} · {report.mode} · seed {report.seed}{" "}
+                          · scan {formatOffset(report.scanStartOffset)}–
+                          {formatOffset(report.scanEndOffset)} · range{" "}
+                          {report.rangeStart.toFixed(2)}–
+                          {report.rangeEnd.toFixed(2)} · {report.changedBytes}{" "}
+                          bytes / {report.changedBits} bits changed
+                        </p>
+                      ))}
+                      {hasScanCorruption && scanDecodeDiagnostic && (
+                        <div
+                          className={`scan-decode-diagnostic ${scanDecodeDiagnostic.status === "complete" ? "is-complete" : "is-warning"}`}
+                          role="status"
+                          aria-label="JPEG decode completeness diagnostic"
+                        >
+                          <p>
+                            {getScanDecodeDiagnosticMessage(
+                              scanDecodeDiagnostic,
+                            )}
+                          </p>
+                          {getScanDecodeWarningLabels(
+                            scanDecodeDiagnostic.warningFlags,
+                          ).map((warning) => (
+                            <p key={warning}>Decoder warning: {warning}.</p>
+                          ))}
+                          <p>
+                            This diagnostic reports libjpeg-turbo only. Other
+                            JPEG decoders may recover differently; reading all
+                            rows here does not guarantee identical display in
+                            other applications.
+                          </p>
+                        </div>
+                      )}
+                      {editedPreviewError && hasScanCorruption && (
+                        <p className="scan-corruption-warning" role="alert">
+                          {editedPreviewError}
+                        </p>
+                      )}
+                      {hasScanCorruption &&
+                        cleanEncodedPreviewError &&
+                        !cleanEncodedPreviewUrl && (
+                          <p className="scan-corruption-warning" role="status">
+                            The clean encoded JPEG could not be previewed:{" "}
+                            {cleanEncodedPreviewError}
+                          </p>
+                        )}
+                    </section>
+                  )}
                   {toolMode === "quantization" && (
                     <QuantizationMatrixEditor
                       key={document.originalAsset.sha256}
                       quantizationTables={currentQuantizationTables}
-                      disabled={isEncoding}
+                      disabled={isEncoding || hasScanCorruption}
                       onApply={applyQuantizationEdit}
                     />
                   )}
@@ -3591,7 +4194,10 @@ function App() {
                   id="history"
                   title="History"
                   kicker="NON-DESTRUCTIVE OPERATIONS"
-                  count={historyDocument?.operations.length ?? 0}
+                  count={
+                    (historyDocument?.operations.length ?? 0) +
+                    scanCorruptionReports.length
+                  }
                   className="history-panel"
                 >
                   <section className="inspector-section operation-stack">
@@ -3600,6 +4206,24 @@ function App() {
                       replay from the bottom up; reordering recomputes later
                       state.
                     </p>
+                    {hasScanCorruption && (
+                      <p className="scan-terminal-notice" role="status">
+                        Entropy corruption is a terminal byte-domain phase. Undo
+                        every Scan Corrupt stage before changing coefficient or
+                        DQT operations.
+                      </p>
+                    )}
+                    {scanCorruptionReports.length > 0 && (
+                      <ol className="scan-corruption-history">
+                        {scanCorruptionReports.map((report, index) => (
+                          <li key={`${index}-${report.seed}`}>
+                            Scan Corrupt · {report.mode} · seed {report.seed} ·{" "}
+                            {report.changedBytes} bytes / {report.changedBits}{" "}
+                            bits
+                          </li>
+                        ))}
+                      </ol>
+                    )}
                     {historyDocument?.operations.length ? (
                       <ol className="operation-list">
                         {getHistoryDisplayEntries(
@@ -3631,6 +4255,7 @@ function App() {
                                   <input
                                     type="checkbox"
                                     checked={operation.enabled}
+                                    disabled={hasScanCorruption}
                                     onChange={(event) =>
                                       mutateHistory((history) =>
                                         history.setEnabled(
@@ -3744,6 +4369,7 @@ function App() {
                                   <button
                                     className="operation-button secondary"
                                     type="button"
+                                    disabled={hasScanCorruption}
                                     title="Replace the current draft with a copy of this mask"
                                     onClick={() => restoreHistoryMask(mask)}
                                   >
@@ -3754,8 +4380,9 @@ function App() {
                                   className="operation-button secondary"
                                   type="button"
                                   disabled={
+                                    hasScanCorruption ||
                                     index ===
-                                    historyDocument.operations.length - 1
+                                      historyDocument.operations.length - 1
                                   }
                                   aria-label="Move operation up"
                                   onClick={() =>
@@ -3769,7 +4396,7 @@ function App() {
                                 <button
                                   className="operation-button secondary"
                                   type="button"
-                                  disabled={index === 0}
+                                  disabled={hasScanCorruption || index === 0}
                                   aria-label="Move operation down"
                                   onClick={() =>
                                     mutateHistory((history) =>
@@ -3782,6 +4409,7 @@ function App() {
                                 <button
                                   className="operation-button danger"
                                   type="button"
+                                  disabled={hasScanCorruption}
                                   aria-label="Delete operation"
                                   onClick={() =>
                                     mutateHistory((history) =>
@@ -3804,7 +4432,10 @@ function App() {
                     <button
                       className="operation-reset"
                       type="button"
-                      disabled={!historyDocument?.operations.length}
+                      disabled={
+                        !historyDocument?.operations.length &&
+                        !hasScanCorruption
+                      }
                       onClick={() => {
                         if (
                           !window.confirm(
@@ -3813,6 +4444,20 @@ function App() {
                         ) {
                           return;
                         }
+                        scanCorruptionController.current?.abort();
+                        scanCorruptionController.current = null;
+                        scanCorruptionHistory.current.clear();
+                        cleanEncodedBytes.current = null;
+                        setScanCorruptionReports([]);
+                        setScanDecodeDiagnostic(null);
+                        setEditedBytes(null);
+                        setEditedPreviewUrl(null);
+                        setEditedPreviewError("");
+                        setCleanEncodedPreviewUrl(null);
+                        setCleanEncodedPreviewError("");
+                        setIsEncoding(false);
+                        setIsScanCorrupting(false);
+                        setShowCleanEncoded(false);
                         const history = operationHistory.current;
                         if (history) updateHistory(history.resetToOriginal());
                         clearSelection();

@@ -1012,6 +1012,96 @@ h1 {
   color: #efb49f;
 }
 
+.scan-range-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.scan-corrupt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 12px 0;
+}
+
+.scan-corruption-report,
+.scan-terminal-notice {
+  margin: 8px 0;
+  padding: 8px;
+  border: 1px solid #384332;
+  border-radius: 4px;
+  background: #1b211a;
+  color: #c3d6a5;
+  font-family: var(--mono);
+  font-size: 9px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.scan-corruption-warning {
+  margin: 8px 0;
+  padding: 8px;
+  border: 1px solid #68483e;
+  border-radius: 4px;
+  background: #2b211e;
+  color: #efb49f;
+  font-size: 10px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.scan-decode-diagnostic {
+  margin: 8px 0;
+  padding: 9px;
+  border: 1px solid #68483e;
+  border-radius: 4px;
+  background: #2b211e;
+  color: #efb49f;
+  font-size: 10px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.scan-decode-diagnostic.is-complete {
+  border-color: #384332;
+  background: #1b211a;
+  color: #c3d6a5;
+}
+
+.scan-decode-diagnostic p {
+  margin: 0;
+}
+
+.scan-decode-diagnostic p + p {
+  margin-top: 6px;
+}
+
+.scan-corruption-history {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+  padding-left: 24px;
+  color: #c3d6a5;
+  font-family: var(--mono);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.scan-preview-unavailable {
+  display: grid;
+  width: min(80vw, 760px);
+  min-height: 240px;
+  place-items: center;
+  padding: 24px;
+  background: #151817;
+  color: #efb49f;
+  font-size: 12px;
+  line-height: 1.7;
+  text-align: center;
+}
+
 .operation-reset {
   width: 100%;
   margin-top: 12px;

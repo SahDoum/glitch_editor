@@ -259,6 +259,15 @@ describe("JPEG inspector", () => {
     expect(
       withRestartMarker.value.markers.map((marker) => marker.name),
     ).toContain("RST0");
+    const scan = withRestartMarker.value.scans[0]!;
+    expect(scan.entropyRanges).toHaveLength(2);
+    expect(scan.entropyRanges[0]!.endOffset).toBe(
+      withRestartMarker.value.markers.find((marker) => marker.name === "RST0")!
+        .startOffset,
+    );
+    expect(scan.endMarkerOffset).toBe(
+      withRestartMarker.value.markers.at(-1)!.startOffset,
+    );
   });
 
   it("rejects restart markers without an interval or in the wrong order", async () => {

@@ -124,3 +124,52 @@
   DQT, blocks, entropy-coded scans and raw bytes; do not imply pixel-only
   filtering or video-style prediction. See [INTERFACE.md](./INTERFACE.md) and
   [ROADMAP.md](./ROADMAP.md) for the UI contract and follow-up checks.
+
+## ADR-011: Implement Scan Corrupt as a terminal worker phase
+
+- **Status:** Implemented for the current supported encoder output.
+- **Context:** The coefficient pipeline re-encodes JPEGs, so mutating its
+  entropy-coded scan inside that replay executor would mix representation
+  domains and any later re-encode would erase the byte experiment.
+- **Decision:** Keep Scan Corrupt in a dedicated worker and terminal history
+  controller. Start every apply, parameter update, undo, and redo from a copy
+  of the current clean encoded result; never touch the imported bytes or a
+  prior export. Accept only the app's supported baseline single-scan encoder
+  result through the UI. Limit each stage to 1–256 edits, allow at most eight
+  stages and 100 MiB cumulative input-byte work, and require a normalized
+  scan-relative range plus unsigned 32-bit seed. Protect marker segments,
+  SOI/EOI, restart markers, byte stuffing and output length by modifying only
+  safe entropy-data bytes and reparsing after each stage. Do not generate new
+  `0xFF` values.
+- **Output behavior:** A structurally bounded stream may fail browser decoding.
+  Keep the corrupted encoded bytes exportable, report the preview failure as
+  an experiment outcome, retain the clean encoded preview separately, and
+  provide undo/redo and explicit last-stage parameter editing. Do not
+  coefficient-edit or silently re-encode while a corruption stage is active.
+- **Validation:** Unit tests cover parser bounds, safe ranges, byte stuffing,
+  restart-marker protection, fixed length, determinism, invalid parameters,
+  immutable input, stacked replay, and undo/redo history. Browser smoke and
+  independent decoder checks are release-gate evidence and must be recorded
+  separately from structural-parser tests.
+- **Limits:** No arbitrary raw-byte editor, scan transplant, progressive,
+  arithmetic-coded or multi-scan support; structural validation does not
+  guarantee entropy decode, visual recovery, or identical output across
+  decoders.
+
+## ADR-012: Report scan decode completeness after corruption
+
+- **Status:** Implemented.
+- **Context:** The browser image decoder can render a JPEG despite entropy
+  warnings and does not expose how many scanlines were recovered. Preview
+  success alone cannot establish whether a damaged scan reached the image
+  bottom.
+- **Decision:** After applying or replaying corruption, use the existing
+  pinned libjpeg-turbo WebAssembly codec in the Scan Corrupt worker to decode
+  one output row at a time. Report rows decoded, expected rows, warning count,
+  selected warning categories, and whether decompression finished. Keep the
+  browser preview state separate. This diagnostic is not independent of the
+  editor codec and must not imply that other applications will decode
+  identically.
+- **Validation:** Exercise valid and entropy-damaged fixtures, including a
+  result where all rows are returned with a decoder warning. Rebuild and
+  browser-test the checked-in WebAssembly module.

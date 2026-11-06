@@ -54,7 +54,7 @@ parameter edits, delete, undo/redo, and stale preview discard.
 - Mask → DCT operation → undo → redo.
 - Quantization edit → documented re-quantization/encoding path.
 - Scan corruption → successful or failed preview decode → retained export →
-  undo to clean encoded result.
+  scanline/warning diagnostic → undo to clean encoded result.
 - Save project → reopen → replay operations.
 
 ### Golden/reference tests
@@ -64,6 +64,9 @@ parameter edits, delete, undo/redo, and stale preview discard.
 - Compare encoded output properties, not necessarily byte-for-byte output, unless encoder determinism is guaranteed.
 - Use golden previews with tolerances where codec differences are expected.
 - Store expected diagnostics for malformed and unsupported files.
+- For entropy-corrupted JPEGs, record the decoder identity, rows decoded vs.
+  expected, warning count/categories, and finish status. Treat these as
+  decoder-specific observations, not cross-application guarantees.
 
 ### End-to-end browser tests
 
@@ -272,13 +275,17 @@ For raw-byte/entropy experiments:
 - failure is isolated and diagnostics are recorded;
 - no automatic replacement of source or last known-good export occurs.
 
-For the planned Scan Corrupt experiment, separately test structural safety and
-decode outcome. Reject unverified scan boundaries and unsupported processes;
-protect marker, restart-marker, and byte-stuffing structure. A structurally
-bounded stream that a decoder cannot render is still a valid experiment
-artifact: retain its bytes for export, expose decode failure explicitly, and
-keep the clean encoded result available for comparison and undo. Do not treat
-decoder failure as an instruction to fall back to pixel manipulation.
+For Scan Corrupt, separately test structural safety and decode outcome. Reject
+unverified scan boundaries and unsupported processes; protect marker,
+restart-marker, and byte-stuffing structure. A structurally bounded stream
+that a decoder cannot render is still a valid experiment artifact: retain its
+bytes for export, expose decode failure explicitly, and keep the clean encoded
+result available for comparison and undo. Do not treat decoder failure as an
+instruction to fall back to pixel manipulation. Unit coverage includes
+determinism, exact scan-relative mutation bounds, fixed output length, marker
+protection, parameter validation, immutable input, stacked replay and
+terminal-history undo/redo. Browser preview failure/export/undo and independent
+decoder outcomes remain manual integration release checks.
 
 ## 10. Performance and robustness
 

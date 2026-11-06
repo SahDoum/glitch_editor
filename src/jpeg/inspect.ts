@@ -26,6 +26,11 @@ export interface JpegMarker {
 export interface JpegScan {
   dataStartOffset: number;
   dataEndOffset: number;
+  entropyRanges: Array<{
+    startOffset: number;
+    endOffset: number;
+  }>;
+  endMarkerOffset: number;
   components: Array<{
     id: number;
     dcHuffmanTable: number;
@@ -566,6 +571,8 @@ export function inspectJpeg(bytes: Uint8Array): Result<JpegInspection> {
 
     const dataStartOffset = offset;
     let scanMarkerOffset = offset;
+    let entropyRangeStartOffset = offset;
+    const entropyRanges: JpegScan["entropyRanges"] = [];
     let nextRestartMarker = 0;
     let foundMarker = false;
     while (scanMarkerOffset < bytes.byteLength) {
@@ -610,14 +617,25 @@ export function inspectJpeg(bytes: Uint8Array): Result<JpegInspection> {
           segmentLength: null,
           kind: "restart",
         });
+        entropyRanges.push({
+          startOffset: entropyRangeStartOffset,
+          endOffset: restartStart,
+        });
         nextRestartMarker = (nextRestartMarker + 1) % 8;
         scanMarkerOffset = codeOffset + 1;
+        entropyRangeStartOffset = scanMarkerOffset;
         continue;
       }
 
+      entropyRanges.push({
+        startOffset: entropyRangeStartOffset,
+        endOffset: restartStart,
+      });
       scans.push({
         dataStartOffset,
         dataEndOffset: restartStart,
+        entropyRanges,
+        endMarkerOffset: restartStart,
         components: scanHeader.value,
       });
       offset = restartStart;

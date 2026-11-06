@@ -14,7 +14,8 @@ export type CanvasTool =
   | "select"
   | "coefficient-glitch"
   | "block-transform"
-  | "quantization";
+  | "quantization"
+  | "scan-corrupt";
 
 export const TOOL_GROUPS: readonly {
   readonly label: string;
@@ -48,6 +49,10 @@ export const TOOL_GROUPS: readonly {
   {
     label: "Quantization",
     tools: [{ id: "quantization", label: "Quantization Matrix" }],
+  },
+  {
+    label: "Entropy experiments",
+    tools: [{ id: "scan-corrupt", label: "Scan Corrupt" }],
   },
 ];
 

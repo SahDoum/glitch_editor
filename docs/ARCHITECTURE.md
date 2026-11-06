@@ -176,6 +176,12 @@ supports only the process subset below and bounds coefficient storage to
 128 MiB. This is the selected codec path for the current editing slice; it is
 not a claim of broad JPEG process support.
 
+The Scan Corrupt worker reuses the pinned codec to decode the corrupted output
+one scanline at a time. It reports rows returned, decoder warnings, and
+decompression completion separately from the browser preview result. This
+diagnostic describes libjpeg-turbo's recovery only; it cannot predict how a
+different decoder will render the same bytes.
+
 ### JPEG process support
 
 For the first implementation, explicitly choose a supported subset (recommended: baseline sequential DCT Huffman JPEG) and reject unsupported processes with a clear diagnostic. Progressive JPEG, arithmetic coding, unusual precision, and multi-scan edge cases require separate capability work.
@@ -242,6 +248,22 @@ must not be replayed after it. A corrupted result may fail preview decoding
 and still remain available for export; that decode failure must not be
 converted into success-shaped preview data. Preserve structural boundaries
 and reject inputs whose scan boundaries cannot be validated.
+
+The current Scan Corrupt implementation uses a dedicated worker and the
+inspector's verified single-scan entropy ranges. It supports bit flips and
+byte replacement, at most 256 changed bytes per stage, at most eight stacked
+stages, an unsigned 32-bit seed, a normalized scan-relative range, and 100
+MiB of cumulative input-byte work per replay. Input/output stay within the
+existing 50 MiB JPEG limit. Changed values cannot become `0xFF`; existing
+`0xFF` bytes, their following byte-stuffing bytes, restart markers, marker
+segments, SOI, EOI, and file length are preserved. The worker reparses and
+compares marker boundaries after every stage. Undo, redo, and an explicit
+last-stage parameter update replay the entire byte-stage list from the clean
+encoded result. This validates structural boundaries, not Huffman decodability
+or browser-independent visual recovery; a preview failure remains an
+expected result. The application only exposes the worker for bytes produced by
+its current coefficient encoder and does not offer general imported-file byte
+editing.
 Unknown operation versions are rejected explicitly; no migration is claimed
 yet.
 

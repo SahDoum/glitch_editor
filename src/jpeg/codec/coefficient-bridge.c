@@ -7,9 +7,11 @@
 #include <math.h>
 
 #include <jpeglib.h>
+#include <jerror.h>
 
 #define MAX_COEFFICIENT_BYTES (128ULL * 1024ULL * 1024ULL)
 #define MAX_JPEG_BYTES (50ULL * 1024ULL * 1024ULL)
+#define MAX_IMAGE_PIXELS 40000000ULL
 #define MAX_EDITED_BLOCKS (8U * 1024U * 1024U)
 #define MAX_TRANSFER_BLOCKS 262144U
 
@@ -29,6 +31,14 @@ struct bridge_error_mgr {
   jmp_buf jump_buffer;
 };
 
+struct decode_diagnostic {
+  int status;
+  unsigned int warning_count;
+  unsigned int warning_flags;
+  unsigned int decoded_rows;
+  unsigned int expected_rows;
+};
+
 struct bridge_state {
   struct jpeg_decompress_struct cinfo;
   struct bridge_error_mgr error;
@@ -42,11 +52,152 @@ struct bridge_state {
 };
 
 static struct bridge_state state;
+static struct decode_diagnostic diagnostic;
 
 static void bridge_error_exit(j_common_ptr cinfo) {
   struct bridge_error_mgr *error =
       (struct bridge_error_mgr *)cinfo->err;
   longjmp(error->jump_buffer, 1);
+}
+
+static void diagnostic_emit_message(j_common_ptr cinfo, int message_level) {
+  if (message_level >= 0) {
+    return;
+  }
+
+  diagnostic.warning_count++;
+  switch (cinfo->err->msg_code) {
+  case JWRN_JPEG_EOF:
+  case JWRN_HIT_MARKER:
+    diagnostic.warning_flags |= 1U;
+    break;
+  case JWRN_HUFF_BAD_CODE:
+#if JPEG_LIB_VERSION >= 70 || defined(C_ARITH_CODING_SUPPORTED) || \
+    defined(D_ARITH_CODING_SUPPORTED)
+  case JWRN_ARITH_BAD_CODE:
+#endif
+    diagnostic.warning_flags |= 2U;
+    break;
+  case JWRN_MUST_RESYNC:
+    diagnostic.warning_flags |= 4U;
+    break;
+  default:
+    diagnostic.warning_flags |= 8U;
+    break;
+  }
+}
+
+int coefficient_decode_diagnostic(const unsigned char *input,
+                                  unsigned int input_size) {
+  struct jpeg_decompress_struct *cinfo;
+  struct bridge_error_mgr *error;
+  volatile int created = 0;
+  JSAMPARRAY row_buffer;
+
+  memset(&diagnostic, 0, sizeof(diagnostic));
+  diagnostic.status = -1;
+  if (input == NULL || input_size == 0 || input_size > MAX_JPEG_BYTES) {
+    return diagnostic.status;
+  }
+
+  cinfo = (struct jpeg_decompress_struct *)calloc(1, sizeof(*cinfo));
+  error = (struct bridge_error_mgr *)calloc(1, sizeof(*error));
+  if (cinfo == NULL || error == NULL) {
+    free(cinfo);
+    free(error);
+    return diagnostic.status;
+  }
+  cinfo->err = jpeg_std_error(&error->pub);
+  error->pub.error_exit = bridge_error_exit;
+  error->pub.emit_message = diagnostic_emit_message;
+  if (setjmp(error->jump_buffer) != 0) {
+    if (created) {
+      jpeg_destroy_decompress(cinfo);
+    }
+    free(error);
+    free(cinfo);
+    return diagnostic.status;
+  }
+
+  jpeg_create_decompress(cinfo);
+  created = 1;
+  jpeg_mem_src(cinfo, input, input_size);
+  if (jpeg_read_header(cinfo, TRUE) != JPEG_HEADER_OK ||
+      cinfo->data_precision != 8 || cinfo->progressive_mode ||
+      cinfo->arith_code || jpeg_has_multiple_scans(cinfo) ||
+      cinfo->comps_in_scan != cinfo->num_components) {
+    jpeg_destroy_decompress(cinfo);
+    free(error);
+    free(cinfo);
+    diagnostic.status = -1;
+    return diagnostic.status;
+  }
+
+  if (jpeg_start_decompress(cinfo) == FALSE) {
+    jpeg_destroy_decompress(cinfo);
+    free(error);
+    free(cinfo);
+    diagnostic.status = 2;
+    return diagnostic.status;
+  }
+  diagnostic.expected_rows = cinfo->output_height;
+  if ((uint64_t)cinfo->output_width * cinfo->output_height >
+      MAX_IMAGE_PIXELS) {
+    jpeg_destroy_decompress(cinfo);
+    free(error);
+    free(cinfo);
+    diagnostic.status = -1;
+    return diagnostic.status;
+  }
+
+  row_buffer = (*cinfo->mem->alloc_sarray)(
+      (j_common_ptr)cinfo, JPOOL_IMAGE,
+      cinfo->output_width * cinfo->output_components, 1);
+  while (cinfo->output_scanline < cinfo->output_height) {
+    JDIMENSION previous_scanline = cinfo->output_scanline;
+    if (jpeg_read_scanlines(cinfo, row_buffer, 1) == 0 ||
+        cinfo->output_scanline == previous_scanline) {
+      break;
+    }
+    diagnostic.decoded_rows = cinfo->output_scanline;
+  }
+
+  if (diagnostic.decoded_rows != diagnostic.expected_rows) {
+    jpeg_destroy_decompress(cinfo);
+    free(error);
+    free(cinfo);
+    diagnostic.status = 2;
+    return diagnostic.status;
+  }
+  if (jpeg_finish_decompress(cinfo) == FALSE) {
+    jpeg_destroy_decompress(cinfo);
+    free(error);
+    free(cinfo);
+    diagnostic.status = 2;
+    return diagnostic.status;
+  }
+
+  jpeg_destroy_decompress(cinfo);
+  free(error);
+  free(cinfo);
+  diagnostic.status = diagnostic.warning_count > 0 ? 1 : 0;
+  return diagnostic.status;
+}
+
+unsigned int coefficient_decode_diagnostic_warning_count(void) {
+  return diagnostic.warning_count;
+}
+
+unsigned int coefficient_decode_diagnostic_warning_flags(void) {
+  return diagnostic.warning_flags;
+}
+
+unsigned int coefficient_decode_diagnostic_decoded_rows(void) {
+  return diagnostic.decoded_rows;
+}
+
+unsigned int coefficient_decode_diagnostic_expected_rows(void) {
+  return diagnostic.expected_rows;
 }
 
 void coefficient_close(void) {

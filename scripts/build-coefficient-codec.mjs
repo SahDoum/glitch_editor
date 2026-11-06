@@ -41,7 +41,7 @@ if (!existsSync(library) || !existsSync(resolve(include, "jpeglib.h"))) {
       "-sINITIAL_MEMORY=67108864",
       "-sMAXIMUM_MEMORY=536870912",
       "-sSTACK_SIZE=1048576",
-      "-sEXPORTED_FUNCTIONS=_malloc,_free,_coefficient_open,_coefficient_read_block,_coefficient_apply,_coefficient_repeat_block,_coefficient_permute_blocks,_coefficient_transfer_blocks,_coefficient_set_quantization,_coefficient_encode,_coefficient_output_pointer,_coefficient_output_size,_coefficient_close",
+      "-sEXPORTED_FUNCTIONS=_malloc,_free,_coefficient_open,_coefficient_read_block,_coefficient_apply,_coefficient_repeat_block,_coefficient_permute_blocks,_coefficient_transfer_blocks,_coefficient_set_quantization,_coefficient_encode,_coefficient_output_pointer,_coefficient_output_size,_coefficient_close,_coefficient_decode_diagnostic,_coefficient_decode_diagnostic_warning_count,_coefficient_decode_diagnostic_warning_flags,_coefficient_decode_diagnostic_decoded_rows,_coefficient_decode_diagnostic_expected_rows",
       "-o",
       output,
     ],

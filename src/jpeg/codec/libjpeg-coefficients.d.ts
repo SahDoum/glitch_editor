@@ -54,6 +54,11 @@ interface LibjpegCoefficientsModule {
   _coefficient_output_pointer(): number;
   _coefficient_output_size(): number;
   _coefficient_close(): void;
+  _coefficient_decode_diagnostic(pointer: number, size: number): number;
+  _coefficient_decode_diagnostic_warning_count(): number;
+  _coefficient_decode_diagnostic_warning_flags(): number;
+  _coefficient_decode_diagnostic_decoded_rows(): number;
+  _coefficient_decode_diagnostic_expected_rows(): number;
 }
 
 interface LibjpegCoefficientsOptions {

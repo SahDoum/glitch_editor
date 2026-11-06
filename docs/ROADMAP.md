@@ -443,66 +443,80 @@ become undecodable, and the visible effect depends on decoder behavior.
 
 ### Interaction and pipeline
 
-- [ ] Add a **Scan Corrupt** tool/panel available only when the current
+- [x] Add a **Scan Corrupt** tool/panel available only when the current
   coefficient result can be encoded by the supported baseline single-scan
   encoder. Label the target as entropy-coded scan bytes, not pixels, DCT
   blocks, MCUs, or arbitrary whole-file bytes.
-- [ ] Expose bounded deterministic controls: corruption mode (bit flip or
+- [x] Expose bounded deterministic controls: corruption mode (bit flip or
   byte replacement), count/strength, scan-relative range, and unsigned 32-bit
   seed. A scan-relative range is not a pixel location and must not imply a
   predictable visual location.
-- [ ] Run corruption after all coefficient/DQT operations and after normal
+- [x] Run corruption after all coefficient/DQT operations and after normal
   encoding. The operation must work on a copy of the encoded output, never the
   imported source or the last saved export.
-- [ ] Keep the operation terminal in the history pipeline. Undo returns to the
+- [x] Keep the operation terminal in the history pipeline. Undo returns to the
   clean encoded coefficient result; redo and parameter edits replay from that
   clean result with the same seed. Permit explicitly stacked corruption
   stages only as byte-domain operations on the same bounded scan; do not run
   coefficient operations or silently re-encode after the first corruption.
-- [ ] Show distinct states for corruption complete, preview decoded, and
+- [x] Show distinct states for corruption complete, preview decoded, and
   preview decode failed. If decoding fails completely, retain and offer export
   of the corrupt bytes with a clear warning, while keeping the clean encoded
   preview available for comparison and undo.
-- [ ] Report seed, selected range, number of changed bytes/bits, preview status,
+- [x] Report seed, selected range, number of changed bytes/bits, preview status,
   and safe parser/decoder diagnostics. Do not describe partial decoder recovery
   as guaranteed.
 
 ### Structural checks and failure policy
 
-- [ ] Initially accept only a known output from the editor's supported
+- [x] Initially accept only a known output from the editor's supported
   baseline single-scan encoder. Parse and validate scan boundaries before
   changing bytes; reject unknown, malformed, multi-scan, or unsupported inputs.
-- [ ] Protect marker segments, SOI/EOI, restart markers, and byte-stuffing
+- [x] Protect marker segments, SOI/EOI, restart markers, and byte-stuffing
   structure. Restrict changes to verified entropy data and ensure modified
   values cannot create new marker boundaries. Revalidate output bounds after
   corruption.
-- [ ] A structurally bounded stream that no longer decodes is an expected
+- [x] A structurally bounded stream that no longer decodes is an expected
   experiment, not an operation error: preserve its bytes, report decode
   failure, and do not silently substitute a pixel preview as the result.
-- [ ] Reject invalid ranges, non-finite/out-of-range parameters, excessive
+- [x] Reject invalid ranges, non-finite/out-of-range parameters, excessive
   work, cancellation, and worker failures explicitly. Keep original bytes and
   the clean encoded result recoverable in every case.
-- [ ] Do not add general-purpose raw-byte editing or stream transplant to this
+- [x] Do not add general-purpose raw-byte editing or stream transplant to this
   milestone. Do not claim support for progressive, arithmetic-coded, or
   multi-scan JPEGs.
 
 ### Tests and acceptance
 
-- [ ] Test parser bounds, byte-stuffing/restart-marker protection, exact
+- [x] Test parser bounds, byte-stuffing/restart-marker protection, exact
   modified ranges, fixed output length, determinism, invalid parameters, and
   original-byte immutability.
 - [ ] Include a fixture/result where independent decoding succeeds and one
   where corruption causes decode failure; in both cases verify encoded bytes
   remain available and undo restores the clean result.
-- [ ] Test repeated corruption stages replay in order and that coefficient
+- [x] Test repeated corruption stages replay in order and that coefficient
   edits cannot be placed after the terminal stream-corruption stage.
-- [ ] Browser-check visible preview failure, diagnostic, export, undo/redo,
+- [x] Browser-check visible preview failure, diagnostic, export, undo/redo,
   cancellation, and recovery to the clean encoded preview.
 
 Acceptance: bounded, seeded corruption of a verified entropy-coded scan is
 reproducible and undoable. Decoder failure, including total preview failure,
 does not lose the experiment bytes or original JPEG and is reported as an
 expected result rather than hidden.
+
+### Verification status
+
+- Implemented checks and unit tests are complete; the full `npm run check`
+  passes.
+- Browser smoke-tested a clean coefficient encode followed by scan corruption,
+  parameter updates, stacked stages, terminal locking, undo/redo, cancellation,
+  clean-preview recovery, and export availability. A preview decoder rejection
+  was deliberately simulated to exercise the failure UI and confirm that the
+  corrupt result remains exportable.
+- The integrated browser harness does not expose native Blob download events.
+  An actual corrupted stream that fails an independent decoder has not yet
+  been captured and validated; the corresponding fixture/result acceptance
+  item remains open.
 
 ## Milestone 9 — Project persistence and polish
 

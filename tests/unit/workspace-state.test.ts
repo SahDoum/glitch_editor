@@ -37,6 +37,7 @@ describe("workspace state", () => {
       ["JPEG effects", ["coefficient-glitch"]],
       ["Blocks", ["block-transform"]],
       ["Quantization", ["quantization"]],
+      ["Entropy experiments", ["scan-corrupt"]],
     ]);
   });
 

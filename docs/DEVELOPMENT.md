@@ -171,6 +171,38 @@ are copied except APP0 and APP14, and metadata preservation is not guaranteed.
 The browser preview may fail even when encoded bytes are retained for export.
 See ADR-005 and ADR-006 for codec limits, experiment semantics, and DQT modes.
 
+Milestone 8 uses a separate entropy-corruption worker after the clean
+coefficient encoder. It accepts only the resulting supported baseline
+single-scan JPEG, preserves all structural markers, restart markers,
+byte-stuffing pairs, and byte length, and caps each stage at 256 changed bytes,
+the stack at eight stages, and total replay input at 100 MiB. A worker is
+terminated on cancellation or when a newer coefficient result supersedes it.
+The output can fail browser preview decoding and remains exportable; the clean
+encoded preview remains separate. After corruption, the same pinned
+libjpeg-turbo WASM codec decodes scanlines and reports rows read, decoder
+warnings, and whether it completed the JPEG stream. This is not an independent
+decoder and does not guarantee that other applications will recover the same
+image. These checks do not add support for progressive, arithmetic-coded,
+multi-scan, or arbitrary imported-byte edits.
+
+The Milestone 8 browser smoke test exercised corruption after a coefficient
+encode, parameter updates, stacked stages, terminal-stage locking, undo/redo,
+and cancellation. It also simulated a browser preview-decoder rejection and
+confirmed that the warning, clean-preview comparison, and export availability
+remain visible. The small synthetic fixtures and a 128 × 128 generated image
+still decoded after the tested corruption runs; an independently rejected
+corrupted output has not yet been captured. The integrated browser harness
+does not emit native Blob download events, so export availability was checked
+in the UI but the downloaded artifact was not independently inspected.
+
+The scanline diagnostic was also exercised against valid grayscale and 4:2:0
+fixtures and tail-corrupted copies using host libjpeg-turbo. Both valid fixtures
+reported every row without warnings; the corrupted copies still returned all
+rows but emitted decoder warnings. The browser worker showed the same
+full-rows-with-warning state. Other decoders may truncate or recover those
+bytes differently; this diagnostic is not an independent cross-decoder
+comparison.
+
 ## Fixture corpus
 
 `tests/fixtures/` contains tiny, programmatically generated JPEG patterns only. They are synthetic test data, not photographs. The fixture manifest records generation provenance, dimensions, expected process, license, and SHA-256 digest. The source patterns are original geometric/color fields and are released under CC0-1.0; ImageMagick is only the generation tool and is not a runtime dependency.
