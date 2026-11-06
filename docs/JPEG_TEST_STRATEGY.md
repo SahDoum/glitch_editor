@@ -27,7 +27,8 @@ where promised, but is not the sole success criterion for glitch operations.
 - Mask-to-block/MCU coverage.
 - DCT operation math and parameter validation.
 - Zero, scale, randomize, DC offset, AC inversion, frequency isolation,
-  block repeat/permutation, and DQT pattern semantics.
+  block copy/swap/repeat/permutation, DC/AC transfer, and DQT pattern
+  semantics.
 - Seeded random number generation.
 - Operation serialization, replay, undo/redo.
 - Worker message validation and stale-result rejection.
@@ -36,6 +37,8 @@ where promised, but is not the sole success criterion for glitch operations.
   continuous brush overlay path rendering.
 - Image-pixel click to component DCT-block mapping for common sampling modes
   and odd visible image edges.
+- Block-repeat source and destination drags map to the selected component grid;
+  invalid source regions and destination vectors are rejected.
 
 Milestone 3 additionally verifies defensive original-byte reads, image-pixel
 selection and mask bounds, deterministic seeded replay, operation stack
@@ -46,9 +49,12 @@ parameter edits, delete, undo/redo, and stale preview discard.
 
 - Import → inspect → preview.
 - Import → coefficient decode → operation → encode → independent decode.
+- Same-image block-region selection → copy/swap or DC/AC transfer → encode →
+  independent decode.
 - Mask → DCT operation → undo → redo.
 - Quantization edit → documented re-quantization/encoding path.
-- Two-image transplant with compatible and incompatible inputs.
+- Scan corruption → successful or failed preview decode → retained export →
+  undo to clean encoded result.
 - Save project → reopen → replay operations.
 
 ### Golden/reference tests
@@ -67,6 +73,8 @@ parameter edits, delete, undo/redo, and stale preview discard.
   Inspector block highlight/coefficient readout, and independent section and
   whole-panel collapse.
 - Tool parameter editing and preview.
+- Block Transform copy/repeat source drag, destination vector, repeated preview,
+  and undo/redo.
 - Undo/redo and operation stack controls.
 - Export download and reopen.
 - No network request carrying image bytes.
@@ -144,8 +152,14 @@ Native bridge exports for grayscale, 4:2:0 (including odd dimensions), 4:2:2,
 and 4:4:4 synthetic fixtures were reopened by ImageMagick and macOS `sips`.
 The generated Emscripten 4.0.23 module was loaded in a browser and exercised
 through import, brush mask, DCT operation, re-encoded preview, and undo/redo.
-This smoke check did not validate browser download capture; browser export
-automation remains a follow-up.
+For Milestone 7, the browser smoke check also covered seeded shuffle, a
+rectangular whole-block transfer with a visible destination ghost, DC-only,
+AC-only, swap, and repeat operations. Undo/redo restored and replayed the
+transfer, and the original fixture digest remained unchanged. The bytes behind
+the app's Export JPEG link were reopened by both ImageMagick and macOS `sips`.
+The integrated browser harness did not emit Playwright download events even
+for a visible direct Blob URL link, so its native download UI is not observable
+in this harness; the exact application export payload was validated instead.
 
 Do not use unlicensed photographs in a public test corpus. Tiny synthetic images are preferred for deterministic tests.
 
@@ -257,6 +271,14 @@ For raw-byte/entropy experiments:
 - original bytes remain byte-for-byte identical;
 - failure is isolated and diagnostics are recorded;
 - no automatic replacement of source or last known-good export occurs.
+
+For the planned Scan Corrupt experiment, separately test structural safety and
+decode outcome. Reject unverified scan boundaries and unsupported processes;
+protect marker, restart-marker, and byte-stuffing structure. A structurally
+bounded stream that a decoder cannot render is still a valid experiment
+artifact: retain its bytes for export, expose decode failure explicitly, and
+keep the clean encoded result available for comparison and undo. Do not treat
+decoder failure as an instruction to fall back to pixel manipulation.
 
 ## 10. Performance and robustness
 

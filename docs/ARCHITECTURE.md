@@ -203,6 +203,24 @@ order; failed validation or execution leaves the prior document intact.
 Undo/redo stores immutable document frames, while document revisions continue
 to increase so preview results from earlier revisions cannot be mistaken for
 current output. A supplied 32-bit seed creates a repeatable random stream.
+
+The planned Block Transform family operates on quantized DCT coefficients in
+one component of one JPEG. Copy, swap, repeat, and shuffle read from explicit
+coefficient snapshots, use component block-grid coordinates, and re-encode
+through the existing JPEG facade. They are typed operations, not byte or MCU
+copies. Source/destination region dimensions, component bounds, coding process,
+sampling geometry, and table assignments are validated before execution.
+
+Entropy-coded scan corruption is a separate, terminal encoded-byte phase
+after coefficient replay and JPEG encoding. Keep it outside the normal
+coefficient worker/operation executor and run it only against a copy of the
+verified encoded output. Its history entry records validated parameters and
+seed; undo restores the clean encoded result, while redo deterministically
+replays the corruption. Once this terminal phase exists, coefficient edits
+must not be replayed after it. A corrupted result may fail preview decoding
+and still remain available for export; that decode failure must not be
+converted into success-shaped preview data. Preserve structural boundaries
+and reject inputs whose scan boundaries cannot be validated.
 Unknown operation versions are rejected explicitly; no migration is claimed
 yet.
 

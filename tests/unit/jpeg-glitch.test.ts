@@ -3,7 +3,9 @@ import {
   createQuantizationPattern,
   isBlockPermutationParameters,
   isBlockRepeatParameters,
+  isBlockTransferParameters,
   isCoefficientGlitchParameters,
+  MAX_BLOCK_TRANSFER_BLOCKS,
 } from "../../src/operations/jpeg-glitch";
 import type { JpegInspection } from "../../src/jpeg/inspect";
 import {
@@ -112,6 +114,28 @@ describe("JPEG glitch operation validation", () => {
     ).toBe(false);
   });
 
+  it("validates the full dragged repeat path, not only its first destination", () => {
+    const operation = {
+      kind: "block-repeat",
+      componentIndex: 0,
+      sourceX: 0,
+      sourceY: 0,
+      offsetX: 1,
+      offsetY: 0,
+      repetitions: 1,
+    };
+    expect(isBlockRepeatParameters(operation, inspection)).toBe(true);
+    expect(
+      isBlockRepeatParameters({ ...operation, repetitions: 2 }, inspection),
+    ).toBe(false);
+    expect(
+      isBlockRepeatParameters(
+        { ...operation, offsetX: 0, offsetY: 0 },
+        inspection,
+      ),
+    ).toBe(false);
+  });
+
   it("accepts AC inversion and frequency isolation only with AC parameters", () => {
     const selection = createRectangleSelection(0, 0, 8, 8, 16, 16);
     expect(selection.ok).toBe(true);
@@ -175,6 +199,71 @@ describe("JPEG glitch operation validation", () => {
     expect(
       isBlockPermutationParameters({ ...operation, seed: -1 }, inspection),
     ).toBe(false);
+  });
+
+  it("validates equal-sized block transfers and component bounds", () => {
+    const operation = {
+      kind: "block-transfer",
+      componentIndex: 0,
+      sourceX: 0,
+      sourceY: 0,
+      width: 1,
+      height: 1,
+      destinationX: 1,
+      destinationY: 0,
+      mode: "all",
+      action: "copy",
+    };
+    expect(isBlockTransferParameters(operation, inspection)).toBe(true);
+    expect(
+      isBlockTransferParameters({ ...operation, destinationX: 2 }, inspection),
+    ).toBe(false);
+    expect(
+      isBlockTransferParameters(
+        { ...operation, componentIndex: 1, sourceX: 1, destinationX: 0 },
+        inspection,
+      ),
+    ).toBe(false);
+    expect(
+      isBlockTransferParameters(
+        { ...operation, width: MAX_BLOCK_TRANSFER_BLOCKS + 1 },
+        inspection,
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects ambiguous overlapping swaps while allowing no-op swaps", () => {
+    const largerInspection = {
+      ...inspection,
+      width: 32,
+      height: 32,
+    } as JpegInspection;
+    const operation = {
+      kind: "block-transfer",
+      componentIndex: 0,
+      sourceX: 0,
+      sourceY: 0,
+      width: 2,
+      height: 2,
+      destinationX: 1,
+      destinationY: 1,
+      mode: "dc",
+      action: "swap",
+    };
+
+    expect(isBlockTransferParameters(operation, largerInspection)).toBe(false);
+    expect(
+      isBlockTransferParameters(
+        { ...operation, destinationX: 0, destinationY: 0 },
+        largerInspection,
+      ),
+    ).toBe(true);
+    expect(
+      isBlockTransferParameters(
+        { ...operation, mode: "ac", action: "copy" },
+        largerInspection,
+      ),
+    ).toBe(true);
   });
 });
 

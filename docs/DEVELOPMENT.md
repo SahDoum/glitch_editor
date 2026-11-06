@@ -68,10 +68,28 @@ available:
 emcc --version
 ```
 
-If `emcc` is missing, one tested approach on this computer was to clone the
-official Emscripten SDK into a temporary directory, install and activate
-version 4.0.23 there, then source its environment. This did not use Homebrew
-or install Emscripten globally:
+On this computer, Emscripten 4.0.23 is available in the Copilot session
+directory. Locate its environment script, then activate it without moving the
+SDK or installing it globally:
+
+```bash
+find "$HOME/.copilot/session-state" -path '*/emsdk/emsdk_env.sh' -print
+source "/path/to/emsdk/emsdk_env.sh"
+emcc --version
+cd /path/to/glitch_editor
+export PATH="$HOME/.nvm/versions/node/v20.20.0/bin:$PATH"
+npm run build:jpeg-codec
+```
+
+Replace `/path/to/emsdk` with the SDK directory found by `find`, and
+`/path/to/glitch_editor` with the repository directory. The SDK path is in
+session storage and may change; if it is no longer available, use the general
+setup below or set `EMCC` to another Emscripten 4.0.23 compiler.
+
+To install the official Emscripten SDK in a temporary directory when no
+compatible compiler is available, clone the SDK, install and activate version
+4.0.23, then source its environment. This does not use Homebrew or install
+Emscripten globally:
 
 ```bash
 git clone https://github.com/emscripten-core/emsdk.git /tmp/jpeg-glitch-emsdk
@@ -94,13 +112,14 @@ The official SDK installer uses a prebuilt toolchain when available for the
 host platform. Availability can vary: if `emsdk install 4.0.23` reports that
 it must build LLVM or another large toolchain component from source, stop
 rather than starting an unbounded build. The successful local build used
-Emscripten 4.0.23 from `/tmp/jpeg-glitch-emsdk`; the SDK directory was removed
-after verification, so it must be installed again to repeat the build. If the
-SDK cannot provide a prebuilt toolchain in the current environment, use a
-compatible machine or CI runner with adequate disk space. If Emscripten is
-already installed and `emcc` is on `PATH`, the SDK installation steps can be
-skipped; `npm ci` is needed only if project dependencies are not installed.
-Alternatively, select a specific compiler without changing `PATH`:
+Emscripten 4.0.23 from the SDK in Copilot session storage on 2026-11-06; its
+session-specific absolute path is intentionally not recorded here. The earlier
+failed `/tmp/jpeg-glitch-emsdk` install was removed. If the SDK cannot provide
+a prebuilt toolchain in another environment, use a compatible machine or CI
+runner with adequate disk space. If Emscripten is already installed and
+`emcc` is on `PATH`, the SDK installation steps can be skipped; `npm ci` is
+needed only if project dependencies are not installed. Alternatively, select
+a specific compiler without changing `PATH`:
 
 ```bash
 EMCC=/absolute/path/to/emsdk/upstream/emscripten/emcc npm run build:jpeg-codec

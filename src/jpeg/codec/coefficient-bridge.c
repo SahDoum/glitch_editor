@@ -11,6 +11,7 @@
 #define MAX_COEFFICIENT_BYTES (128ULL * 1024ULL * 1024ULL)
 #define MAX_JPEG_BYTES (50ULL * 1024ULL * 1024ULL)
 #define MAX_EDITED_BLOCKS (8U * 1024U * 1024U)
+#define MAX_TRANSFER_BLOCKS 262144U
 
 enum {
   CODEC_OK = 0,
@@ -402,6 +403,109 @@ int coefficient_permute_blocks(int component,
   }
 
   free((void *)block_indices);
+  return CODEC_OK;
+}
+
+int coefficient_transfer_blocks(int component, unsigned int source_x,
+                                unsigned int source_y, unsigned int width,
+                                unsigned int height,
+                                unsigned int destination_x,
+                                unsigned int destination_y, int mode,
+                                int action) {
+  JBLOCK * volatile source_snapshot = NULL;
+  JBLOCK * volatile destination_snapshot = NULL;
+  const jpeg_component_info *info;
+  size_t block_count;
+
+  if (!state.created || state.coefficients == NULL || component < 0 ||
+      component >= state.cinfo.num_components || width == 0 || height == 0 ||
+      mode < 0 || mode > 2 || action < 0 || action > 1) {
+    return CODEC_INVALID_OPERATION;
+  }
+  info = &state.cinfo.comp_info[component];
+  if (source_x >= info->width_in_blocks ||
+      source_y >= info->height_in_blocks ||
+      destination_x >= info->width_in_blocks ||
+      destination_y >= info->height_in_blocks ||
+      width > info->width_in_blocks - source_x ||
+      height > info->height_in_blocks - source_y ||
+      width > info->width_in_blocks - destination_x ||
+      height > info->height_in_blocks - destination_y ||
+      (uint64_t)width * height > MAX_TRANSFER_BLOCKS) {
+    return CODEC_INVALID_OPERATION;
+  }
+  if (action == 1) {
+    int overlaps = source_x < destination_x + width &&
+                   destination_x < source_x + width &&
+                   source_y < destination_y + height &&
+                   destination_y < source_y + height;
+    if (overlaps) {
+      if (source_x == destination_x && source_y == destination_y) {
+        return CODEC_OK;
+      }
+      return CODEC_INVALID_OPERATION;
+    }
+  }
+  block_count = (size_t)width * height;
+
+  if (setjmp(state.error.jump_buffer) != 0) {
+    free((void *)source_snapshot);
+    free((void *)destination_snapshot);
+    return CODEC_MALFORMED;
+  }
+
+  source_snapshot = (JBLOCK *)malloc(block_count * sizeof(JBLOCK));
+  if (source_snapshot == NULL) return CODEC_RESOURCE_LIMIT;
+  if (action == 1) {
+    destination_snapshot = (JBLOCK *)malloc(block_count * sizeof(JBLOCK));
+    if (destination_snapshot == NULL) {
+      free((void *)source_snapshot);
+      return CODEC_RESOURCE_LIMIT;
+    }
+  }
+
+  for (unsigned int row = 0; row < height; row++) {
+    JBLOCKARRAY source_row = state.cinfo.mem->access_virt_barray(
+        (j_common_ptr)&state.cinfo, state.coefficients[component],
+        source_y + row, 1, FALSE);
+    if (action == 1) {
+      JBLOCKARRAY destination_row = state.cinfo.mem->access_virt_barray(
+          (j_common_ptr)&state.cinfo, state.coefficients[component],
+          destination_y + row, 1, FALSE);
+      memcpy(destination_snapshot[row * width], destination_row[0][destination_x],
+             (size_t)width * sizeof(JBLOCK));
+    }
+    memcpy(source_snapshot[row * width], source_row[0][source_x],
+           (size_t)width * sizeof(JBLOCK));
+  }
+
+  for (unsigned int row = 0; row < height; row++) {
+    JBLOCKARRAY destination_row = state.cinfo.mem->access_virt_barray(
+        (j_common_ptr)&state.cinfo, state.coefficients[component],
+        destination_y + row, 1, TRUE);
+    JBLOCKARRAY source_row = action == 1
+        ? state.cinfo.mem->access_virt_barray(
+              (j_common_ptr)&state.cinfo, state.coefficients[component],
+              source_y + row, 1, TRUE)
+        : NULL;
+    for (unsigned int column = 0; column < width; column++) {
+      JBLOCK *source_block = &source_snapshot[row * width + column];
+      JBLOCK *destination_block =
+          action == 1 ? &destination_snapshot[row * width + column] : NULL;
+      JBLOCK *target = &destination_row[0][destination_x + column];
+      JBLOCK *origin =
+          action == 1 ? &source_row[0][source_x + column] : NULL;
+      unsigned int first = mode == 1 ? 0 : (mode == 2 ? 1 : 0);
+      unsigned int end = mode == 1 ? 1 : DCTSIZE2;
+      for (unsigned int index = first; index < end; index++) {
+        (*target)[index] = (*source_block)[index];
+        if (action == 1) (*origin)[index] = (*destination_block)[index];
+      }
+    }
+  }
+
+  free((void *)source_snapshot);
+  free((void *)destination_snapshot);
   return CODEC_OK;
 }
 

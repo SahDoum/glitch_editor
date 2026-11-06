@@ -220,8 +220,8 @@ collapse. No browser console or page errors were observed.
 
 This usability milestone is intentionally prioritized before new JPEG
 workflows: users need to understand which tool is active and which
-pixel-space region an operation will affect before adding two-image
-transplant or entropy-stream features. It changes the UI workflow, not
+pixel-space region an operation will affect before adding block-transform
+or entropy-stream features. It changes the UI workflow, not
 the document representation, JPEG capability claims, or codec pipeline.
 
 ## Milestone 6.5 — Mask and experiment workflow (implementation complete)
@@ -232,8 +232,9 @@ Decisions confirmed by the user and recorded in ADR-008:
 - DCT block snapping is the default, with a selectable MCU grid.
 - Recipes include built-in presets and user-saved ordered coefficient
   sequences.
-- Block displacement and image mixing remain separate future
-  coefficient-domain slices; neither is raw-byte copying.
+- Block displacement is now scoped in Milestone 7 as a same-image
+  coefficient-domain operation; image mixing remains deferred. Neither is
+  raw-byte copying. See ADR-009 for the updated milestone scope.
 - A combined mask-and-effect brush remains a later interaction experiment,
   built on the same reversible mask-snapshot contract.
 
@@ -261,38 +262,151 @@ Decisions confirmed by the user and recorded in ADR-008:
 - Follow-up: Coefficient Glitch, recipes, and Shuffle show the mask they use; a newly drawn draft is used by default without saving, and saved masks remain selectable.
 - History entries with mask snapshots can restore independent copies as the current draft without changing history or the encoded image.
 
-## Milestone 7 — Two-image DCT transplant
+## Milestone 7 — Intra-image DCT block transform
 
-### Tasks
+This replaces the earlier two-image transplant slice. It changes quantized
+DCT coefficients inside one supported JPEG, then uses the existing JPEG
+encoder. It is a JPEG-domain edit, not entropy-stream corruption or a pixel
+filter.
 
-- [ ] Add source and target document workflow.
-- [ ] Add source/target region selection.
-- [ ] Transplant DCT blocks and separately DC/AC data.
-- [ ] Check component layout, sampling, block geometry, quantization assignments, scan/process compatibility.
-- [ ] Preview and commit transplant as a reversible operation.
+### Interaction and operation model
 
-### Acceptance
+- [x] Combine Shuffle and Repeat Block under one **Block Transform** tool and
+      contextual panel, retaining named modes: **Shuffle**, **Copy/Repeat**, and
+      **Drag to transfer**. They remain distinct typed, replayable operation
+      variants; this is a unified workflow, not an ambiguous single algorithm.
+- [x] In Drag to transfer mode, click-drag a rectangular source region on the
+      canvas. Snap its edges to the active component's visible 8×8 DCT-block grid;
+      show the selected block rectangle and a destination ghost while dragging.
+- [x] Drop to translate that exact-size region to a destination block-grid
+      origin. Do not scale or interpolate. Default to copying; optionally offer
+      swap as a separate explicit mode. Do not call a copy a move: moving would
+      need a defined fill rule for vacated source blocks.
+- [x] Reuse drag interaction for a one-block repeat source: drag within a
+      visible source block, then drag from it to the first destination. Choose the
+      number of repeated destinations; they continue along the dragged block-grid
+      offset from an immutable source snapshot. Shuffle remains a seeded
+      permutation of whole selected blocks within the selected region.
+- [x] Offer whole-block transfer (DC + AC), DC-only transfer, and AC-only
+      transfer. Whole-block mode copies all 64 quantized coefficients. AC-only
+      preserves each destination block's DC; DC-only preserves its AC.
+- [x] Show the target component, source and destination block extents, mode,
+      seed where applicable, and that applying the operation re-encodes the JPEG.
+- [x] Preview on the target image and commit as one undoable history operation.
+      Undo/redo, parameter edits, and replay must start from the immutable original
+      coefficient state, not from already encoded output.
 
-- Compatible transplants produce a valid export.
-- Incompatible cases are rejected or converted only through an explicitly documented path.
-- No arbitrary byte copy is described as a block/MCU transplant.
+### Compatibility and safety
 
-## Milestone 8 — Experimental stream and byte lab
+- [x] Limit the first slice to the existing supported 8-bit baseline
+      sequential Huffman JPEG subset (one interleaved scan; grayscale or three
+      components).
+- [x] Keep source and destination in the same component. Use visible component
+      block coordinates and sampling-aware image overlays; never treat an 8×8
+      block as an MCU or copy entropy-coded bytes.
+- [x] Require source and destination rectangles to have identical block-grid
+      dimensions and fit completely inside the selected component's visible block
+      grid. Reject partial/out-of-grid regions with an actionable message.
+- [x] Validate component identity, sampling factors, block geometry, and DQT
+      assignment before execution. Within one component of one JPEG, DQT assignment
+      is shared; do not add conversion or cross-component transfer in this slice.
+- [x] Define overlap behavior explicitly: read all source coefficients from a
+      snapshot before writing. Copy is allowed to overlap. Swap requires equal
+      regions and uses two snapshots. Reject ambiguous repeated destinations.
+- [x] Ensure component-grid edge padding is never exposed as a selectable
+      visible block. Preserve original bytes and bound operation work.
 
-### Tasks
+### Tests and acceptance
 
-- [ ] Add marker/scan and restart-marker inspector.
-- [ ] Add isolated raw-byte sandbox with protected structural regions by default.
-- [ ] Add bit/byte corruption with deterministic seeds.
-- [ ] Prototype entropy-stream editing/transplant only with bitstream-aware handling.
-- [ ] Add decoder recovery diagnostics and failure preview.
-- [ ] Keep original asset immutable.
+- [x] Test full-block, DC-only, AC-only, copy, swap, repeat, and seeded
+      shuffle coefficient results, including overlap and odd image edges.
+- [x] Test invalid component, unequal region sizes, destination out of bounds,
+      unsupported process, and malformed operation parameters.
+- [x] Verify deterministic replay and exact undo/redo state; verify source
+      JPEG bytes remain unchanged.
+- [x] Encode representative grayscale, 4:2:0, 4:2:2, and 4:4:4 results and
+      reopen them with an independent decoder.
+- [x] Browser-check region snapping, drag ghost/drop, copy-vs-swap feedback,
+      preview, and history controls.
 
-### Acceptance
+Acceptance: a user can select a source block rectangle, transfer it to an
+equal-size target on the same image, preview the re-encoded result, and undo or
+redo it. Shuffle and Repeat remain available through the same Block Transform
+tool. All coefficient semantics and compatibility failures are explicit.
 
-- Experimental actions cannot overwrite original bytes.
-- Decoder failures are expected, contained, and clearly explained.
-- Any claimed stream-level operation has dedicated fixtures and bitstream tests.
+Milestone 7 acceptance is complete. The browser smoke covered a rectangular
+whole-block transfer, visible destination ghost, shuffle, repeat, coefficient
+modes, swap, and undo/redo. The Export JPEG payload was reopened by independent
+decoders; the original fixture bytes remained unchanged.
+
+## Milestone 8 — Experimental entropy-coded scan corruption
+
+This milestone deliberately edits the entropy-coded scan of a temporary
+encoded JPEG. It is separate from the coefficient pipeline: the scan may
+become undecodable, and the visible effect depends on decoder behavior.
+
+### Interaction and pipeline
+
+- [ ] Add a **Scan Corrupt** tool/panel available only when the current
+  coefficient result can be encoded by the supported baseline single-scan
+  encoder. Label the target as entropy-coded scan bytes, not pixels, DCT
+  blocks, MCUs, or arbitrary whole-file bytes.
+- [ ] Expose bounded deterministic controls: corruption mode (bit flip or
+  byte replacement), count/strength, scan-relative range, and unsigned 32-bit
+  seed. A scan-relative range is not a pixel location and must not imply a
+  predictable visual location.
+- [ ] Run corruption after all coefficient/DQT operations and after normal
+  encoding. The operation must work on a copy of the encoded output, never the
+  imported source or the last saved export.
+- [ ] Keep the operation terminal in the history pipeline. Undo returns to the
+  clean encoded coefficient result; redo and parameter edits replay from that
+  clean result with the same seed. Permit explicitly stacked corruption
+  stages only as byte-domain operations on the same bounded scan; do not run
+  coefficient operations or silently re-encode after the first corruption.
+- [ ] Show distinct states for corruption complete, preview decoded, and
+  preview decode failed. If decoding fails completely, retain and offer export
+  of the corrupt bytes with a clear warning, while keeping the clean encoded
+  preview available for comparison and undo.
+- [ ] Report seed, selected range, number of changed bytes/bits, preview status,
+  and safe parser/decoder diagnostics. Do not describe partial decoder recovery
+  as guaranteed.
+
+### Structural checks and failure policy
+
+- [ ] Initially accept only a known output from the editor's supported
+  baseline single-scan encoder. Parse and validate scan boundaries before
+  changing bytes; reject unknown, malformed, multi-scan, or unsupported inputs.
+- [ ] Protect marker segments, SOI/EOI, restart markers, and byte-stuffing
+  structure. Restrict changes to verified entropy data and ensure modified
+  values cannot create new marker boundaries. Revalidate output bounds after
+  corruption.
+- [ ] A structurally bounded stream that no longer decodes is an expected
+  experiment, not an operation error: preserve its bytes, report decode
+  failure, and do not silently substitute a pixel preview as the result.
+- [ ] Reject invalid ranges, non-finite/out-of-range parameters, excessive
+  work, cancellation, and worker failures explicitly. Keep original bytes and
+  the clean encoded result recoverable in every case.
+- [ ] Do not add general-purpose raw-byte editing or stream transplant to this
+  milestone. Do not claim support for progressive, arithmetic-coded, or
+  multi-scan JPEGs.
+
+### Tests and acceptance
+
+- [ ] Test parser bounds, byte-stuffing/restart-marker protection, exact
+  modified ranges, fixed output length, determinism, invalid parameters, and
+  original-byte immutability.
+- [ ] Include a fixture/result where independent decoding succeeds and one
+  where corruption causes decode failure; in both cases verify encoded bytes
+  remain available and undo restores the clean result.
+- [ ] Test repeated corruption stages replay in order and that coefficient
+  edits cannot be placed after the terminal stream-corruption stage.
+- [ ] Browser-check visible preview failure, diagnostic, export, undo/redo,
+  cancellation, and recovery to the clean encoded preview.
+
+Acceptance: bounded, seeded corruption of a verified entropy-coded scan is
+reproducible and undoable. Decoder failure, including total preview failure,
+does not lose the experiment bytes or original JPEG and is reported as an
+expected result rather than hidden.
 
 ## Milestone 9 — Project persistence and polish
 
@@ -311,13 +425,18 @@ Decisions confirmed by the user and recorded in ADR-008:
 - Large-file processing reports progress and remains responsive.
 - No source asset is silently lost.
 
-## Next issues — Milestone 7
+## Next issues — Milestones 7–8
 
-1. Define compatible source/target JPEG document handling for a two-image workflow.
-2. Select source and target regions and map them to sampling-aware DCT-block regions.
-3. Implement reversible coefficient-block transplant and separately scoped DC/AC transfer.
-4. Reject incompatible component layouts, block geometry, DQT assignments, or JPEG processes with actionable errors.
-5. Test compatible and incompatible transplants against supported fixtures and independent decoders.
+1. Define Block Transform tool state and selection/drop interaction using the
+   existing image-pixel selection and sampling-aware block geometry.
+2. Implement and validate same-component coefficient copy/swap, DC/AC variants,
+   repeat, and seeded shuffle as reversible typed operations.
+3. Add a distinct encoded-stream history phase and worker boundary for seeded
+   scan corruption; keep it terminal and preserve undecodable outputs.
+4. Prove scan-boundary/marker protection and failure handling with fixtures
+   before exposing the stream tool in the UI.
+5. Defer two-image transplant, cross-component conversion, stream transplant,
+   general raw-byte editing, and progressive/multi-scan support.
 
 ## Explicitly deferred
 

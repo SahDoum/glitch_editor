@@ -57,6 +57,25 @@ export interface BlockPermutationOperation {
   readonly seed: number;
 }
 
+export const BLOCK_TRANSFER_MODES = ["all", "dc", "ac"] as const;
+export type BlockTransferMode = (typeof BLOCK_TRANSFER_MODES)[number];
+export const BLOCK_TRANSFER_ACTIONS = ["copy", "swap"] as const;
+export type BlockTransferAction = (typeof BLOCK_TRANSFER_ACTIONS)[number];
+export const MAX_BLOCK_TRANSFER_BLOCKS = 262_144;
+
+export interface BlockTransferOperation {
+  readonly kind: "block-transfer";
+  readonly componentIndex: number;
+  readonly sourceX: number;
+  readonly sourceY: number;
+  readonly width: number;
+  readonly height: number;
+  readonly destinationX: number;
+  readonly destinationY: number;
+  readonly mode: BlockTransferMode;
+  readonly action: BlockTransferAction;
+}
+
 export interface QuantizationOperation {
   readonly kind: "quantization";
   readonly tableId: number;
@@ -70,6 +89,7 @@ export type JpegGlitchOperation =
   | CoefficientGlitchOperation
   | BlockRepeatOperation
   | BlockPermutationOperation
+  | BlockTransferOperation
   | QuantizationOperation;
 
 export function isGlitchFrequencyBand(
@@ -214,6 +234,66 @@ export function isBlockPermutationParameters(
     Number.isInteger(seed) &&
     seed >= 0 &&
     seed <= 0xffff_ffff
+  );
+}
+
+export function isBlockTransferParameters(
+  value: unknown,
+  inspection: JpegInspection,
+): value is BlockTransferOperation {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const componentIndex = Reflect.get(value, "componentIndex");
+  const sourceX = Reflect.get(value, "sourceX");
+  const sourceY = Reflect.get(value, "sourceY");
+  const width = Reflect.get(value, "width");
+  const height = Reflect.get(value, "height");
+  const destinationX = Reflect.get(value, "destinationX");
+  const destinationY = Reflect.get(value, "destinationY");
+  const mode = Reflect.get(value, "mode");
+  const action = Reflect.get(value, "action");
+  if (
+    Reflect.get(value, "kind") !== "block-transfer" ||
+    typeof componentIndex !== "number" ||
+    !Number.isInteger(componentIndex) ||
+    componentIndex < 0 ||
+    componentIndex >= inspection.components.length ||
+    ![sourceX, sourceY, width, height, destinationX, destinationY].every(
+      (number) => typeof number === "number" && Number.isInteger(number),
+    ) ||
+    sourceX < 0 ||
+    sourceY < 0 ||
+    width < 1 ||
+    height < 1 ||
+    width * height > MAX_BLOCK_TRANSFER_BLOCKS ||
+    destinationX < 0 ||
+    destinationY < 0 ||
+    typeof mode !== "string" ||
+    !BLOCK_TRANSFER_MODES.some((candidate) => candidate === mode) ||
+    typeof action !== "string" ||
+    !BLOCK_TRANSFER_ACTIONS.some((candidate) => candidate === action)
+  ) {
+    return false;
+  }
+
+  const component = inspection.components[componentIndex];
+  if (!component) return false;
+  const grid = getJpegComponentBlockGrid(inspection, component.id);
+  const overlaps =
+    sourceX < destinationX + width &&
+    destinationX < sourceX + width &&
+    sourceY < destinationY + height &&
+    destinationY < sourceY + height;
+  return (
+    grid !== null &&
+    sourceX + width <= grid.columns &&
+    sourceY + height <= grid.rows &&
+    destinationX + width <= grid.columns &&
+    destinationY + height <= grid.rows &&
+    (action !== "swap" ||
+      !overlaps ||
+      (sourceX === destinationX && sourceY === destinationY))
   );
 }
 

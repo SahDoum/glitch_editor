@@ -23,7 +23,7 @@ describe("workspace state", () => {
       ["Manipulation", ["hand", "inspector"]],
       ["Masks", ["brush", "select"]],
       ["JPEG effects", ["coefficient-glitch"]],
-      ["Blocks", ["repeat-block", "shuffle"]],
+      ["Blocks", ["block-transform"]],
       ["Quantization", ["quantization"]],
     ]);
   });
@@ -153,7 +153,7 @@ describe("workspace state", () => {
       mask: true,
       inspectedBlock: false,
     });
-    expect(getWorkspaceOverlayVisibility("shuffle")).toEqual({
+    expect(getWorkspaceOverlayVisibility("block-transform")).toEqual({
       mask: true,
       inspectedBlock: false,
     });
@@ -165,7 +165,6 @@ describe("workspace state", () => {
       mask: false,
       inspectedBlock: false,
     });
-    expect(getWorkspaceOverlayVisibility("repeat-block").mask).toBe(false);
     expect(getWorkspaceOverlayVisibility("hand").mask).toBe(false);
   });
 
@@ -200,7 +199,7 @@ describe("workspace state", () => {
       type: "set-selection",
       selection: second.value,
     });
-    for (const tool of ["coefficient-glitch", "shuffle"] as const) {
+    for (const tool of ["coefficient-glitch", "block-transform"] as const) {
       const effect = workspaceReducer(draft, { type: "activate-tool", tool });
       expect(getEffectMask(effect, saved)).toBe(second.value);
       expect(getWorkspaceOverlayVisibility(tool).mask).toBe(true);

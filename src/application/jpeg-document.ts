@@ -24,11 +24,13 @@ import {
 import {
   isBlockRepeatParameters,
   isBlockPermutationParameters,
+  isBlockTransferParameters,
   isCoefficientGlitchParameters,
   isQuantizationParameters,
   MAX_GLITCH_OPERATIONS,
   type BlockRepeatOperation,
   type BlockPermutationOperation,
+  type BlockTransferOperation,
   type CoefficientGlitchOperation,
   type JpegGlitchOperation,
   type QuantizationOperation,
@@ -219,6 +221,19 @@ export function createJpegDocumentSession(
           : failure({
               code: "INVALID_INPUT",
               message: "The block permutation parameters are invalid.",
+            }),
+    ),
+    registerGlitchOperation(
+      registry,
+      "jpeg/glitch/block-transfer",
+      "jpeg-coefficients",
+      (value) => isBlockTransferParameters(value, imported.inspection),
+      (parameters) =>
+        isBlockTransferParameters(parameters, imported.inspection)
+          ? success(parameters)
+          : failure({
+              code: "INVALID_INPUT",
+              message: "The block transfer parameters are invalid.",
             }),
     ),
     registerGlitchOperation(
@@ -507,6 +522,22 @@ export function applyBlockPermutationOperation(
     },
     { seed: input.seed, maskId: input.mask.id },
   );
+}
+
+export function applyBlockTransferOperation(
+  history: OperationHistory<JpegEditableState>,
+  input: BlockTransferOperation,
+): Result<ProjectDocument<JpegEditableState>> {
+  const limit = checkOperationLimit(history);
+  if (!limit.ok) return limit;
+  if (!isBlockTransferParameters(input, history.snapshot.inspection)) {
+    return failure({
+      code: "INVALID_INPUT",
+      message:
+        "The block transfer must use equal-size, in-bounds regions in one component.",
+    });
+  }
+  return history.add("jpeg/glitch/block-transfer", 1, { ...input });
 }
 
 export function applyQuantizationOperation(

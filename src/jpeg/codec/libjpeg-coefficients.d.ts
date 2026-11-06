@@ -33,6 +33,17 @@ interface LibjpegCoefficientsModule {
     blockMaskSize: number,
     seed: number,
   ): number;
+  _coefficient_transfer_blocks(
+    component: number,
+    sourceX: number,
+    sourceY: number,
+    width: number,
+    height: number,
+    destinationX: number,
+    destinationY: number,
+    mode: number,
+    action: number,
+  ): number;
   _coefficient_set_quantization(
     tableId: number,
     semantics: number,

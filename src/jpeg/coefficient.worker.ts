@@ -8,6 +8,7 @@ import {
   COEFFICIENT_DOMAINS,
   COEFFICIENT_GLITCH_MODES,
   GLITCH_FREQUENCY_BANDS,
+  MAX_BLOCK_TRANSFER_BLOCKS,
   MAX_GLITCH_OPERATIONS,
   QUANTIZATION_PATTERNS,
   QUANTIZATION_SEMANTICS,
@@ -84,6 +85,7 @@ function getCodec() {
         "_coefficient_apply",
         "_coefficient_repeat_block",
         "_coefficient_permute_blocks",
+        "_coefficient_transfer_blocks",
         "_coefficient_set_quantization",
         "_coefficient_encode",
         "_coefficient_output_pointer",
@@ -261,6 +263,56 @@ function isGlitchOperation(
       seed <= 0xffff_ffff
     );
   }
+  if (kind === "block-transfer") {
+    const componentIndex = Reflect.get(value, "componentIndex");
+    const sourceX = Reflect.get(value, "sourceX");
+    const sourceY = Reflect.get(value, "sourceY");
+    const width = Reflect.get(value, "width");
+    const height = Reflect.get(value, "height");
+    const destinationX = Reflect.get(value, "destinationX");
+    const destinationY = Reflect.get(value, "destinationY");
+    const mode = Reflect.get(value, "mode");
+    const action = Reflect.get(value, "action");
+    if (
+      !isInteger(componentIndex) ||
+      componentIndex < 0 ||
+      componentIndex >= geometry.components.length ||
+      !isInteger(sourceX) ||
+      !isInteger(sourceY) ||
+      !isInteger(width) ||
+      !isInteger(height) ||
+      !isInteger(destinationX) ||
+      !isInteger(destinationY) ||
+      sourceX < 0 ||
+      sourceY < 0 ||
+      width < 1 ||
+      height < 1 ||
+      width * height > MAX_BLOCK_TRANSFER_BLOCKS ||
+      destinationX < 0 ||
+      destinationY < 0 ||
+      (mode !== "all" && mode !== "dc" && mode !== "ac") ||
+      (action !== "copy" && action !== "swap")
+    ) {
+      return false;
+    }
+    const component = geometry.components[componentIndex];
+    if (!component) return false;
+    const grid = getComponentBlockGrid(geometry, component);
+    const overlaps =
+      sourceX < destinationX + width &&
+      destinationX < sourceX + width &&
+      sourceY < destinationY + height &&
+      destinationY < sourceY + height;
+    return (
+      sourceX + width <= grid.columns &&
+      sourceY + height <= grid.rows &&
+      destinationX + width <= grid.columns &&
+      destinationY + height <= grid.rows &&
+      (action !== "swap" ||
+        !overlaps ||
+        (sourceX === destinationX && sourceY === destinationY))
+    );
+  }
   if (kind !== "quantization") return false;
   const tableId = Reflect.get(value, "tableId");
   const values: unknown = Reflect.get(value, "values");
@@ -335,6 +387,9 @@ function getOperationWorkSize(
     if (!component) return 0;
     const grid = getComponentBlockGrid(geometry, component);
     return grid.columns * grid.rows;
+  }
+  if (operation.kind === "block-transfer") {
+    return operation.width * operation.height * 2;
   }
   if (operation.semantics === "reinterpret") return 0;
   return geometry.components.reduce((total, component) => {
@@ -536,6 +591,28 @@ async function handleRequest(
           } finally {
             codec._free(maskPointer);
           }
+        } else if (operation.kind === "block-transfer") {
+          if (typeof codec._coefficient_transfer_blocks !== "function") {
+            return {
+              id: request.id,
+              result: failure({
+                code: "PROCESSING_FAILED",
+                message:
+                  "The generated JPEG codec is outdated. Rebuild the codec bridge before applying block transfers.",
+              }),
+            };
+          }
+          status = codec._coefficient_transfer_blocks(
+            operation.componentIndex,
+            operation.sourceX,
+            operation.sourceY,
+            operation.width,
+            operation.height,
+            operation.destinationX,
+            operation.destinationY,
+            operation.mode === "all" ? 0 : operation.mode === "dc" ? 1 : 2,
+            operation.action === "copy" ? 0 : 1,
+          );
         } else {
           const values = Uint8Array.from(operation.values);
           const valuesPointer = codec._malloc(values.byteLength);

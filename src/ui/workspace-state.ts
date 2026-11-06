@@ -7,8 +7,7 @@ export type CanvasTool =
   | "brush"
   | "select"
   | "coefficient-glitch"
-  | "repeat-block"
-  | "shuffle"
+  | "block-transform"
   | "quantization";
 
 export const TOOL_GROUPS: readonly {
@@ -38,10 +37,7 @@ export const TOOL_GROUPS: readonly {
   },
   {
     label: "Blocks",
-    tools: [
-      { id: "repeat-block", label: "Repeat Block" },
-      { id: "shuffle", label: "Shuffle" },
-    ],
+    tools: [{ id: "block-transform", label: "Block Transform" }],
   },
   {
     label: "Quantization",
@@ -70,7 +66,7 @@ export function getWorkspaceOverlayVisibility(
       tool === "brush" ||
       tool === "select" ||
       tool === "coefficient-glitch" ||
-      tool === "shuffle",
+      tool === "block-transform",
     inspectedBlock: tool === "inspector",
   };
 }

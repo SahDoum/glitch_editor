@@ -498,23 +498,68 @@ original.
 - label this family as re-encoding effects, not direct bitstream
   corruption.
 
-## 8. Two-image workflow: transplant
+## 8. Intra-image block transform and scan corruption
 
-A later milestone adds a second source image.
+### 8.1 Block Transform workflow
 
-Workflow: 1. Open a target JPEG. 2. Add a source JPEG. 3. Choose a
-source region on the source canvas. 4. Choose a target region on the
-target canvas. 5. Choose transplant domain: DCT blocks, MCU, DC, AC,
-component, or raw stream. 6. Run compatibility checks. 7. Preview the
-result. 8. Commit as a reversible operation.
+The first block-transfer workflow uses one JPEG document. A **Block
+Transform** tool groups whole-block shuffle, copy/repeat, and direct region
+transfer in one contextual panel while keeping their operation semantics
+distinct.
 
-Compatibility checks include: - image component count and identifiers; -
-sampling factors; - block dimensions and alignment; - quantization table
-assignment and values; - scan organization and coding mode; - precision
-and supported JPEG process.
+For direct transfer, the user click-drags a rectangular source selection on
+the canvas. Its edges snap to the active component's visible 8×8 DCT-block
+grid. The user then drags the selected rectangle to a destination; a snapped
+ghost previews the exact destination before drop. The operation translates
+the selected block rectangle without scaling or interpolation. Default to
+copy; expose swap only as an explicit mode. Do not call copy "move": a true
+move must define what fills the source region.
 
-If conversion is possible, show the conversion path and its
-consequences. If not, reject the operation with a useful explanation.
+The user chooses whether to transfer all 64 quantized coefficients, DC only,
+or AC only. Whole-block transfer includes DC and AC. DC-only keeps the
+destination's AC coefficients; AC-only keeps its DC coefficient. Source
+coefficients are snapshotted before writing, so overlapping copies and swaps
+have deterministic semantics. Source and destination must be equal-sized,
+in-bounds rectangles in the same component. Only visible component blocks
+are selectable; padded edge blocks are not exposed.
+
+Shuffle is a seeded permutation of whole selected blocks within a component
+region. Copy/Repeat writes a source block to explicit same-component
+destinations. These modes may share the tool and canvas selection, but remain
+separately named operations in history. None copies MCU byte ranges or
+entropy-coded data. Each operation changes quantized coefficients and
+produces a re-encoded JPEG; the original JPEG bytes remain unchanged.
+
+### 8.2 Scan Corrupt workflow and history
+
+Scan Corrupt is a separate advanced tool that acts on the entropy-coded scan
+of a temporary JPEG produced by the editor's supported encoder, after all
+coefficient/DQT operations. It does not edit DCT coefficients. Controls include
+a bounded scan-relative range, corruption mode, bounded count/strength, and
+a reproducible unsigned seed. Scan-relative position must not be presented
+as an image-space location or guaranteed visual location.
+
+Keep stream corruption as a terminal phase in the operation pipeline:
+coefficient or DQT operations cannot be added after it without explicitly
+discarding the stream-corruption stage and regenerating the clean encoded
+JPEG. Undo returns to that clean encoded result; redo replays corruption with
+the recorded parameters and seed. If the experiment supports multiple
+corruption stages, they are explicitly ordered byte-domain stages; they must
+not trigger a hidden JPEG re-encode between stages.
+
+The UI distinguishes corruption completion from preview-decode success.
+Complete decode failure is an expected possible outcome, not grounds to
+discard the experiment. Keep the corrupt bytes exportable with a warning and
+the last clean encoded preview available for comparison and undo. Never
+silently replace the failed stream preview with a pixel-filter approximation.
+
+Initially accept only the editor's verified baseline sequential, single-scan
+output. Validate scan boundaries and preserve structural markers, restart
+markers, and byte-stuffing boundaries. If the implementation cannot prove
+the editable range or protect structural regions, reject that input before
+editing. These checks protect file structure; they do not guarantee that a
+decoder can recover a corrupted entropy stream. Do not claim progressive,
+arithmetic-coded, multi-scan, or general raw-byte editing support.
 
 ## 9. Technical architecture
 
@@ -806,19 +851,30 @@ recorded in `docs/ROADMAP.md` and ADR-005.
 - an experiment catalog distinguishing coefficient/DQT re-encoding from
   future stream and raw-byte experiments.
 
-### Milestone 7 --- Two-image transplant
+### Milestone 7 --- Intra-image DCT block transform
 
-- source/target documents and DCT block or AC/DC transplant;
-- validate component layout, sampling, block geometry, quantization assignments, and scan/process compatibility.
+- a unified Block Transform tool for same-image Shuffle, Copy/Repeat, and
+  drag-to-transfer of snapped, equal-size block regions;
+- whole-block, DC-only, and AC-only coefficient modes with compatible-region
+  validation, re-encoding, preview, and reversible history.
 
-### Milestone 8 --- Experimental bitstream lab
+### Milestone 8 --- Experimental entropy-coded scan corruption
 
-- marker/scan and restart-marker inspection;
-- isolated raw-byte and bitstream experiments with decoder recovery diagnostics.
+- seeded, bounded corruption of a verified scan from the editor's supported
+  baseline single-scan encoder, isolated after the normal coefficient pipeline;
+- structural boundary protection, preview-decode diagnostics, retained export
+  for undecodable experiments, and undo to the clean encoded result.
 
 ### Milestone 9 --- Project persistence and polish
 
 - versioned local project persistence and remaining product polish.
+
+Two-image transplant, cross-component conversion, stream transplant,
+general-purpose raw-byte editing, and progressive/multi-scan support remain
+deferred. The block-transfer milestone edits quantized coefficients within a
+single component; the scan-corruption milestone edits encoded scan bytes and
+may produce an undecodable JPEG. These are separate operation domains and
+must not be presented as one effect.
 
 ## 16. Open technical decisions
 

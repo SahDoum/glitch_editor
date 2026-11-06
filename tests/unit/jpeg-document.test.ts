@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyBlockPermutationOperation,
   applyCoefficientGlitchOperation,
+  applyBlockTransferOperation,
   applyQuantizationOperation,
   applyMaskToDocument,
   applyBlockRepeatOperation,
@@ -221,6 +222,7 @@ describe("JPEG document operation session", () => {
       sha256: "b".repeat(64),
       bytes,
     });
+
     expect(inspection.ok).toBe(true);
     expect(asset.ok).toBe(true);
     if (!inspection.ok || !asset.ok) return;
@@ -276,6 +278,74 @@ describe("JPEG document operation session", () => {
         },
       },
     });
+  });
+
+  it("adds a same-component block transfer as one undoable operation", async () => {
+    const bytes = new Uint8Array(
+      await readFile(
+        new URL("../fixtures/synthetic-color-420.jpg", import.meta.url),
+      ),
+    );
+    const original = bytes.slice();
+    const inspection = inspectJpeg(bytes);
+    const asset = OriginalAsset.create({
+      fileName: "synthetic-color-420.jpg",
+      sha256: "c".repeat(64),
+      bytes,
+    });
+    if (!inspection.ok || !asset.ok) throw new Error("Invalid JPEG fixture.");
+    const created = createJpegDocumentSession({
+      originalAsset: asset.value,
+      inspection: inspection.value,
+      previewUrl: "blob:local-test",
+    });
+    if (!created.ok) throw new Error(created.error.message);
+    const history = created.value;
+
+    const applied = applyBlockTransferOperation(history, {
+      kind: "block-transfer",
+      componentIndex: 0,
+      sourceX: 0,
+      sourceY: 0,
+      width: 1,
+      height: 1,
+      destinationX: 1,
+      destinationY: 0,
+      mode: "ac",
+      action: "copy",
+    });
+    expect(applied).toMatchObject({
+      ok: true,
+      value: {
+        currentState: {
+          jpegOperations: [
+            {
+              kind: "block-transfer",
+              sourceX: 0,
+              destinationX: 1,
+              mode: "ac",
+              action: "copy",
+            },
+          ],
+        },
+        operations: [{ type: "jpeg/glitch/block-transfer", status: "applied" }],
+      },
+    });
+    expect(history.undo()).toMatchObject({
+      ok: true,
+      value: { currentState: { jpegOperations: [] } },
+    });
+    expect(history.redo()).toMatchObject({
+      ok: true,
+      value: {
+        currentState: {
+          jpegOperations: [{ kind: "block-transfer", mode: "ac" }],
+        },
+      },
+    });
+    expect(Array.from(history.snapshot.originalAsset.readBytes())).toEqual(
+      Array.from(original),
+    );
   });
 
   it("applies a multi-step saved recipe as one undoable history operation", async () => {

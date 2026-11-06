@@ -21,6 +21,18 @@ export interface JpegComponentBlockGrid {
   rows: number;
 }
 
+export interface JpegBlockRegion {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+export interface JpegBlockPoint {
+  readonly x: number;
+  readonly y: number;
+}
+
 export type JpegSelectionGrid = "dct" | "mcu";
 
 export interface ImagePoint {
@@ -365,6 +377,129 @@ export function mapJpegImagePointToBlock(
       imageY / ((8 * maxVerticalSampling) / component.verticalSampling),
     ),
   );
+}
+
+export function mapJpegImageRectangleToBlockRegion(
+  inspection: JpegInspection,
+  componentId: number,
+  start: ImagePoint,
+  end: ImagePoint,
+): Result<JpegBlockRegion> {
+  const first = mapJpegImagePointToBlock(
+    inspection,
+    componentId,
+    start.x,
+    start.y,
+  );
+  if (!first.ok) return first;
+  const last = mapJpegImagePointToBlock(inspection, componentId, end.x, end.y);
+  if (!last.ok) return last;
+  return success({
+    x: Math.min(first.value.blockX, last.value.blockX),
+    y: Math.min(first.value.blockY, last.value.blockY),
+    width: Math.abs(first.value.blockX - last.value.blockX) + 1,
+    height: Math.abs(first.value.blockY - last.value.blockY) + 1,
+  });
+}
+
+export function mapJpegBlockDragToDestination(
+  inspection: JpegInspection,
+  componentId: number,
+  source: JpegBlockRegion,
+  start: ImagePoint,
+  end: ImagePoint,
+): Result<JpegBlockPoint> {
+  if (source.width !== 1 || source.height !== 1) {
+    return failure({
+      code: "INVALID_INPUT",
+      message: "Block repeat requires a single selected source DCT block.",
+    });
+  }
+
+  const startBlock = mapJpegImagePointToBlock(
+    inspection,
+    componentId,
+    start.x,
+    start.y,
+  );
+  if (!startBlock.ok) return startBlock;
+  if (
+    startBlock.value.blockX !== source.x ||
+    startBlock.value.blockY !== source.y
+  ) {
+    return failure({
+      code: "INVALID_INPUT",
+      message: "Start the destination drag inside the selected source block.",
+    });
+  }
+
+  const endBlock = mapJpegImagePointToBlock(
+    inspection,
+    componentId,
+    end.x,
+    end.y,
+  );
+  if (!endBlock.ok) return endBlock;
+  const destination = {
+    x: source.x + endBlock.value.blockX - startBlock.value.blockX,
+    y: source.y + endBlock.value.blockY - startBlock.value.blockY,
+  };
+  if (destination.x === source.x && destination.y === source.y) {
+    return failure({
+      code: "INVALID_INPUT",
+      message: "Drag the selected source block to a different destination.",
+    });
+  }
+  const destinationBlock = mapJpegBlockCoordinate(
+    inspection,
+    componentId,
+    destination.x,
+    destination.y,
+  );
+  if (!destinationBlock.ok) return destinationBlock;
+  return success(destination);
+}
+
+export function mapJpegBlockRegionToImageSelection(
+  inspection: JpegInspection,
+  componentId: number,
+  region: JpegBlockRegion,
+): Result<SpatialSelection> {
+  if (
+    !Number.isInteger(region.x) ||
+    !Number.isInteger(region.y) ||
+    !Number.isInteger(region.width) ||
+    !Number.isInteger(region.height) ||
+    region.width < 1 ||
+    region.height < 1
+  ) {
+    return failure({
+      code: "INVALID_INPUT",
+      message: "The selected DCT block region is invalid.",
+    });
+  }
+  const first = mapJpegBlockCoordinate(
+    inspection,
+    componentId,
+    region.x,
+    region.y,
+  );
+  if (!first.ok) return first;
+  const last = mapJpegBlockCoordinate(
+    inspection,
+    componentId,
+    region.x + region.width - 1,
+    region.y + region.height - 1,
+  );
+  if (!last.ok) return last;
+  return success({
+    kind: "rectangle",
+    coordinateSpace: "image-pixel",
+    x: first.value.imageX,
+    y: first.value.imageY,
+    width: last.value.imageX + last.value.imageWidth - first.value.imageX,
+    height: last.value.imageY + last.value.imageHeight - first.value.imageY,
+  });
 }
 
 export function getMaskBlockCoverage(

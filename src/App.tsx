@@ -18,6 +18,7 @@ import {
 import {
   applyBlockPermutationOperation,
   applyBlockRepeatOperation,
+  applyBlockTransferOperation,
   applyCoefficientRecipeOperation,
   applyCoefficientGlitchOperation,
   applyMaskToDocument,
@@ -29,13 +30,17 @@ import { importJpeg, type ImportedJpeg } from "./application/import-jpeg";
 import {
   getJpegComponentBlockGrid,
   getMaskBlockCoveragePath,
+  mapJpegBlockDragToDestination,
   mapJpegBlockCoordinate,
+  mapJpegBlockRegionToImageSelection,
+  mapJpegImageRectangleToBlockRegion,
   mapJpegImagePointToBlock,
   snapImagePointToGrid,
   snapSelectionToComponentBlocks,
   snapSelectionToMcus,
   type JpegBlockGeometry,
   type JpegBlockCoordinate,
+  type JpegBlockRegion,
   type JpegSelectionGrid,
 } from "./jpeg/block-geometry";
 import type { JpegInspection } from "./jpeg/inspect";
@@ -53,11 +58,14 @@ import type { ProjectDocument } from "./document/model";
 import { OperationHistory } from "./operations/history";
 import {
   createQuantizationPattern,
+  MAX_BLOCK_TRANSFER_BLOCKS,
   GLITCH_FREQUENCY_BANDS,
   QUANTIZATION_PATTERNS,
   QUANTIZATION_SEMANTICS,
   type CoefficientDomain,
   type CoefficientGlitchMode,
+  type BlockTransferAction,
+  type BlockTransferMode,
   type GlitchFrequencyBand,
   type JpegGlitchOperation,
   type QuantizationPattern,
@@ -88,6 +96,14 @@ const EMPTY_JPEG_OPERATIONS: JpegEditableState["jpegOperations"] =
   Object.freeze([]);
 const EMPTY_NAMED_MASKS: JpegEditableState["masks"] = Object.freeze([]);
 type ImagePoint = { x: number; y: number };
+type BlockTransformGesture = {
+  readonly kind:
+    | "transfer-source"
+    | "transfer-destination"
+    | "repeat-source"
+    | "repeat-destination";
+  readonly start: ImagePoint;
+};
 
 function getToolIconPaths(tool: CanvasTool): readonly string[] {
   switch (tool) {
@@ -113,15 +129,15 @@ function getToolIconPaths(tool: CanvasTool): readonly string[] {
         "m15.6 8.4 2.8-2.8",
         "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z",
       ];
-    case "repeat-block":
-      return ["M4 4h7v7H4z", "M13 13h7v7h-7z", "M13 4h7v5", "m17 6 3 3 3-3"];
-    case "shuffle":
+    case "block-transform":
       return [
         "M4 7h3c4 0 6 10 10 10h3",
         "m17 14 3 3-3 3",
         "M4 17h3c2 0 3-2 4-4",
         "M16 7h4",
         "m17 4 3 3-3 3",
+        "M5 4h5v5H5z",
+        "M14 15h5v5h-5z",
       ];
     case "quantization":
       return [
@@ -212,6 +228,20 @@ function getCurrentQuantizationTables(
   }));
 }
 
+function getBlockRegionSelection(
+  inspection: JpegInspection,
+  componentId: number,
+  region: JpegBlockRegion | null,
+): SpatialSelection | null {
+  if (!region) return null;
+  const mapped = mapJpegBlockRegionToImageSelection(
+    inspection,
+    componentId,
+    region,
+  );
+  return mapped.ok ? mapped.value : null;
+}
+
 function ImageOverlays({
   inspection,
   showBlocks,
@@ -222,6 +252,8 @@ function ImageOverlays({
   brushRadius,
   componentId,
   selectedBlock,
+  blockTransferSource,
+  blockTransferDestination,
 }: {
   inspection: JpegInspection;
   showBlocks: boolean;
@@ -232,6 +264,8 @@ function ImageOverlays({
   brushRadius: number;
   componentId: number;
   selectedBlock: JpegBlockCoordinate | null;
+  blockTransferSource: SpatialSelection | null;
+  blockTransferDestination: SpatialSelection | null;
 }) {
   const blockPatternWidth = inspection.blockWidth;
   const blockPatternHeight = inspection.blockHeight;
@@ -325,6 +359,24 @@ function ImageOverlays({
           y={selection.y}
           width={selection.width}
           height={selection.height}
+        />
+      )}
+      {blockTransferSource && (
+        <rect
+          className="block-transfer-source-overlay"
+          x={blockTransferSource.x}
+          y={blockTransferSource.y}
+          width={blockTransferSource.width}
+          height={blockTransferSource.height}
+        />
+      )}
+      {blockTransferDestination && (
+        <rect
+          className="block-transfer-target-overlay"
+          x={blockTransferDestination.x}
+          y={blockTransferDestination.y}
+          width={blockTransferDestination.width}
+          height={blockTransferDestination.height}
         />
       )}
       {draftBrushCoverage?.ok && (
@@ -1052,12 +1104,31 @@ function App() {
     useState<CoefficientGlitchMode>("zero");
   const [coefficientStrength, setCoefficientStrength] = useState(1);
   const [coefficientSeed, setCoefficientSeed] = useState(1);
-  const [repeatSourceX, setRepeatSourceX] = useState(0);
-  const [repeatSourceY, setRepeatSourceY] = useState(0);
-  const [repeatOffsetX, setRepeatOffsetX] = useState(1);
-  const [repeatOffsetY, setRepeatOffsetY] = useState(0);
+  const [repeatSource, setRepeatSource] = useState<JpegBlockRegion | null>(
+    null,
+  );
+  const [repeatDraft, setRepeatDraft] = useState<JpegBlockRegion | null>(null);
+  const [repeatDestination, setRepeatDestination] = useState<{
+    readonly x: number;
+    readonly y: number;
+  } | null>(null);
   const [repeatCount, setRepeatCount] = useState(1);
   const [permutationSeed, setPermutationSeed] = useState(1);
+  const [blockTransformMode, setBlockTransformMode] = useState<
+    "shuffle" | "repeat" | "transfer"
+  >("transfer");
+  const [blockTransferMode, setBlockTransferMode] =
+    useState<BlockTransferMode>("all");
+  const [blockTransferAction, setBlockTransferAction] =
+    useState<BlockTransferAction>("copy");
+  const [blockTransferSource, setBlockTransferSource] =
+    useState<JpegBlockRegion | null>(null);
+  const [blockTransferDraft, setBlockTransferDraft] =
+    useState<JpegBlockRegion | null>(null);
+  const [blockTransferDestination, setBlockTransferDestination] = useState<{
+    readonly x: number;
+    readonly y: number;
+  } | null>(null);
   const [brushSize, setBrushSize] = useState(32);
   const [maskName, setMaskName] = useState("");
   const [initialRecipeState] = useState(loadInitialUserRecipes);
@@ -1083,6 +1154,7 @@ function App() {
     null,
   );
   const selectionStart = useRef<{ x: number; y: number } | null>(null);
+  const blockTransformGesture = useRef<BlockTransformGesture | null>(null);
   const brushPoints = useRef<ImagePoint[]>([]);
   const panStart = useRef<{
     x: number;
@@ -1248,11 +1320,17 @@ function App() {
     setCoefficientMode("zero");
     setCoefficientStrength(1);
     setCoefficientSeed(1);
-    setRepeatSourceX(0);
-    setRepeatSourceY(0);
-    setRepeatOffsetX(1);
-    setRepeatOffsetY(0);
+    setRepeatSource(null);
+    setRepeatDraft(null);
+    setRepeatDestination(null);
     setRepeatCount(1);
+    setBlockTransformMode("transfer");
+    setBlockTransferMode("all");
+    setBlockTransferAction("copy");
+    setBlockTransferSource(null);
+    setBlockTransferDraft(null);
+    setBlockTransferDestination(null);
+    blockTransformGesture.current = null;
     setBrushSize(32);
     setMaskGrid("dct");
     setMaskName("");
@@ -1395,6 +1473,107 @@ function App() {
     return snapped.value;
   }
 
+  function getComponentBlockPoint(
+    point: ImagePoint,
+  ): { readonly x: number; readonly y: number } | null {
+    if (!document) return null;
+    const component = document.inspection.components[componentIndex];
+    if (!component) {
+      setErrorMessage("The selected JPEG component is invalid.");
+      return null;
+    }
+    const coordinate = mapJpegImagePointToBlock(
+      document.inspection,
+      component.id,
+      point.x,
+      point.y,
+    );
+    if (!coordinate.ok) {
+      setErrorMessage(coordinate.error.message);
+      return null;
+    }
+    return { x: coordinate.value.blockX, y: coordinate.value.blockY };
+  }
+
+  function getBlockRegionFromDrag(
+    start: ImagePoint,
+    end: ImagePoint,
+  ): JpegBlockRegion | null {
+    if (!document) return null;
+    const component = document.inspection.components[componentIndex];
+    if (!component) {
+      setErrorMessage("The selected JPEG component is invalid.");
+      return null;
+    }
+    const mapped = mapJpegImageRectangleToBlockRegion(
+      document.inspection,
+      component.id,
+      start,
+      end,
+    );
+    if (!mapped.ok) {
+      setErrorMessage(mapped.error.message);
+      return null;
+    }
+    const region = mapped.value;
+    if (region.width * region.height > MAX_BLOCK_TRANSFER_BLOCKS) {
+      setErrorMessage(
+        "The selected block region exceeds the bounded transfer size.",
+      );
+      return null;
+    }
+    return region;
+  }
+
+  function getRepeatDestinationFromDrag(
+    start: ImagePoint,
+    end: ImagePoint,
+    reportError = false,
+  ) {
+    if (!document || !repeatSource) return null;
+    const component = document.inspection.components[componentIndex];
+    if (!component) {
+      if (reportError)
+        setErrorMessage("The selected JPEG component is invalid.");
+      return null;
+    }
+    const destination = mapJpegBlockDragToDestination(
+      document.inspection,
+      component.id,
+      repeatSource,
+      start,
+      end,
+    );
+    if (!destination.ok) {
+      if (reportError) setErrorMessage(destination.error.message);
+      return null;
+    }
+    return destination.value;
+  }
+
+  function applyBlockTransferAt(destination: {
+    readonly x: number;
+    readonly y: number;
+  }) {
+    const history = operationHistory.current;
+    const source = blockTransferSource;
+    if (!history || !source) return;
+    updateHistory(
+      applyBlockTransferOperation(history, {
+        kind: "block-transfer",
+        componentIndex,
+        sourceX: source.x,
+        sourceY: source.y,
+        width: source.width,
+        height: source.height,
+        destinationX: destination.x,
+        destinationY: destination.y,
+        mode: blockTransferMode,
+        action: blockTransferAction,
+      }),
+    );
+  }
+
   function onImagePointerDown(event: PointerEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
     if (toolMode === "hand") {
@@ -1412,13 +1591,74 @@ function App() {
     }
     const point = getImagePoint(event);
     if (!point) return;
+    if (toolMode === "block-transform" && blockTransformMode === "transfer") {
+      const blockPoint = getComponentBlockPoint(point);
+      if (!blockPoint) return;
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      if (!blockTransferSource) {
+        blockTransformGesture.current = {
+          kind: "transfer-source",
+          start: point,
+        };
+        setBlockTransferDraft({
+          x: blockPoint.x,
+          y: blockPoint.y,
+          width: 1,
+          height: 1,
+        });
+        setBlockTransferDestination(null);
+      } else {
+        blockTransformGesture.current = {
+          kind: "transfer-destination",
+          start: point,
+        };
+        setBlockTransferDestination(blockPoint);
+      }
+      return;
+    }
+    if (toolMode === "block-transform" && blockTransformMode === "repeat") {
+      const blockPoint = getComponentBlockPoint(point);
+      if (!blockPoint) return;
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      setErrorMessage("");
+      if (!repeatSource) {
+        blockTransformGesture.current = {
+          kind: "repeat-source",
+          start: point,
+        };
+        setRepeatDraft({
+          x: blockPoint.x,
+          y: blockPoint.y,
+          width: 1,
+          height: 1,
+        });
+        setRepeatDestination(null);
+      } else {
+        if (
+          blockPoint.x !== repeatSource.x ||
+          blockPoint.y !== repeatSource.y
+        ) {
+          setErrorMessage(
+            "Start the destination drag inside the selected source block.",
+          );
+          return;
+        }
+        blockTransformGesture.current = {
+          kind: "repeat-destination",
+          start: point,
+        };
+        setRepeatDestination(null);
+      }
+      return;
+    }
     if (
       toolMode !== "inspector" &&
       toolMode !== "select" &&
       toolMode !== "brush"
-    ) {
+    )
       return;
-    }
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     if (toolMode === "inspector") {
@@ -1469,6 +1709,30 @@ function App() {
       return;
     }
     const imagePoint = getImagePoint(event);
+    const transformGesture = blockTransformGesture.current;
+    if (toolMode === "block-transform" && transformGesture && imagePoint) {
+      switch (transformGesture.kind) {
+        case "transfer-source":
+          setBlockTransferDraft(
+            getBlockRegionFromDrag(transformGesture.start, imagePoint),
+          );
+          break;
+        case "transfer-destination":
+          setBlockTransferDestination(getComponentBlockPoint(imagePoint));
+          break;
+        case "repeat-source":
+          setRepeatDraft(
+            getBlockRegionFromDrag(transformGesture.start, imagePoint),
+          );
+          break;
+        case "repeat-destination":
+          setRepeatDestination(
+            getRepeatDestinationFromDrag(transformGesture.start, imagePoint),
+          );
+          break;
+      }
+      return;
+    }
     if (toolMode === "brush" && brushPoints.current.length > 0 && imagePoint) {
       const point = snapBrushPoint(imagePoint);
       if (!point) return;
@@ -1502,6 +1766,72 @@ function App() {
   }
 
   function onImagePointerUp(event: PointerEvent<HTMLDivElement>) {
+    const transformGesture = blockTransformGesture.current;
+    if (toolMode === "block-transform" && transformGesture) {
+      blockTransformGesture.current = null;
+      const imagePoint = getImagePoint(event);
+      if (!imagePoint) {
+        if (transformGesture.kind === "transfer-source") {
+          setBlockTransferDraft(null);
+        } else if (transformGesture.kind === "repeat-source") {
+          setRepeatDraft(null);
+        } else if (transformGesture.kind === "repeat-destination") {
+          setRepeatDestination(null);
+        }
+        return;
+      }
+      switch (transformGesture.kind) {
+        case "transfer-source": {
+          const region = getBlockRegionFromDrag(
+            transformGesture.start,
+            imagePoint,
+          );
+          setBlockTransferDraft(null);
+          if (region) {
+            setBlockTransferSource(region);
+            setBlockTransferDestination(null);
+            setErrorMessage("");
+          }
+          break;
+        }
+        case "transfer-destination": {
+          const destination = getComponentBlockPoint(imagePoint);
+          if (!destination) return;
+          setBlockTransferDestination(destination);
+          applyBlockTransferAt(destination);
+          break;
+        }
+        case "repeat-source": {
+          const region = getBlockRegionFromDrag(
+            transformGesture.start,
+            imagePoint,
+          );
+          setRepeatDraft(null);
+          if (!region) return;
+          if (region.width !== 1 || region.height !== 1) {
+            setErrorMessage(
+              "Copy / repeat uses one source block. Drag within a single visible DCT block.",
+            );
+            return;
+          }
+          setRepeatSource(region);
+          setRepeatDestination(null);
+          setErrorMessage("");
+          break;
+        }
+        case "repeat-destination": {
+          const destination = getRepeatDestinationFromDrag(
+            transformGesture.start,
+            imagePoint,
+            true,
+          );
+          setRepeatDestination(destination);
+          if (destination) setErrorMessage("");
+          break;
+        }
+      }
+      return;
+    }
     if (panStart.current) {
       panStart.current = null;
       return;
@@ -1558,9 +1888,12 @@ function App() {
 
   function activateTool(tool: CanvasTool) {
     selectionStart.current = null;
+    blockTransformGesture.current = null;
     brushPoints.current = [];
     panStart.current = null;
     setBrushDraft([]);
+    setBlockTransferDraft(null);
+    setRepeatDraft(null);
     setSelection(null);
     dispatchWorkspace({ type: "activate-tool", tool });
     if (activeToolPanel.current) activeToolPanel.current.open = true;
@@ -1594,15 +1927,20 @@ function App() {
 
   function applyBlockRepeat() {
     const history = operationHistory.current;
-    if (!history) return;
+    if (!history || !repeatSource || !repeatDestination) {
+      setErrorMessage(
+        "Drag to select one source block, then drag from it to a destination block.",
+      );
+      return;
+    }
     updateHistory(
       applyBlockRepeatOperation(history, {
         kind: "block-repeat",
         componentIndex,
-        sourceX: repeatSourceX,
-        sourceY: repeatSourceY,
-        offsetX: repeatOffsetX,
-        offsetY: repeatOffsetY,
+        sourceX: repeatSource.x,
+        sourceY: repeatSource.y,
+        offsetX: repeatDestination.x - repeatSource.x,
+        offsetY: repeatDestination.y - repeatSource.y,
         repetitions: repeatCount,
       }),
     );
@@ -1818,7 +2156,10 @@ function App() {
     const link = window.document.createElement("a");
     link.href = url;
     link.download = `${document.originalAsset.fileName.replace(/\.[^.]+$/, "")}.edited.jpg`;
+    link.hidden = true;
+    window.document.body.append(link);
     link.click();
+    link.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
@@ -1857,12 +2198,53 @@ function App() {
   const activeMaskForOverlay = overlayVisibility.mask
     ? isMaskAuthoring
       ? globalSelectionMask
-      : activeMask
+      : toolMode === "block-transform" && blockTransformMode !== "shuffle"
+        ? null
+        : activeMask
     : null;
   const visibleSelection = overlayVisibility.mask
     ? ((isMaskAuthoring ? selection : null) ??
       getRectangleSelection(activeMaskForOverlay))
     : null;
+  const activeComponentId =
+    document?.inspection.components[componentIndex]?.id ?? -1;
+  const blockTransferSourceSelection =
+    document && toolMode === "block-transform"
+      ? blockTransformMode === "transfer"
+        ? getBlockRegionSelection(
+            document.inspection,
+            activeComponentId,
+            blockTransferDraft ?? blockTransferSource,
+          )
+        : blockTransformMode === "repeat"
+          ? getBlockRegionSelection(
+              document.inspection,
+              activeComponentId,
+              repeatDraft ?? repeatSource,
+            )
+          : null
+      : null;
+  const blockTransferDestinationSelection =
+    document &&
+    toolMode === "block-transform" &&
+    blockTransformMode === "transfer" &&
+    blockTransferSource &&
+    blockTransferDestination
+      ? getBlockRegionSelection(document.inspection, activeComponentId, {
+          ...blockTransferDestination,
+          width: blockTransferSource.width,
+          height: blockTransferSource.height,
+        })
+      : document &&
+          toolMode === "block-transform" &&
+          blockTransformMode === "repeat" &&
+          repeatDestination
+        ? getBlockRegionSelection(document.inspection, activeComponentId, {
+            ...repeatDestination,
+            width: 1,
+            height: 1,
+          })
+        : null;
   const activeToolLabel =
     TOOL_GROUPS.flatMap((group) => group.tools).find(
       (tool) => tool.id === toolMode,
@@ -2109,13 +2491,17 @@ function App() {
               </div>
               <div className="image-stage" ref={imageStage}>
                 <div
-                  className={`preview-image-wrap ${toolMode === "select" ? "is-selecting" : ""} ${toolMode === "brush" ? "is-brushing" : ""} ${toolMode === "inspector" ? "is-inspecting" : ""} ${toolMode === "hand" ? "is-panning" : ""}`}
+                  className={`preview-image-wrap ${toolMode === "select" ? "is-selecting" : ""} ${toolMode === "brush" ? "is-brushing" : ""} ${toolMode === "inspector" ? "is-inspecting" : ""} ${toolMode === "hand" ? "is-panning" : ""} ${toolMode === "block-transform" && (blockTransformMode === "transfer" || blockTransformMode === "repeat") ? "is-block-transforming" : ""}`}
                   style={{ transform: `scale(${zoom})` }}
                   onPointerDown={onImagePointerDown}
                   onPointerMove={onImagePointerMove}
                   onPointerUp={onImagePointerUp}
                   onPointerCancel={() => {
                     selectionStart.current = null;
+                    blockTransformGesture.current = null;
+                    setBlockTransferDraft(null);
+                    setRepeatDraft(null);
+                    setRepeatDestination(null);
                     brushPoints.current = [];
                     panStart.current = null;
                     setBrushDraft([]);
@@ -2144,6 +2530,8 @@ function App() {
                     selectedBlock={
                       overlayVisibility.inspectedBlock ? selectedBlock : null
                     }
+                    blockTransferSource={blockTransferSourceSelection}
+                    blockTransferDestination={blockTransferDestinationSelection}
                   />
                 </div>
               </div>
@@ -2743,142 +3131,254 @@ function App() {
                       </details>
                     </section>
                   )}
-                  {toolMode === "repeat-block" && (
+                  {toolMode === "block-transform" && (
                     <section className="inspector-section">
-                      <div className="section-kicker">
-                        BLOCK DUPLICATE / REPEAT
-                      </div>
-                      <h2>Repeat one DCT block</h2>
+                      <div className="section-kicker">JPEG COEFFICIENTS</div>
+                      <h2>Block Transform</h2>
                       <p className="operation-description">
-                        Copies the selected component's 8×8 quantized
-                        coefficient block to repeated block coordinates. It does
-                        not copy JPEG bytes or an MCU.
+                        Reorders quantized DCT blocks in one component, then
+                        re-encodes the JPEG. This does not copy pixels, MCUs, or
+                        entropy-coded bytes.
                       </p>
-                      <div className="coefficient-coordinate-fields">
-                        <label className="coefficient-field">
-                          <span>Source block X</span>
-                          <input
-                            type="number"
-                            min="0"
-                            step="1"
-                            value={repeatSourceX}
-                            onChange={(event) =>
-                              setRepeatSourceX(
-                                Number(event.currentTarget.value),
-                              )
-                            }
-                          />
-                        </label>
-                        <label className="coefficient-field">
-                          <span>Source block Y</span>
-                          <input
-                            type="number"
-                            min="0"
-                            step="1"
-                            value={repeatSourceY}
-                            onChange={(event) =>
-                              setRepeatSourceY(
-                                Number(event.currentTarget.value),
-                              )
-                            }
-                          />
-                        </label>
-                      </div>
-                      <div className="coefficient-coordinate-fields">
-                        <label className="coefficient-field">
-                          <span>Offset X · blocks</span>
-                          <input
-                            type="number"
-                            step="1"
-                            value={repeatOffsetX}
-                            onChange={(event) =>
-                              setRepeatOffsetX(
-                                Number(event.currentTarget.value),
-                              )
-                            }
-                          />
-                        </label>
-                        <label className="coefficient-field">
-                          <span>Offset Y · blocks</span>
-                          <input
-                            type="number"
-                            step="1"
-                            value={repeatOffsetY}
-                            onChange={(event) =>
-                              setRepeatOffsetY(
-                                Number(event.currentTarget.value),
-                              )
-                            }
-                          />
-                        </label>
-                      </div>
-                      <label className="coefficient-field tool-field">
-                        <span>Copies</span>
-                        <input
-                          type="number"
-                          min="1"
-                          max="256"
-                          step="1"
-                          value={repeatCount}
-                          onChange={(event) =>
-                            setRepeatCount(Number(event.currentTarget.value))
-                          }
-                        />
-                      </label>
-                      <button
-                        className="operation-button"
-                        type="button"
-                        disabled={isEncoding}
-                        onClick={applyBlockRepeat}
+                      <div
+                        className="block-transform-modes"
+                        role="group"
+                        aria-label="Block transform mode"
                       >
-                        Duplicate / repeat block
-                      </button>
-                    </section>
-                  )}
-                  {toolMode === "shuffle" && (
-                    <section className="inspector-section">
-                      <div className="section-kicker">BLOCK PERMUTATION</div>
-                      <h2>Shuffle selected DCT blocks</h2>
-                      <p className="operation-description">
-                        Randomly permutes whole quantized 8×8 blocks, including
-                        DC, within the selected component and mask. Every
-                        selected block is used once; blocks outside the mask are
-                        unchanged. A block is selected at 50% mask coverage or
-                        greater. Rectangles use area; brush masks use an 8×8
-                        coverage sample.
-                      </p>
-                      <EffectMaskPicker
-                        activeMaskId={activeMaskId}
-                        draft={globalSelectionMask}
-                        savedMasks={savedMasks}
-                        mask={activeMask}
-                        onSelect={(maskId) =>
-                          dispatchWorkspace({ type: "select-mask", maskId })
-                        }
-                      />
-                      <label className="coefficient-field tool-field">
-                        <span>Deterministic seed</span>
-                        <input
-                          type="number"
-                          min="0"
-                          max="4294967295"
-                          step="1"
-                          value={permutationSeed}
-                          onChange={(event) =>
-                            setPermutationSeed(
+                        {(
+                          [
+                            ["transfer", "Drag transfer"],
+                            ["repeat", "Copy / repeat"],
+                            ["shuffle", "Shuffle"],
+                          ] as const
+                        ).map(([mode, label]) => (
+                          <button
+                            className={`operation-button ${blockTransformMode === mode ? "" : "secondary"}`}
+                            type="button"
+                            aria-pressed={blockTransformMode === mode}
+                            key={mode}
+                            onClick={() => {
+                              blockTransformGesture.current = null;
+                              setBlockTransferDraft(null);
+                              setRepeatDraft(null);
+                              setBlockTransformMode(mode);
+                            }}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      <label className="coefficient-field">
+                        <span>Component</span>
+                        <select
+                          value={componentIndex}
+                          onChange={(event) => {
+                            setComponentIndex(
                               Number(event.currentTarget.value),
-                            )
-                          }
-                        />
+                            );
+                            setBlockTransferSource(null);
+                            setBlockTransferDraft(null);
+                            setBlockTransferDestination(null);
+                            setRepeatSource(null);
+                            setRepeatDraft(null);
+                            setRepeatDestination(null);
+                          }}
+                        >
+                          {document.inspection.components.map(
+                            (component, index) => (
+                              <option key={component.id} value={index}>
+                                {getComponentControlLabel(
+                                  document.inspection,
+                                  index,
+                                )}{" "}
+                                · {component.horizontalSampling}×
+                                {component.verticalSampling}
+                              </option>
+                            ),
+                          )}
+                        </select>
                       </label>
-                      <button
-                        className="operation-button"
-                        type="button"
-                        disabled={!activeMask || isEncoding}
-                        onClick={applyBlockPermutation}
-                      >
-                        Permute blocks in mask
-                      </button>
+                      {blockTransformMode === "transfer" && (
+                        <>
+                          <p className="coefficient-note">
+                            {blockTransferSource
+                              ? "Source selected. Drag on the image to choose a same-size destination; drop applies one undoable transfer."
+                              : "Drag on the image to select a rectangular source region snapped to this component's visible 8×8 DCT-block grid."}
+                          </p>
+                          {blockTransferSource && (
+                            <p className="selection-readout">
+                              Source blocks ({blockTransferSource.x},{" "}
+                              {blockTransferSource.y}) ·{" "}
+                              {blockTransferSource.width} ×{" "}
+                              {blockTransferSource.height}
+                            </p>
+                          )}
+                          <label className="coefficient-field">
+                            <span>Coefficient data</span>
+                            <select
+                              value={blockTransferMode}
+                              onChange={(event) => {
+                                if (
+                                  event.currentTarget.value === "all" ||
+                                  event.currentTarget.value === "dc" ||
+                                  event.currentTarget.value === "ac"
+                                ) {
+                                  setBlockTransferMode(
+                                    event.currentTarget.value,
+                                  );
+                                }
+                              }}
+                            >
+                              <option value="all">Whole block · DC + AC</option>
+                              <option value="dc">DC only</option>
+                              <option value="ac">AC only</option>
+                            </select>
+                          </label>
+                          <label className="coefficient-field">
+                            <span>Transfer action</span>
+                            <select
+                              value={blockTransferAction}
+                              onChange={(event) => {
+                                if (
+                                  event.currentTarget.value === "copy" ||
+                                  event.currentTarget.value === "swap"
+                                ) {
+                                  setBlockTransferAction(
+                                    event.currentTarget.value,
+                                  );
+                                }
+                              }}
+                            >
+                              <option value="copy">Copy to destination</option>
+                              <option value="swap">
+                                Swap with destination
+                              </option>
+                            </select>
+                          </label>
+                          <button
+                            className="operation-button secondary"
+                            type="button"
+                            disabled={isEncoding}
+                            onClick={() => {
+                              setBlockTransferSource(null);
+                              setBlockTransferDraft(null);
+                              setBlockTransferDestination(null);
+                            }}
+                          >
+                            Choose a new source region
+                          </button>
+                          {blockTransferAction === "swap" && (
+                            <p className="coefficient-note">
+                              Swaps must use non-overlapping regions. Use copy
+                              for overlapping source and destination areas.
+                            </p>
+                          )}
+                        </>
+                      )}
+                      {blockTransformMode === "repeat" && (
+                        <>
+                          <p className="coefficient-note">
+                            Drag within one visible DCT block to select the
+                            source. Then drag from that block to the first
+                            destination; copies continue in the same block-grid
+                            direction and spacing.
+                          </p>
+                          {repeatSource && (
+                            <p className="selection-readout">
+                              Source block ({repeatSource.x}, {repeatSource.y})
+                            </p>
+                          )}
+                          {repeatDestination && repeatSource && (
+                            <p className="selection-readout">
+                              First destination ({repeatDestination.x},{" "}
+                              {repeatDestination.y}) · offset (
+                              {repeatDestination.x - repeatSource.x},{" "}
+                              {repeatDestination.y - repeatSource.y}) blocks
+                            </p>
+                          )}
+                          <button
+                            className="operation-button secondary"
+                            type="button"
+                            disabled={isEncoding}
+                            onClick={() => {
+                              setRepeatSource(null);
+                              setRepeatDraft(null);
+                              setRepeatDestination(null);
+                            }}
+                          >
+                            Choose a new source block
+                          </button>
+                          <label className="coefficient-field tool-field">
+                            <span>Repeated destinations</span>
+                            <input
+                              type="number"
+                              min="1"
+                              max="256"
+                              step="1"
+                              value={repeatCount}
+                              onChange={(event) =>
+                                setRepeatCount(
+                                  Number(event.currentTarget.value),
+                                )
+                              }
+                            />
+                          </label>
+                          <button
+                            className="operation-button"
+                            type="button"
+                            disabled={
+                              isEncoding || !repeatSource || !repeatDestination
+                            }
+                            onClick={applyBlockRepeat}
+                          >
+                            Apply block repeat
+                          </button>
+                        </>
+                      )}
+                      {blockTransformMode === "shuffle" && (
+                        <>
+                          <p className="operation-description">
+                            Seeded Fisher–Yates permutation of whole blocks
+                            within the selected mask. Every selected block is
+                            used once; blocks outside it are unchanged.
+                          </p>
+                          <EffectMaskPicker
+                            activeMaskId={activeMaskId}
+                            draft={globalSelectionMask}
+                            savedMasks={savedMasks}
+                            mask={activeMask}
+                            onSelect={(maskId) =>
+                              dispatchWorkspace({
+                                type: "select-mask",
+                                maskId,
+                              })
+                            }
+                          />
+                          <label className="coefficient-field tool-field">
+                            <span>Deterministic seed</span>
+                            <input
+                              type="number"
+                              min="0"
+                              max="4294967295"
+                              step="1"
+                              value={permutationSeed}
+                              onChange={(event) =>
+                                setPermutationSeed(
+                                  Number(event.currentTarget.value),
+                                )
+                              }
+                            />
+                          </label>
+                          <button
+                            className="operation-button"
+                            type="button"
+                            disabled={!activeMask || isEncoding}
+                            onClick={applyBlockPermutation}
+                          >
+                            Shuffle blocks in mask
+                          </button>
+                        </>
+                      )}
                     </section>
                   )}
                   {toolMode === "quantization" && (
@@ -2949,13 +3449,17 @@ function App() {
                                         : operationKind === "coefficients"
                                           ? "Coefficient glitch"
                                           : operationKind === "block-repeat"
-                                            ? "Block duplicate / repeat"
+                                            ? "Block copy / repeat"
                                             : operationKind ===
                                                 "block-permutation"
-                                              ? "Block permutation"
-                                              : operationKind === "quantization"
-                                                ? "DQT matrix edit"
-                                                : operation.type}
+                                              ? "Block shuffle"
+                                              : operationKind ===
+                                                  "block-transfer"
+                                                ? "Block region transfer"
+                                                : operationKind ===
+                                                    "quantization"
+                                                  ? "DQT matrix edit"
+                                                  : operation.type}
                                   </span>
                                 </label>
                                 <span className="operation-status">
@@ -3008,6 +3512,22 @@ function App() {
                                     {Reflect.get(parameters, "componentIndex")}{" "}
                                     · seed {Reflect.get(parameters, "seed")} ·
                                     Fisher–Yates
+                                  </p>
+                                )}
+                              {parameters &&
+                                operationKind === "block-transfer" && (
+                                  <p className="operation-parameters">
+                                    Component{" "}
+                                    {Reflect.get(parameters, "componentIndex")}{" "}
+                                    · {Reflect.get(parameters, "action")}{" "}
+                                    {Reflect.get(parameters, "mode")} · source (
+                                    {Reflect.get(parameters, "sourceX")},{" "}
+                                    {Reflect.get(parameters, "sourceY")}) ·{" "}
+                                    {Reflect.get(parameters, "width")} ×{" "}
+                                    {Reflect.get(parameters, "height")} blocks ·
+                                    destination (
+                                    {Reflect.get(parameters, "destinationX")},{" "}
+                                    {Reflect.get(parameters, "destinationY")})
                                   </p>
                                 )}
                               {parameters &&

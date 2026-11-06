@@ -5,8 +5,11 @@ import {
   getMaskBlockCoverageAtLeastHalf,
   getMaskBlockCoveragePath,
   getJpegSelectionGridCellSize,
+  mapJpegBlockDragToDestination,
+  mapJpegBlockRegionToImageSelection,
   mapJpegBlockCoordinate,
   mapJpegImagePointToBlock,
+  mapJpegImageRectangleToBlockRegion,
   snapImagePointToGrid,
   snapSelectionToComponentBlocks,
   snapSelectionToMcus,
@@ -119,7 +122,83 @@ describe("JPEG block coordinates", () => {
       ok: true,
       value: { blockX: 2, blockY: 1, imageX: 16, imageY: 8 },
     });
+
     expect(mapJpegImagePointToBlock(inspection.value, 1, 17, 8)).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_INPUT" },
+    });
+  });
+
+  it("maps drag-selected rectangles to component blocks and back at odd edges", async () => {
+    const inspection = inspectJpeg(
+      await fixtureBytes("synthetic-color-odd-420.jpg"),
+    );
+    expect(inspection.ok).toBe(true);
+    if (!inspection.ok) return;
+
+    const region = mapJpegImageRectangleToBlockRegion(
+      inspection.value,
+      1,
+      { x: 16.5, y: 8.5 },
+      { x: 8.5, y: 0.5 },
+    );
+    expect(region).toEqual({
+      ok: true,
+      value: { x: 1, y: 0, width: 2, height: 2 },
+    });
+    if (!region.ok) return;
+    expect(
+      mapJpegBlockRegionToImageSelection(inspection.value, 1, region.value),
+    ).toEqual({
+      ok: true,
+      value: {
+        kind: "rectangle",
+        coordinateSpace: "image-pixel",
+        x: 8,
+        y: 0,
+        width: 9,
+        height: 9,
+      },
+    });
+  });
+
+  it("maps a drag from a selected source block to a repeat destination", async () => {
+    const inspection = inspectJpeg(
+      await fixtureBytes("synthetic-color-odd-420.jpg"),
+    );
+    expect(inspection.ok).toBe(true);
+    if (!inspection.ok) return;
+
+    expect(
+      mapJpegBlockDragToDestination(
+        inspection.value,
+        1,
+        { x: 0, y: 0, width: 1, height: 1 },
+        { x: 1, y: 1 },
+        { x: 9, y: 1 },
+      ),
+    ).toEqual({ ok: true, value: { x: 1, y: 0 } });
+    expect(
+      mapJpegBlockDragToDestination(
+        inspection.value,
+        1,
+        { x: 0, y: 0, width: 2, height: 1 },
+        { x: 1, y: 1 },
+        { x: 9, y: 1 },
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_INPUT" },
+    });
+    expect(
+      mapJpegBlockDragToDestination(
+        inspection.value,
+        1,
+        { x: 0, y: 0, width: 1, height: 1 },
+        { x: 9, y: 1 },
+        { x: 17, y: 1 },
+      ),
+    ).toMatchObject({
       ok: false,
       error: { code: "INVALID_INPUT" },
     });

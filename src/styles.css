@@ -474,6 +474,10 @@ h1 {
 .preview-image-wrap.is-brushing,
 .preview-image-wrap.is-inspecting {
   cursor: crosshair;
+}
+
+.preview-image-wrap.is-block-transforming {
+  cursor: crosshair;
   touch-action: none;
 }
 
@@ -525,6 +529,28 @@ h1 {
   stroke-dasharray: 3 2;
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
+}
+
+.block-transfer-source-overlay {
+  fill: rgb(200 241 105 / 18%);
+  stroke: #c8f169;
+  stroke-width: 2;
+  stroke-dasharray: 4 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.block-transfer-target-overlay {
+  fill: rgb(111 176 255 / 18%);
+  stroke: #8bc0ff;
+  stroke-width: 2;
+  stroke-dasharray: 2 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.block-transform-modes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
 }
 
 .preview-caption {
