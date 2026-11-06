@@ -18,6 +18,7 @@ import {
 import {
   applyBlockPermutationOperation,
   applyBlockRepeatOperation,
+  applyCoefficientRecipeOperation,
   applyCoefficientGlitchOperation,
   applyMaskToDocument,
   applyQuantizationOperation,
@@ -27,19 +28,24 @@ import {
 import { importJpeg, type ImportedJpeg } from "./application/import-jpeg";
 import {
   getJpegComponentBlockGrid,
+  getMaskBlockCoveragePath,
   mapJpegBlockCoordinate,
   mapJpegImagePointToBlock,
+  snapImagePointToGrid,
   snapSelectionToComponentBlocks,
+  snapSelectionToMcus,
   type JpegBlockGeometry,
   type JpegBlockCoordinate,
+  type JpegSelectionGrid,
 } from "./jpeg/block-geometry";
 import type { JpegInspection } from "./jpeg/inspect";
 import {
   createBrushMask,
+  copySpatialMask,
   createRectangleSelection,
   createSpatialMask,
   getMaskFromParameters,
-  spatialMaskParameters,
+  type NamedSpatialMask,
   type SpatialMask,
   type SpatialSelection,
 } from "./document/masks";
@@ -59,19 +65,28 @@ import {
 } from "./operations/jpeg-glitch";
 import { DCT_FREQUENCY_BAND_RANGES } from "./operations/dct";
 import {
+  BUILT_IN_EXPERIMENT_RECIPES,
+  isCoefficientRecipeStep,
+  MAX_RECIPE_STEPS,
+  readUserRecipes,
+  saveUserRecipe,
+  type CoefficientRecipeStep,
+  type ExperimentRecipe,
+} from "./application/experiment-recipes";
+import {
   initialWorkspaceState,
+  getEffectMask,
+  getWorkspaceOverlayVisibility,
   TOOL_GROUPS,
   workspaceReducer,
   type CanvasTool,
 } from "./ui/workspace-state";
-import {
-  getBrushOverlayPath,
-  getRectangleSelection,
-} from "./ui/selection-overlay";
+import { getRectangleSelection } from "./ui/selection-overlay";
 
 const MARKER_LIMIT = 250;
 const EMPTY_JPEG_OPERATIONS: JpegEditableState["jpegOperations"] =
   Object.freeze([]);
+const EMPTY_NAMED_MASKS: JpegEditableState["masks"] = Object.freeze([]);
 type ImagePoint = { x: number; y: number };
 
 function getToolIconPaths(tool: CanvasTool): readonly string[] {
@@ -86,6 +101,18 @@ function getToolIconPaths(tool: CanvasTool): readonly string[] {
       return ["m4 16 9-9 4 4-9 9H4v-4Z", "m12 8 3-3 4 4-3 3", "M4 21h7"];
     case "select":
       return ["M4 4h16v16H4z", "M9 4v3", "M15 4v3", "M4 9h3", "M4 15h3"];
+    case "coefficient-glitch":
+      return [
+        "M12 3v4",
+        "M12 17v4",
+        "M3 12h4",
+        "M17 12h4",
+        "m5.6 5.6 2.8 2.8",
+        "m15.6 15.6 2.8 2.8",
+        "m5.6 18.4 2.8-2.8",
+        "m15.6 8.4 2.8-2.8",
+        "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z",
+      ];
     case "repeat-block":
       return ["M4 4h7v7H4z", "M13 13h7v7h-7z", "M13 4h7v5", "m17 6 3 3 3-3"];
     case "shuffle":
@@ -193,6 +220,7 @@ function ImageOverlays({
   mask,
   brushDraft,
   brushRadius,
+  componentId,
   selectedBlock,
 }: {
   inspection: JpegInspection;
@@ -202,10 +230,39 @@ function ImageOverlays({
   mask: SpatialMask | null;
   brushDraft: readonly ImagePoint[];
   brushRadius: number;
+  componentId: number;
   selectedBlock: JpegBlockCoordinate | null;
 }) {
   const blockPatternWidth = inspection.blockWidth;
   const blockPatternHeight = inspection.blockHeight;
+  const hasActiveBrush =
+    mask?.width === inspection.width && mask.height === inspection.height
+      ? mask.shapes.some((shape) => shape.kind === "brush")
+      : false;
+  const activeBrushCoverage =
+    mask && hasActiveBrush
+      ? getMaskBlockCoveragePath(mask, inspection, componentId)
+      : null;
+  const draftBrushMask: SpatialMask | null =
+    brushDraft.length > 0
+      ? {
+          schemaVersion: 1,
+          id: "brush-draft",
+          width: inspection.width,
+          height: inspection.height,
+          shapes: [
+            {
+              kind: "brush",
+              mode: "add",
+              radius: brushRadius,
+              points: brushDraft,
+            },
+          ],
+        }
+      : null;
+  const draftBrushCoverage = draftBrushMask
+    ? getMaskBlockCoveragePath(draftBrushMask, inspection, componentId)
+    : null;
 
   return (
     <svg
@@ -258,26 +315,9 @@ function ImageOverlays({
           fill="url(#mcu-grid)"
         />
       )}
-      {mask?.width === inspection.width &&
-        mask.height === inspection.height &&
-        mask.shapes.map((shape, index) =>
-          shape.kind === "rectangle" ? null : shape.points.length === 1 ? (
-            <circle
-              className="active-mask-brush-point"
-              key={`${mask.id}-${index}`}
-              cx={shape.points[0]?.x}
-              cy={shape.points[0]?.y}
-              r={shape.radius}
-            />
-          ) : (
-            <path
-              className="active-mask-brush"
-              key={`${mask.id}-${index}`}
-              d={getBrushOverlayPath(shape.points)}
-              strokeWidth={shape.radius * 2}
-            />
-          ),
-        )}
+      {activeBrushCoverage?.ok && (
+        <path className="active-mask-cells" d={activeBrushCoverage.value} />
+      )}
       {selection && (
         <rect
           className="selection-overlay"
@@ -287,21 +327,8 @@ function ImageOverlays({
           height={selection.height}
         />
       )}
-      {brushDraft.length === 1 ? (
-        <circle
-          className="brush-draft-point"
-          cx={brushDraft[0]?.x}
-          cy={brushDraft[0]?.y}
-          r={brushRadius}
-        />
-      ) : (
-        brushDraft.length > 1 && (
-          <path
-            className="brush-draft-overlay"
-            d={getBrushOverlayPath(brushDraft)}
-            strokeWidth={brushRadius * 2}
-          />
-        )
+      {draftBrushCoverage?.ok && (
+        <path className="brush-draft-cells" d={draftBrushCoverage.value} />
       )}
       {selectedBlock && (
         <rect
@@ -323,6 +350,73 @@ function describeMask(mask: SpatialMask): string {
     return `Image-pixel rectangle · ${shape.width.toFixed(1)} × ${shape.height.toFixed(1)}`;
   }
   return `Image-pixel brush · radius ${shape.radius.toFixed(1)} px · ${shape.points.length} samples`;
+}
+
+function EffectMaskPicker({
+  activeMaskId,
+  draft,
+  savedMasks,
+  mask,
+  onSelect,
+}: {
+  activeMaskId: string | null;
+  draft: SpatialMask | null;
+  savedMasks: readonly NamedSpatialMask[];
+  mask: SpatialMask | null;
+  onSelect: (maskId: string | null) => void;
+}) {
+  return (
+    <>
+      <label className="coefficient-field">
+        <span>Mask used by this effect</span>
+        <select
+          value={activeMaskId ?? ""}
+          onChange={(event) => onSelect(event.currentTarget.value || null)}
+        >
+          <option value="">
+            {draft ? "Current draft mask" : "Draw or choose a mask"}
+          </option>
+          {savedMasks.map((saved) => (
+            <option key={saved.mask.id} value={saved.mask.id}>
+              {saved.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      {mask ? (
+        <p className="coefficient-note">
+          {activeMaskId
+            ? savedMasks.find(({ mask: saved }) => saved.id === activeMaskId)
+                ?.name
+            : "Current draft mask"}{" "}
+          · {describeMask(mask)}
+        </p>
+      ) : (
+        <p className="coefficient-note">
+          Draw a mask with Brush or Select, or choose a saved mask.
+        </p>
+      )}
+    </>
+  );
+}
+
+function loadInitialUserRecipes(): {
+  recipes: readonly ExperimentRecipe[];
+  error: string;
+} {
+  let storage: Storage;
+  try {
+    storage = window.localStorage;
+  } catch {
+    return {
+      recipes: [],
+      error: "Saved experiment recipes are unavailable in this browser.",
+    };
+  }
+  const result = readUserRecipes(storage);
+  return result.ok
+    ? { recipes: result.value, error: "" }
+    : { recipes: [], error: result.error.message };
 }
 
 function MetadataInspector({
@@ -941,12 +1035,13 @@ function App() {
   );
   const {
     activeTool: toolMode,
+    activeMaskId,
     isRightPanelCollapsed,
     selectedBlock,
     selectionMask: globalSelectionMask,
   } = workspaceState;
   const activeToolPanel = useRef<HTMLDetailsElement>(null);
-  const [snapToBlocks, setSnapToBlocks] = useState(false);
+  const [maskGrid, setMaskGrid] = useState<JpegSelectionGrid>("dct");
   const [componentIndex, setComponentIndex] = useState(0);
   const [inspectorComponentId, setInspectorComponentId] = useState(0);
   const [frequencyBand, setFrequencyBand] =
@@ -964,6 +1059,19 @@ function App() {
   const [repeatCount, setRepeatCount] = useState(1);
   const [permutationSeed, setPermutationSeed] = useState(1);
   const [brushSize, setBrushSize] = useState(32);
+  const [maskName, setMaskName] = useState("");
+  const [initialRecipeState] = useState(loadInitialUserRecipes);
+  const [userRecipes, setUserRecipes] = useState(initialRecipeState.recipes);
+  const [recipeStorageError, setRecipeStorageError] = useState(
+    initialRecipeState.error,
+  );
+  const [recipeName, setRecipeName] = useState("");
+  const [recipeDraft, setRecipeDraft] = useState<
+    readonly CoefficientRecipeStep[]
+  >([]);
+  const [selectedRecipeId, setSelectedRecipeId] = useState(
+    BUILT_IN_EXPERIMENT_RECIPES[0]?.id ?? "",
+  );
   const [zoom, setZoom] = useState(1);
   const [selection, setSelection] = useState<SpatialSelection | null>(null);
   const [brushDraft, setBrushDraft] = useState<readonly ImagePoint[]>([]);
@@ -985,6 +1093,12 @@ function App() {
   const imageStage = useRef<HTMLDivElement>(null);
   const jpegOperations =
     historyDocument?.currentState.jpegOperations ?? EMPTY_JPEG_OPERATIONS;
+  const savedMasks = historyDocument?.currentState.masks ?? EMPTY_NAMED_MASKS;
+  const activeMask = getEffectMask(workspaceState, savedMasks);
+  const allRecipes = [...BUILT_IN_EXPERIMENT_RECIPES, ...userRecipes];
+  const selectedRecipe =
+    allRecipes.find((recipe) => recipe.id === selectedRecipeId) ?? null;
+
   const currentQuantizationTables = useMemo(
     () =>
       document
@@ -1140,7 +1254,12 @@ function App() {
     setRepeatOffsetY(0);
     setRepeatCount(1);
     setBrushSize(32);
-    setSnapToBlocks(false);
+    setMaskGrid("dct");
+    setMaskName("");
+    setRecipeDraft([]);
+    setRecipeName("");
+    dispatchWorkspace({ type: "select-mask", maskId: null });
+    setSelectedRecipeId(BUILT_IN_EXPERIMENT_RECIPES[0]?.id ?? "");
     setShowBlocks(false);
     setShowMcus(false);
     setShowOriginal(false);
@@ -1165,6 +1284,14 @@ function App() {
     }
     setErrorMessage("");
     setHistoryDocument(result.value);
+    if (
+      workspaceState.activeMaskId &&
+      !result.value.currentState.masks.some(
+        ({ mask }) => mask.id === workspaceState.activeMaskId,
+      )
+    ) {
+      dispatchWorkspace({ type: "select-mask", maskId: null });
+    }
     const history = operationHistory.current;
     setHistoryAvailability({
       canUndo: history?.canUndo ?? false,
@@ -1216,7 +1343,14 @@ function App() {
       return null;
     }
     let nextSelection = result.value;
-    if (snapToBlocks && nextSelection) {
+    if (nextSelection && maskGrid === "mcu") {
+      const snapped = snapSelectionToMcus(nextSelection, document.inspection);
+      if (!snapped.ok) {
+        setErrorMessage(snapped.error.message);
+        return null;
+      }
+      nextSelection = snapped.value;
+    } else if (nextSelection) {
       const component = document.inspection.components[componentIndex];
       if (!component) {
         setErrorMessage("The selected JPEG component is invalid.");
@@ -1233,9 +1367,32 @@ function App() {
       }
       nextSelection = snapped.value;
     }
-    dispatchWorkspace({ type: "set-selection", selection: null });
     setSelection(nextSelection);
     return nextSelection;
+  }
+
+  function snapBrushPoint(
+    point: ImagePoint,
+    reportError = true,
+  ): ImagePoint | null {
+    if (!document) return null;
+    const component = document.inspection.components[componentIndex];
+    if (!component) {
+      if (reportError)
+        setErrorMessage("The selected JPEG component is invalid.");
+      return null;
+    }
+    const snapped = snapImagePointToGrid(
+      point,
+      document.inspection,
+      component.id,
+      maskGrid,
+    );
+    if (!snapped.ok) {
+      if (reportError) setErrorMessage(snapped.error.message);
+      return null;
+    }
+    return snapped.value;
   }
 
   function onImagePointerDown(event: PointerEvent<HTMLDivElement>) {
@@ -1297,8 +1454,10 @@ function App() {
       return;
     }
     if (toolMode === "brush") {
-      brushPoints.current = [point];
-      setBrushDraft([point]);
+      const snappedPoint = snapBrushPoint(point);
+      if (!snappedPoint) return;
+      brushPoints.current = [snappedPoint];
+      setBrushDraft([snappedPoint]);
     }
   }
 
@@ -1309,8 +1468,10 @@ function App() {
       imageStage.current.scrollTop = pan.scrollTop - (event.clientY - pan.y);
       return;
     }
-    const point = getImagePoint(event);
-    if (toolMode === "brush" && brushPoints.current.length > 0 && point) {
+    const imagePoint = getImagePoint(event);
+    if (toolMode === "brush" && brushPoints.current.length > 0 && imagePoint) {
+      const point = snapBrushPoint(imagePoint);
+      if (!point) return;
       const points = brushPoints.current;
       const previous = points[points.length - 1]!;
       const distance = Math.hypot(point.x - previous.x, point.y - previous.y);
@@ -1335,7 +1496,9 @@ function App() {
       return;
     }
     const start = selectionStart.current;
-    if (toolMode === "select" && start && point) updateSelection(start, point);
+    if (toolMode === "select" && start && imagePoint) {
+      updateSelection(start, imagePoint);
+    }
   }
 
   function onImagePointerUp(event: PointerEvent<HTMLDivElement>) {
@@ -1344,7 +1507,8 @@ function App() {
       return;
     }
     if (toolMode === "brush" && brushPoints.current.length > 0) {
-      const point = getImagePoint(event);
+      const imagePoint = getImagePoint(event);
+      const point = imagePoint ? snapBrushPoint(imagePoint) : null;
       if (point) {
         const previous = brushPoints.current[brushPoints.current.length - 1]!;
         if (previous.x !== point.x || previous.y !== point.y) {
@@ -1367,22 +1531,12 @@ function App() {
       }
       setSelection(null);
       dispatchWorkspace({ type: "set-selection", selection: mask.value });
-      const history = operationHistory.current;
-      if (history) {
-        const clearedSelection = history.setSelection(null);
-        if (!clearedSelection.ok) {
-          setErrorMessage(clearedSelection.error.message);
-          return;
-        }
-        updateHistory(applyMaskToDocument(history, mask.value));
-      }
       return;
     }
     const start = selectionStart.current;
     const end = getImagePoint(event);
     if (start && end) {
       const nextSelection = updateSelection(start, end);
-      const history = operationHistory.current;
       if (nextSelection && document) {
         const mask = createSpatialMask(
           nextSelection,
@@ -1394,18 +1548,9 @@ function App() {
         } else {
           setSelection(null);
           dispatchWorkspace({ type: "set-selection", selection: mask.value });
-          if (history) {
-            const selectionResult = history.setSelection(nextSelection);
-            if (!selectionResult.ok) {
-              setErrorMessage(selectionResult.error.message);
-            } else {
-              updateHistory(applyMaskToDocument(history, mask.value));
-            }
-          }
         }
       } else {
         dispatchWorkspace({ type: "set-selection", selection: null });
-        if (history) updateHistory(history.setSelection(null));
       }
     }
     selectionStart.current = null;
@@ -1423,10 +1568,10 @@ function App() {
 
   function applyCoefficientOperation() {
     const history = operationHistory.current;
-    const mask = globalSelectionMask;
+    const mask = activeMask;
     if (!history || !mask) {
       setErrorMessage(
-        "Paint a mask or create a selection before applying a coefficient glitch.",
+        "Draw or select a mask before applying a coefficient glitch.",
       );
       return;
     }
@@ -1465,11 +1610,9 @@ function App() {
 
   function applyBlockPermutation() {
     const history = operationHistory.current;
-    const mask = globalSelectionMask;
+    const mask = activeMask;
     if (!history || !mask) {
-      setErrorMessage(
-        "Paint a mask or create a selection before permuting DCT blocks.",
-      );
+      setErrorMessage("Draw or select a mask before permuting DCT blocks.");
       return;
     }
     updateHistory(
@@ -1506,17 +1649,154 @@ function App() {
   function clearSelection() {
     setSelection(null);
     dispatchWorkspace({ type: "set-selection", selection: null });
-    const history = operationHistory.current;
-    if (history) updateHistory(history.setSelection(null));
   }
 
-  function editMaskOperation(operationId: string) {
-    if (!globalSelectionMask) return;
-    mutateHistory((history) =>
-      history.editParameters(
-        operationId,
-        spatialMaskParameters(globalSelectionMask),
-      ),
+  function saveCurrentMask() {
+    const history = operationHistory.current;
+    if (!history || !globalSelectionMask) {
+      setErrorMessage("Draw a mask before saving it.");
+      return;
+    }
+    const saved = applyMaskToDocument(history, globalSelectionMask, maskName);
+    if (!saved.ok) {
+      setErrorMessage(saved.error.message);
+      return;
+    }
+    updateHistory(saved);
+    dispatchWorkspace({
+      type: "select-mask",
+      maskId: globalSelectionMask.id,
+    });
+    clearSelection();
+    setMaskName("");
+  }
+
+  function loadSavedMask(maskId: string) {
+    const saved = savedMasks.find(({ mask }) => mask.id === maskId);
+    if (!saved) return;
+    dispatchWorkspace({ type: "set-selection", selection: saved.mask });
+    dispatchWorkspace({ type: "select-mask", maskId: saved.mask.id });
+    setSelection(getRectangleSelection(saved.mask));
+    setMaskName(`${saved.name} copy`);
+  }
+
+  function restoreHistoryMask(mask: SpatialMask) {
+    if (
+      !document ||
+      mask.width !== document.inspection.width ||
+      mask.height !== document.inspection.height
+    ) {
+      setErrorMessage("The mask snapshot does not match the current image.");
+      return;
+    }
+    const restored = copySpatialMask(mask);
+    if (!restored.ok) {
+      setErrorMessage(restored.error.message);
+      return;
+    }
+    if (!getWorkspaceOverlayVisibility(toolMode).mask) {
+      activateTool(
+        restored.value.shapes[0]?.kind === "brush" ? "brush" : "select",
+      );
+    }
+    selectionStart.current = null;
+    brushPoints.current = [];
+    setBrushDraft([]);
+    setSelection(null);
+    dispatchWorkspace({ type: "set-selection", selection: restored.value });
+    setMaskName("");
+    setErrorMessage("");
+  }
+
+  function createCurrentRecipeStep(): CoefficientRecipeStep {
+    return {
+      domain: coefficientDomain,
+      mode: coefficientMode,
+      frequencyBand,
+      strength:
+        coefficientMode === "invert" || coefficientMode === "isolate"
+          ? 0
+          : coefficientStrength,
+      seed: coefficientSeed,
+    };
+  }
+
+  function addRecipeDraftStep() {
+    const step = createCurrentRecipeStep();
+    if (!isCoefficientRecipeStep(step)) {
+      setErrorMessage("The current coefficient settings cannot be saved.");
+      return;
+    }
+    if (recipeDraft.length >= MAX_RECIPE_STEPS) {
+      setErrorMessage(`A recipe supports at most ${MAX_RECIPE_STEPS} steps.`);
+      return;
+    }
+    setRecipeDraft((current) => [...current, step]);
+    setErrorMessage("");
+  }
+
+  function saveRecipeDraft() {
+    if (!isCoefficientRecipeStep(createCurrentRecipeStep())) {
+      setErrorMessage("The current coefficient settings are invalid.");
+      return;
+    }
+    if (recipeDraft.length === 0) {
+      setErrorMessage(
+        "Add at least one operation step before saving a recipe.",
+      );
+      return;
+    }
+    if (
+      allRecipes.some(
+        (recipe) =>
+          recipe.name.trim().toLowerCase() === recipeName.trim().toLowerCase(),
+      )
+    ) {
+      setErrorMessage("A built-in or saved recipe already uses this name.");
+      return;
+    }
+    let storage: Storage;
+    try {
+      storage = window.localStorage;
+    } catch {
+      setRecipeStorageError(
+        "Saved experiment recipes are unavailable in this browser.",
+      );
+      return;
+    }
+    const recipe: ExperimentRecipe = {
+      schemaVersion: 1,
+      id: crypto.randomUUID(),
+      name: recipeName.trim(),
+      steps: recipeDraft,
+    };
+    const saved = saveUserRecipe(storage, userRecipes, recipe);
+    if (!saved.ok) {
+      setErrorMessage(saved.error.message);
+      return;
+    }
+    setUserRecipes(saved.value);
+    setRecipeName("");
+    setRecipeDraft([]);
+    setSelectedRecipeId(recipe.id);
+    setRecipeStorageError("");
+    setErrorMessage("");
+  }
+
+  function applySelectedRecipe() {
+    const history = operationHistory.current;
+    if (!history || !activeMask || !selectedRecipe) {
+      setErrorMessage(
+        "Choose a recipe and draw or select a mask before applying the experiment.",
+      );
+      return;
+    }
+    updateHistory(
+      applyCoefficientRecipeOperation(history, {
+        recipe: selectedRecipe,
+        mask: activeMask,
+        componentIndex,
+      }),
     );
   }
 
@@ -1572,14 +1852,21 @@ function App() {
     if (files[0]) void loadFile(files[0]);
   }
 
-  const activeMaskForOverlay = globalSelectionMask;
-  const visibleSelection =
-    selection ?? getRectangleSelection(globalSelectionMask);
+  const overlayVisibility = getWorkspaceOverlayVisibility(toolMode);
+  const isMaskAuthoring = toolMode === "brush" || toolMode === "select";
+  const activeMaskForOverlay = overlayVisibility.mask
+    ? isMaskAuthoring
+      ? globalSelectionMask
+      : activeMask
+    : null;
+  const visibleSelection = overlayVisibility.mask
+    ? ((isMaskAuthoring ? selection : null) ??
+      getRectangleSelection(activeMaskForOverlay))
+    : null;
   const activeToolLabel =
     TOOL_GROUPS.flatMap((group) => group.tools).find(
       (tool) => tool.id === toolMode,
     )?.label ?? "Tool settings";
-
   return (
     <main className={`workspace ${document ? "has-tool-bar" : ""}`}>
       <header className="topbar">
@@ -1851,7 +2138,12 @@ function App() {
                     mask={activeMaskForOverlay}
                     brushDraft={brushDraft}
                     brushRadius={brushSize / 2}
-                    selectedBlock={selectedBlock}
+                    componentId={
+                      document.inspection.components[componentIndex]?.id ?? -1
+                    }
+                    selectedBlock={
+                      overlayVisibility.inspectedBlock ? selectedBlock : null
+                    }
                   />
                 </div>
               </div>
@@ -1968,19 +2260,26 @@ function App() {
                       )}
                     </section>
                   )}
-                  {(toolMode === "brush" || toolMode === "select") && (
+                  {toolMode === "coefficient-glitch" && (
                     <section className="inspector-section selection-panel">
                       <div className="section-kicker">
-                        FIRST GLITCH LAB · DCT
+                        JPEG-DOMAIN EFFECT · DCT
                       </div>
                       <h2>Coefficient experiments</h2>
                       <p className="operation-description">
-                        Paint or select in image-pixel coordinates. The mask is
-                        mapped to intersecting 8×8 DCT blocks of one selected
-                        component. These operations change quantized
-                        coefficients and create a newly encoded JPEG; the
-                        original JPEG bytes stay untouched.
+                        These operations edit quantized DCT coefficients, then
+                        re-encode a new JPEG. They do not edit decoded pixels or
+                        the original JPEG bytes.
                       </p>
+                      <EffectMaskPicker
+                        activeMaskId={activeMaskId}
+                        draft={globalSelectionMask}
+                        savedMasks={savedMasks}
+                        mask={activeMask}
+                        onSelect={(maskId) =>
+                          dispatchWorkspace({ type: "select-mask", maskId })
+                        }
+                      />
                       <label className="coefficient-field">
                         <span>Component</span>
                         <select
@@ -2165,6 +2464,180 @@ function App() {
                           />
                         </label>
                       )}
+                      <div className="recipe-editor">
+                        <div className="section-kicker">EXPERIMENT PRESETS</div>
+                        {recipeStorageError && (
+                          <p className="coefficient-error" role="alert">
+                            {recipeStorageError}
+                          </p>
+                        )}
+                        <label className="coefficient-field">
+                          <span>Preset or saved sequence</span>
+                          <select
+                            value={selectedRecipeId}
+                            onChange={(event) =>
+                              setSelectedRecipeId(event.currentTarget.value)
+                            }
+                          >
+                            <optgroup label="Built-in presets">
+                              {BUILT_IN_EXPERIMENT_RECIPES.map((recipe) => (
+                                <option key={recipe.id} value={recipe.id}>
+                                  {recipe.name} · {recipe.steps.length} step
+                                  {recipe.steps.length === 1 ? "" : "s"}
+                                </option>
+                              ))}
+                            </optgroup>
+                            {userRecipes.length > 0 && (
+                              <optgroup label="Your recipes">
+                                {userRecipes.map((recipe) => (
+                                  <option key={recipe.id} value={recipe.id}>
+                                    {recipe.name} · {recipe.steps.length} step
+                                    {recipe.steps.length === 1 ? "" : "s"}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
+                          </select>
+                        </label>
+                        <p className="coefficient-note">
+                          {selectedRecipe
+                            ? selectedRecipe.steps
+                                .map(
+                                  ({ mode, domain, frequencyBand }) =>
+                                    `${mode} ${domain} · ${frequencyBand}`,
+                                )
+                                .join(" → ")
+                            : "Select a named preset or saved recipe."}
+                          . Applying the sequence creates one undoable history
+                          entry.
+                        </p>
+                        <button
+                          className="operation-button secondary"
+                          type="button"
+                          disabled={
+                            !activeMask || !selectedRecipe || isEncoding
+                          }
+                          onClick={applySelectedRecipe}
+                        >
+                          Apply {selectedRecipe?.name ?? "recipe"}
+                        </button>
+                        <details className="recipe-compose-disclosure">
+                          <summary>
+                            Build your own sequence · {recipeDraft.length} steps
+                          </summary>
+                          <div className="recipe-compose">
+                            <p className="coefficient-note">
+                              Add the current coefficient settings in order. The
+                              selected mask and component are chosen when you
+                              apply the saved recipe.
+                            </p>
+                            <button
+                              className="operation-button secondary"
+                              type="button"
+                              disabled={recipeDraft.length >= MAX_RECIPE_STEPS}
+                              onClick={addRecipeDraftStep}
+                            >
+                              Add current settings
+                            </button>
+                            <label className="coefficient-field">
+                              <span>Save sequence as</span>
+                              <input
+                                type="text"
+                                maxLength={48}
+                                value={recipeName}
+                                onChange={(event) =>
+                                  setRecipeName(event.currentTarget.value)
+                                }
+                                placeholder="Name this experiment"
+                              />
+                            </label>
+                            <button
+                              className="operation-button secondary"
+                              type="button"
+                              disabled={
+                                recipeDraft.length === 0 ||
+                                recipeName.trim().length === 0 ||
+                                userRecipes.length >= 50
+                              }
+                              onClick={saveRecipeDraft}
+                            >
+                              Save recipe
+                            </button>
+                          </div>
+                        </details>
+                      </div>
+                      <div className="operation-actions">
+                        <button
+                          className="operation-button"
+                          type="button"
+                          disabled={!activeMask || isEncoding}
+                          onClick={applyCoefficientOperation}
+                        >
+                          Apply {coefficientMode} to selected{" "}
+                          {coefficientDomain}
+                        </button>
+                      </div>
+                    </section>
+                  )}
+                  {(toolMode === "brush" || toolMode === "select") && (
+                    <section className="inspector-section selection-panel">
+                      <div className="section-kicker">MASK AUTHORING</div>
+                      <h2>
+                        {toolMode === "brush" ? "Brush mask" : "Grid selection"}
+                      </h2>
+                      <p className="operation-description">
+                        Create a spatial mask in image-pixel coordinates.
+                        Effects use the current draft by default; save it by
+                        name to reuse it later. Effects keep the exact mask
+                        snapshot used in their history entry.
+                      </p>
+                      <label className="coefficient-field">
+                        <span>Snap to JPEG grid</span>
+                        <select
+                          value={maskGrid}
+                          onChange={(event) => {
+                            if (
+                              event.currentTarget.value === "dct" ||
+                              event.currentTarget.value === "mcu"
+                            ) {
+                              setMaskGrid(event.currentTarget.value);
+                            }
+                          }}
+                        >
+                          <option value="dct">
+                            8×8 DCT blocks · selected component
+                          </option>
+                          <option value="mcu">
+                            MCU · image sampling geometry
+                          </option>
+                        </select>
+                      </label>
+                      {maskGrid === "dct" && (
+                        <label className="coefficient-field">
+                          <span>Component grid</span>
+                          <select
+                            value={componentIndex}
+                            onChange={(event) =>
+                              setComponentIndex(
+                                Number(event.currentTarget.value),
+                              )
+                            }
+                          >
+                            {document.inspection.components.map(
+                              (component, index) => (
+                                <option key={component.id} value={index}>
+                                  {getComponentControlLabel(
+                                    document.inspection,
+                                    index,
+                                  )}{" "}
+                                  · {component.horizontalSampling}×
+                                  {component.verticalSampling}
+                                </option>
+                              ),
+                            )}
+                          </select>
+                        </label>
+                      )}
                       {toolMode === "brush" && (
                         <label className="coefficient-field tool-field">
                           <span>Brush diameter · {brushSize} image pixels</span>
@@ -2180,54 +2653,94 @@ function App() {
                           />
                         </label>
                       )}
-                      {toolMode === "select" && (
-                        <label className="snap-control">
-                          <input
-                            type="checkbox"
-                            checked={snapToBlocks}
-                            onChange={(event) =>
-                              setSnapToBlocks(event.currentTarget.checked)
-                            }
-                          />
-                          <span>Snap selection to component DCT blocks</span>
-                        </label>
-                      )}
-                      {visibleSelection ? (
+                      <p className="coefficient-note">
+                        Brush sample centers and rectangle edges snap to the
+                        selected JPEG grid. Pixel, DCT-block, and MCU
+                        coordinates remain distinct; component sampling controls
+                        the DCT footprint.
+                      </p>
+                      {visibleSelection && (
                         <p className="selection-readout">
                           x {visibleSelection.x.toFixed(1)} · y{" "}
                           {visibleSelection.y.toFixed(1)} ·{" "}
                           {visibleSelection.width.toFixed(1)} ×{" "}
                           {visibleSelection.height.toFixed(1)} image pixels
                         </p>
-                      ) : (
-                        <p className="operation-empty">
-                          Use Select to draw a region or Brush to paint a mask.
-                        </p>
                       )}
-                      {activeMaskForOverlay && (
+                      {globalSelectionMask && (
                         <p className="selection-readout">
-                          {describeMask(activeMaskForOverlay)}
+                          Draft · {describeMask(globalSelectionMask)}
                         </p>
                       )}
+                      <label className="coefficient-field">
+                        <span>Mask name</span>
+                        <input
+                          type="text"
+                          maxLength={48}
+                          value={maskName}
+                          onChange={(event) =>
+                            setMaskName(event.currentTarget.value)
+                          }
+                          placeholder="Name this mask"
+                        />
+                      </label>
                       <div className="operation-actions">
                         <button
                           className="operation-button"
                           type="button"
-                          disabled={!globalSelectionMask || isEncoding}
-                          onClick={applyCoefficientOperation}
+                          disabled={!globalSelectionMask || !maskName.trim()}
+                          onClick={saveCurrentMask}
                         >
-                          Apply {coefficientMode} to selected{" "}
-                          {coefficientDomain}
+                          Save mask to history
                         </button>
                         <button
                           className="operation-button secondary"
                           type="button"
-                          disabled={!selection && !globalSelectionMask}
+                          disabled={!globalSelectionMask && !selection}
                           onClick={clearSelection}
                         >
-                          Clear selection
+                          Clear draft
                         </button>
                       </div>
+                      <details className="saved-mask-list">
+                        <summary>SAVED MASKS · {savedMasks.length}</summary>
+                        <div className="saved-mask-items">
+                          {savedMasks.length > 0 ? (
+                            savedMasks.map((saved) => (
+                              <div
+                                className="saved-mask-entry"
+                                key={saved.mask.id}
+                              >
+                                <span>{saved.name}</span>
+                                <button
+                                  className="operation-button secondary"
+                                  type="button"
+                                  onClick={() => loadSavedMask(saved.mask.id)}
+                                >
+                                  Load
+                                </button>
+                                <button
+                                  className="operation-button secondary"
+                                  type="button"
+                                  onClick={() =>
+                                    dispatchWorkspace({
+                                      type: "select-mask",
+                                      maskId: saved.mask.id,
+                                    })
+                                  }
+                                >
+                                  Use
+                                </button>
+                              </div>
+                            ))
+                          ) : (
+                            <p className="operation-empty">
+                              Saved masks are available to coefficient and block
+                              effects.
+                            </p>
+                          )}
+                        </div>
+                      </details>
                     </section>
                   )}
                   {toolMode === "repeat-block" && (
@@ -2334,6 +2847,15 @@ function App() {
                         greater. Rectangles use area; brush masks use an 8×8
                         coverage sample.
                       </p>
+                      <EffectMaskPicker
+                        activeMaskId={activeMaskId}
+                        draft={globalSelectionMask}
+                        savedMasks={savedMasks}
+                        mask={activeMask}
+                        onSelect={(maskId) =>
+                          dispatchWorkspace({ type: "select-mask", maskId })
+                        }
+                      />
                       <label className="coefficient-field tool-field">
                         <span>Deterministic seed</span>
                         <input
@@ -2352,7 +2874,7 @@ function App() {
                       <button
                         className="operation-button"
                         type="button"
-                        disabled={!globalSelectionMask || isEncoding}
+                        disabled={!activeMask || isEncoding}
                         onClick={applyBlockPermutation}
                       >
                         Permute blocks in mask
@@ -2361,7 +2883,7 @@ function App() {
                   )}
                   {toolMode === "quantization" && (
                     <QuantizationMatrixEditor
-                      key={`${document.originalAsset.sha256}-${historyDocument?.revision ?? 0}`}
+                      key={document.originalAsset.sha256}
                       quantizationTables={currentQuantizationTables}
                       disabled={isEncoding}
                       onApply={applyQuantizationEdit}
@@ -2395,6 +2917,9 @@ function App() {
                           const operationKind = parameters
                             ? Reflect.get(parameters, "kind")
                             : undefined;
+                          const recipeSteps = parameters
+                            ? Reflect.get(parameters, "steps")
+                            : null;
                           return (
                             <li
                               className="operation-entry"
@@ -2417,17 +2942,20 @@ function App() {
                                   />
                                   <span>
                                     {operation.type === "spatial/apply-mask"
-                                      ? "Spatial mask"
-                                      : operationKind === "coefficients"
-                                        ? "Coefficient glitch"
-                                        : operationKind === "block-repeat"
-                                          ? "Block duplicate / repeat"
-                                          : operationKind ===
-                                              "block-permutation"
-                                            ? "Block permutation"
-                                            : operationKind === "quantization"
-                                              ? "DQT matrix edit"
-                                              : operation.type}
+                                      ? `Saved mask · ${Reflect.get(parameters ?? {}, "name")}`
+                                      : operation.type ===
+                                          "jpeg/glitch/coefficient-recipe"
+                                        ? `Recipe · ${Reflect.get(parameters ?? {}, "name")}`
+                                        : operationKind === "coefficients"
+                                          ? "Coefficient glitch"
+                                          : operationKind === "block-repeat"
+                                            ? "Block duplicate / repeat"
+                                            : operationKind ===
+                                                "block-permutation"
+                                              ? "Block permutation"
+                                              : operationKind === "quantization"
+                                                ? "DQT matrix edit"
+                                                : operation.type}
                                   </span>
                                 </label>
                                 <span className="operation-status">
@@ -2448,6 +2976,15 @@ function App() {
                                     {Reflect.get(parameters, "domain")} ·{" "}
                                     {Reflect.get(parameters, "frequencyBand")} ·
                                     seed {Reflect.get(parameters, "seed")}
+                                  </p>
+                                )}
+                              {parameters &&
+                                operation.type ===
+                                  "jpeg/glitch/coefficient-recipe" &&
+                                Array.isArray(recipeSteps) && (
+                                  <p className="operation-parameters">
+                                    {recipeSteps.length} ordered coefficient
+                                    steps · mask snapshot {mask?.id.slice(0, 8)}
                                   </p>
                                 )}
                               {parameters &&
@@ -2483,6 +3020,16 @@ function App() {
                                   </p>
                                 )}
                               <div className="operation-actions">
+                                {mask && (
+                                  <button
+                                    className="operation-button secondary"
+                                    type="button"
+                                    title="Replace the current draft with a copy of this mask"
+                                    onClick={() => restoreHistoryMask(mask)}
+                                  >
+                                    Restore mask
+                                  </button>
+                                )}
                                 <button
                                   className="operation-button secondary"
                                   type="button"
@@ -2514,19 +3061,6 @@ function App() {
                                   ↓
                                 </button>
                                 <button
-                                  className="operation-button secondary"
-                                  type="button"
-                                  disabled={
-                                    !globalSelectionMask ||
-                                    operation.type !== "spatial/apply-mask"
-                                  }
-                                  onClick={() =>
-                                    editMaskOperation(operation.id)
-                                  }
-                                >
-                                  Update from selection
-                                </button>
-                                <button
                                   className="operation-button danger"
                                   type="button"
                                   aria-label="Delete operation"
@@ -2545,8 +3079,7 @@ function App() {
                       </ol>
                     ) : (
                       <p className="operation-empty">
-                        Select a region or paint with Brush to add it to
-                        history.
+                        Save a named mask or apply an effect to start history.
                       </p>
                     )}
                     <button
@@ -2615,19 +3148,6 @@ function App() {
           </div>
         </aside>
       </section>
-
-      <footer className="statusbar">
-        <span>
-          {document
-            ? `Original JPEG bytes preserved · revision ${historyDocument?.revision ?? 0}`
-            : "Original files stay on your device."}
-        </span>
-        <span className="statusbar-right">
-          <span>JPEG DOMAIN</span>
-          <span className="status-divider" aria-hidden="true" />
-          <span>{document ? "DOCUMENT HISTORY" : "MILESTONE 4"}</span>
-        </span>
-      </footer>
     </main>
   );
 }

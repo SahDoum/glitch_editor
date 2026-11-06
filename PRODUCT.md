@@ -237,16 +237,20 @@ Required interactions:
 The canvas displays a decoded preview. The source JPEG data remains a
 separate authoritative document model.
 
-Brush and Select edit the same global pixel-space selection. Switching
-between them does not clear or hide the current selection; operations
-use that one visible area as their spatial scope. Brush input creates a
-continuous selected region rather than a trail of separate circular
-marks. Show the brush selection as a translucent fill with no outline so
-the image and resulting changes remain visible. Rectangular Select keeps
-a visible frame around its selected region. Remove the separate
-`Add selection mask` action; either tool edits the current selection
-directly. The selection remains a spatial mask in image-pixel
-coordinates and is mapped to JPEG units by the operation/JPEG pipeline.
+Brush and Select are mask-authoring tools, separate from JPEG-effect
+tools. They edit a draft mask in image-pixel coordinates. DCT-block
+snapping is the default and uses the selected component's sampling-aware
+block footprint; an explicit MCU grid is available. Brush sample centers
+snap to that grid and its mask is mapped to whole component blocks by the
+JPEG operation pipeline. Rectangle edges snap to the same grid. Saving a
+draft gives it a reusable name and adds it to document history. A newly
+drawn draft is the default mask for Coefficient Glitch, its recipes, and
+Block Shuffle; users may select a saved mask instead. These tools show the
+mask they will use and retain an immutable snapshot when applied, so later
+mask edits cannot rewrite prior results. A history entry containing a mask
+can restore a copy as the current draft, replacing any existing draft without
+changing history or the image. Mask overlays are also shown while authoring;
+tools that do not use masks hide them without clearing mask data.
 
 ### 6.3 Tool inspector
 
@@ -268,8 +272,7 @@ Every tool exposes:
 Inspector is a manipulation tool, not a separate “Inspect one block”
 command. With Inspector active, clicking an 8×8 DCT block selects and
 highlights that block and displays its details in JPEG INSPECTOR. The
-selected block is distinct from the global pixel-space operation
-selection.
+selected block is distinct from mask drafts and saved pixel-space masks.
 
 ### 6.4 History and operation stack
 
@@ -300,6 +303,31 @@ Users can:
 Reordering may change results. The UI must recompute downstream
 operations and must not promise that all operations commute.
 
+### 6.5 Masks, recipes, and compact workflow
+
+Keep mask authoring distinct from applying JPEG-domain edits. Users may
+save and reuse named spatial masks; an effect history entry keeps its
+own mask snapshot and stable mask ID. Use image-pixel coordinates as the
+stored mask representation, with sampling-aware snapping to component
+8×8 DCT-block footprints by default and an explicit MCU-grid mode.
+
+Offer named built-in coefficient recipes and allow users to compose and
+save ordered coefficient-operation sequences under their own names.
+Recipes are parameter data, never executable code, and are stored locally
+in the browser. Applying a multi-step recipe is one undoable history
+action. Each recipe step is labeled as a quantized-coefficient edit that
+produces a re-encoded JPEG; it is not raw-byte or entropy-stream damage.
+
+Reduce redundant canvas/tool spacing and show toolbar icons with
+accessible names and tooltips at constrained widths. Keep original/result
+comparison, active-tool context, errors, and export status visible without
+a persistent lower status strip. Focused DQT cells remain visibly focused
+in the matrix editor.
+
+A combined brush that creates a mask and applies a selected experiment
+in the same gesture may be explored later; it must retain the same
+reversible operation and mask-snapshot semantics.
+
 ## 7. Tool specification
 
 Tools are grouped by the JPEG representation they manipulate. All
@@ -310,16 +338,18 @@ meaningful.
 
 **Pointer / Hand** - select and move around the canvas; - pan and zoom.
 
-**Rectangular selection** - select a pixel-space region; - show its
-intersecting DCT blocks and MCUs; - snap-to-block and snap-to-MCU
-options.
+**Rectangular selection** - create a pixel-space mask region; - show its
+intersecting DCT blocks and MCUs; - snap to the selected component's DCT
+blocks by default or to MCUs in explicit MCU-grid mode.
 
 **Brush mask** - paint an editable mask; - brush size, hardness,
-opacity; - add/subtract mask modes; - optional block-aware and MCU-aware
-snapping.
+opacity; - snap sample centers to the selected DCT/MCU grid; - save and
+name masks for reuse by JPEG-effect tools.
 
 The mask is a spatial control surface. The engine must map it to the
-appropriate JPEG units for each operation.
+appropriate JPEG units for each operation. Coefficient Glitch and
+Block Shuffle consume a named mask; DCT block and MCU coordinates remain
+separate from image-pixel coordinates.
 
 ### 7.2 DCT tools
 
@@ -338,10 +368,17 @@ warning that DC prediction and coefficient interpretation are
 component-specific; - AC operation: modify selected AC coefficients
 while leaving DC coefficients untouched.
 
-The initial glitch lab exposes zero, scale, and seeded randomize modes for
-selected coefficients, plus a signed DC offset. Coefficient ranges are
-bounded to the baseline representation supported by the current encoder.
-Randomize stores an unsigned 32-bit seed so replay is reproducible.
+The initial glitch lab exposes zero, scale, seeded randomize, AC sign
+inversion and frequency isolation for selected coefficients, plus a
+signed DC offset. Coefficient ranges are bounded to the baseline
+representation supported by the current encoder. Randomize stores an
+unsigned 32-bit seed so replay is reproducible. Coefficient Glitch is a
+separate effect tool and requires a saved named mask.
+
+**Experiment recipes** - choose a named built-in recipe or a locally
+saved user recipe; - recipes contain ordered coefficient-operation
+parameters and seeds, not executable scripts; - applying a sequence is
+one undoable operation and uses the selected mask snapshot.
 
 **Block Transplant** - copy quantized coefficient blocks from a source
 region into a target region; - initially require compatible component
@@ -744,17 +781,30 @@ recorded in `docs/ROADMAP.md` and ADR-005.
 - separate DC and AC targeting, component selection, and block repeat;
 - DQT matrix editing and pattern generation with explicit reinterpret/requantize semantics.
 
-### Milestone 6 --- Usable tool and inspector workflow (next)
+### Milestone 6 --- Usable tool and inspector workflow (complete)
 
 - grouped top toolbar with Hand, Inspector, Brush, Select, Repeat Block,
   Shuffle, and Quantization Matrix;
-- one persistent global pixel-space selection shared by Brush and Select;
+- separate mask-authoring and JPEG-effect tools;
 - continuous, translucent, borderless brush-selection overlay and framed
-  rectangular selection;
+  rectangular selection, snapped to a sampling-aware DCT/MCU grid;
 - Inspector tool selects/highlights a clicked 8×8 DCT block and shows its
   details in JPEG INSPECTOR;
 - contextual settings for the active tool and a collapsible right column
   with independently collapsible information sections.
+
+### Milestone 6.5 --- Mask and experiment workflow (implementation slice)
+
+- named reusable image-pixel masks saved in operation history;
+- mask-consuming coefficient effects default to the current draft or use a
+  selected named mask, display it, and store immutable mask snapshots in
+  their history entries;
+- named built-in coefficient recipes and locally saved user sequences,
+  each applied as one undoable operation;
+- active-tool-specific overlays, DCT-default/MCU-selectable snapping,
+  compact responsive toolbar, and no persistent lower status strip;
+- an experiment catalog distinguishing coefficient/DQT re-encoding from
+  future stream and raw-byte experiments.
 
 ### Milestone 7 --- Two-image transplant
 

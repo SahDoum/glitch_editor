@@ -183,7 +183,7 @@ parameters, examples, and experiment results are recorded in
 - [x] Replace the left-side tool grouping with a top tool bar: Manipulation (Hand, Inspector), Coefficients (Brush, Select), Blocks (Repeat Block, Shuffle), and Quantization (Quantization Matrix).
 - [x] Give every tool an icon, accessible name, selected state, and contextual settings panel in the right column.
 - [x] Make Brush and Select edit one persistent global pixel-space selection; switching tools must not clear or hide it.
-- [x] Make brush input produce a continuous pixel-space selection region, not separate visible circles; render it as a translucent fill without an outline. Keep the rectangular Select frame visible.
+- [x] Make brush input produce a continuous pixel-space selection region and render only the complete component DCT blocks affected by the mask, without round edges or partial blocks. Keep the rectangular Select frame visible.
 - [x] Remove the separate “Add selection mask” action; both selection tools edit the current global selection directly.
 - [x] Make Inspector select and highlight an 8×8 DCT block on canvas click and show its coefficient details in JPEG INSPECTOR; remove the separate “Inspect one block” action.
 - [x] Put the tool panel above History and the ORIGINAL ASSET, JPEG INSPECTOR, FRAME COMPONENTS, DQT QUANTIZATION TABLES, BLOCK GEOMETRY, and ENCODED FILE sections in the right column.
@@ -194,8 +194,9 @@ The toolbar and inspector workflow use presentation state separate from the
 JPEG document and operation model. Rectangle selection and brush masks are the
 same global image-pixel selection used by coefficient operations; changing
 tools only changes the active tool and never discards that mask. Brush samples
-render as a single round-capped SVG stroke; rectangular selections retain a
-visible dashed frame. Inspector clicks map image pixels to the selected
+render as a translucent overlay of the complete component DCT blocks the mask
+affects; the stored brush geometry and effect coverage remain unchanged.
+Rectangular selections retain a visible dashed frame. Inspector clicks map image pixels to the selected
 component's visible 8×8 DCT block using sampling-aware block geometry, then
 read quantized coefficients through the existing WebAssembly reader. The
 selected block is distinct from the spatial selection. Tool, history, original
@@ -211,7 +212,7 @@ collapse. No browser console or page errors were observed.
 
 - The top tool bar presents exactly the named groups and tools, and selecting a tool visibly activates it and opens its settings in the right column.
 - Brush and Select always expose the same global image-pixel selection; switching between them preserves that area, and a spatial operation uses that visible area.
-- Brush selection appears as a continuous translucent overlay with no outline, leaving preview changes visible; rectangular Select keeps its frame.
+- Brush selection highlights only complete component DCT blocks that will be affected, leaving preview changes visible; rectangular Select keeps its frame.
 - There is no separate “Add selection mask” action or “Inspect one block” command.
 - Clicking a block with Inspector active highlights the selected 8×8 DCT block and shows its coefficient details without changing the global pixel-space selection.
 - The right column and each information section can be collapsed/expanded independently without changing the document, selection, or operation history.
@@ -222,6 +223,43 @@ workflows: users need to understand which tool is active and which
 pixel-space region an operation will affect before adding two-image
 transplant or entropy-stream features. It changes the UI workflow, not
 the document representation, JPEG capability claims, or codec pipeline.
+
+## Milestone 6.5 — Mask and experiment workflow (implementation complete)
+
+Decisions confirmed by the user and recorded in ADR-008:
+
+- Brush and Select author masks; effects consume reusable named masks.
+- DCT block snapping is the default, with a selectable MCU grid.
+- Recipes include built-in presets and user-saved ordered coefficient
+  sequences.
+- Block displacement and image mixing remain separate future
+  coefficient-domain slices; neither is raw-byte copying.
+- A combined mask-and-effect brush remains a later interaction experiment,
+  built on the same reversible mask-snapshot contract.
+
+### Tasks
+
+- [x] Record mask ownership, grid, overlay, and recipe choices in ADR-008 and update product and architecture documentation.
+- [x] Separate mask authoring from mask-consuming effects; save named masks in operation history and retain a mask snapshot per applied operation.
+- [x] Add sampling-aware DCT-default and MCU grid snapping for brush sample centers and rectangular selections; test odd dimensions and subsampled components.
+- [x] Hide unrelated overlays on tool changes without clearing masks or Inspector state; keep focused DQT cells visible in the matrix editor.
+- [x] Add named built-in recipes and locally saved user-authored multi-step coefficient sequences; apply each sequence as one undoable operation.
+- [x] Compact toolbar, canvas, and right-panel spacing while retaining original/result, tool, error, and export feedback.
+- [x] Add a glitch catalog naming edited representation, processing stage, re-encoding, and decode limitations.
+- [x] Keep JPEG coefficient/DQT edits distinct from future entropy-stream and raw-byte experiments; do not add pixel-only fallbacks under JPEG-glitch tool names.
+
+### Acceptance
+
+- Mask creation and effect application are distinct; saved masks and recipe applications can be undone/redone.
+- Brush and rectangular selection obey the sampling-aware DCT/MCU grid.
+- Changing tools hides irrelevant overlays without erasing mask data or changing document history.
+- Recipes are named, discoverable, validated, deterministic where seeded, and applied as one history entry.
+- Compact layout preserves access to original/result, tool context, useful errors, and export state.
+- The experiment catalog distinguishes coefficient/DQT re-encoding from stream/byte corruption and never calls the decoded preview the original JPEG.
+- Block displacement and image mixing are described as separate, reversible coefficient-domain operations with component/grid compatibility checks; raw-byte copying is not used as a substitute.
+- The DQT table assignment remains selected after applying a matrix edit; the editor no longer remounts on every history revision.
+- Follow-up: Coefficient Glitch, recipes, and Shuffle show the mask they use; a newly drawn draft is used by default without saving, and saved masks remain selectable.
+- History entries with mask snapshots can restore independent copies as the current draft without changing history or the encoded image.
 
 ## Milestone 7 — Two-image DCT transplant
 
@@ -276,10 +314,10 @@ the document representation, JPEG capability claims, or codec pipeline.
 ## Next issues — Milestone 7
 
 1. Define compatible source/target JPEG document handling for a two-image workflow.
-2. Select source and target pixel-space regions and map them to sampling-aware DCT block regions.
+2. Select source and target regions and map them to sampling-aware DCT-block regions.
 3. Implement reversible coefficient-block transplant and separately scoped DC/AC transfer.
-4. Reject incompatible component layouts, block geometry, quantization assignments, or JPEG processes with actionable errors.
-5. Test compatible and incompatible transplants against the supported fixture set and independent decoders.
+4. Reject incompatible component layouts, block geometry, DQT assignments, or JPEG processes with actionable errors.
+5. Test compatible and incompatible transplants against supported fixtures and independent decoders.
 
 ## Explicitly deferred
 

@@ -223,6 +223,43 @@ pixel-space region an operation will affect before adding two-image
 transplant or entropy-stream features. It changes the UI workflow, not
 the document representation, JPEG capability claims, or codec pipeline.
 
+## Milestone 6.5 — Mask and experiment workflow (implementation complete)
+
+Decisions confirmed by the user and recorded in ADR-008:
+
+- Brush and Select author masks; effects consume reusable named masks.
+- DCT block snapping is the default, with a selectable MCU grid.
+- Recipes include built-in presets and user-saved ordered coefficient
+  sequences.
+- Block displacement and image mixing remain separate future
+  coefficient-domain slices; neither is raw-byte copying.
+- A combined mask-and-effect brush remains a later interaction experiment,
+  built on the same reversible mask-snapshot contract.
+
+### Tasks
+
+- [x] Record mask ownership, grid, overlay, and recipe choices in ADR-008 and update product and architecture documentation.
+- [x] Separate mask authoring from mask-consuming effects; save named masks in operation history and retain a mask snapshot per applied operation.
+- [x] Add sampling-aware DCT-default and MCU grid snapping for brush sample centers and rectangular selections; test odd dimensions and subsampled components.
+- [x] Hide unrelated overlays on tool changes without clearing masks or Inspector state; keep focused DQT cells visible in the matrix editor.
+- [x] Add named built-in recipes and locally saved user-authored multi-step coefficient sequences; apply each sequence as one undoable operation.
+- [x] Compact toolbar, canvas, and right-panel spacing while retaining original/result, tool, error, and export feedback.
+- [x] Add a glitch catalog naming edited representation, processing stage, re-encoding, and decode limitations.
+- [x] Keep JPEG coefficient/DQT edits distinct from future entropy-stream and raw-byte experiments; do not add pixel-only fallbacks under JPEG-glitch tool names.
+
+### Acceptance
+
+- Mask creation and effect application are distinct; saved masks and recipe applications can be undone/redone.
+- Brush and rectangular selection obey the sampling-aware DCT/MCU grid.
+- Changing tools hides irrelevant overlays without erasing mask data or changing document history.
+- Recipes are named, discoverable, validated, deterministic where seeded, and applied as one history entry.
+- Compact layout preserves access to original/result, tool context, useful errors, and export state.
+- The experiment catalog distinguishes coefficient/DQT re-encoding from stream/byte corruption and never calls the decoded preview the original JPEG.
+- Block displacement and image mixing are described as separate, reversible coefficient-domain operations with component/grid compatibility checks; raw-byte copying is not used as a substitute.
+- The DQT table assignment remains selected after applying a matrix edit; the editor no longer remounts on every history revision.
+- Follow-up: Coefficient Glitch, recipes, and Shuffle show the mask they use; a newly drawn draft is used by default without saving, and saved masks remain selectable.
+- History entries with mask snapshots can restore independent copies as the current draft without changing history or the encoded image.
+
 ## Milestone 7 — Two-image DCT transplant
 
 ### Tasks
@@ -276,10 +313,10 @@ the document representation, JPEG capability claims, or codec pipeline.
 ## Next issues — Milestone 7
 
 1. Define compatible source/target JPEG document handling for a two-image workflow.
-2. Select source and target pixel-space regions and map them to sampling-aware DCT block regions.
+2. Select source and target regions and map them to sampling-aware DCT-block regions.
 3. Implement reversible coefficient-block transplant and separately scoped DC/AC transfer.
-4. Reject incompatible component layouts, block geometry, quantization assignments, or JPEG processes with actionable errors.
-5. Test compatible and incompatible transplants against the supported fixture set and independent decoders.
+4. Reject incompatible component layouts, block geometry, DQT assignments, or JPEG processes with actionable errors.
+5. Test compatible and incompatible transplants against supported fixtures and independent decoders.
 
 ## Explicitly deferred
 

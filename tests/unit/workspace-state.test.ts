@@ -5,13 +5,12 @@ import {
 } from "../../src/document/masks";
 import {
   initialWorkspaceState,
+  getEffectMask,
+  getWorkspaceOverlayVisibility,
   TOOL_GROUPS,
   workspaceReducer,
 } from "../../src/ui/workspace-state";
-import {
-  getBrushOverlayPath,
-  getRectangleSelection,
-} from "../../src/ui/selection-overlay";
+import { getRectangleSelection } from "../../src/ui/selection-overlay";
 
 describe("workspace state", () => {
   it("defines the milestone toolbar groups and tools in order", () => {
@@ -22,7 +21,8 @@ describe("workspace state", () => {
       ]),
     ).toEqual([
       ["Manipulation", ["hand", "inspector"]],
-      ["Coefficients", ["brush", "select"]],
+      ["Masks", ["brush", "select"]],
+      ["JPEG effects", ["coefficient-glitch"]],
       ["Blocks", ["repeat-block", "shuffle"]],
       ["Quantization", ["quantization"]],
     ]);
@@ -85,6 +85,7 @@ describe("workspace state", () => {
       type: "set-selection",
       selection: mask.value,
     });
+
     const block = {
       componentId: 0,
       blockX: 1,
@@ -119,6 +120,117 @@ describe("workspace state", () => {
     expect(expanded.selectionMask).toBe(mask.value);
   });
 
+  it("selects named masks independently from the mask draft", () => {
+    const mask = createSpatialMask(
+      {
+        kind: "rectangle",
+        coordinateSpace: "image-pixel",
+        x: 0,
+        y: 0,
+        width: 8,
+        height: 8,
+      },
+      16,
+      16,
+    );
+    if (!mask.ok) throw new Error("Expected mask");
+    const draft = workspaceReducer(initialWorkspaceState, {
+      type: "set-selection",
+      selection: mask.value,
+    });
+    const selected = workspaceReducer(draft, {
+      type: "select-mask",
+      maskId: "saved-mask-id",
+    });
+    const effectTool = workspaceReducer(selected, {
+      type: "activate-tool",
+      tool: "coefficient-glitch",
+    });
+
+    expect(effectTool.selectionMask).toBe(mask.value);
+    expect(effectTool.activeMaskId).toBe("saved-mask-id");
+    expect(getWorkspaceOverlayVisibility("coefficient-glitch")).toEqual({
+      mask: true,
+      inspectedBlock: false,
+    });
+    expect(getWorkspaceOverlayVisibility("shuffle")).toEqual({
+      mask: true,
+      inspectedBlock: false,
+    });
+    expect(getWorkspaceOverlayVisibility("inspector")).toEqual({
+      mask: false,
+      inspectedBlock: true,
+    });
+    expect(getWorkspaceOverlayVisibility("quantization")).toEqual({
+      mask: false,
+      inspectedBlock: false,
+    });
+    expect(getWorkspaceOverlayVisibility("repeat-block").mask).toBe(false);
+    expect(getWorkspaceOverlayVisibility("hand").mask).toBe(false);
+  });
+
+  it("uses the latest draft by default and allows explicitly selecting a saved mask", () => {
+    const first = createSpatialMask(
+      {
+        kind: "rectangle",
+        coordinateSpace: "image-pixel",
+        x: 0,
+        y: 0,
+        width: 8,
+        height: 8,
+      },
+      16,
+      16,
+    );
+    const second = createSpatialMask(
+      {
+        kind: "rectangle",
+        coordinateSpace: "image-pixel",
+        x: 8,
+        y: 8,
+        width: 8,
+        height: 8,
+      },
+      16,
+      16,
+    );
+    if (!first.ok || !second.ok) throw new Error("Expected masks");
+    const saved = [{ name: "Saved", mask: first.value }];
+    const draft = workspaceReducer(initialWorkspaceState, {
+      type: "set-selection",
+      selection: second.value,
+    });
+    for (const tool of ["coefficient-glitch", "shuffle"] as const) {
+      const effect = workspaceReducer(draft, { type: "activate-tool", tool });
+      expect(getEffectMask(effect, saved)).toBe(second.value);
+      expect(getWorkspaceOverlayVisibility(tool).mask).toBe(true);
+    }
+
+    const selected = workspaceReducer(draft, {
+      type: "select-mask",
+      maskId: first.value.id,
+    });
+    expect(getEffectMask(selected, saved)).toBe(first.value);
+    expect(getEffectMask(selected, [])).toBeNull();
+    const switchedBack = workspaceReducer(selected, {
+      type: "select-mask",
+      maskId: null,
+    });
+    expect(getEffectMask(switchedBack, saved)).toBe(second.value);
+    const newDraft = workspaceReducer(selected, {
+      type: "set-selection",
+      selection: second.value,
+    });
+    expect(newDraft.activeMaskId).toBeNull();
+    expect(getEffectMask(newDraft, saved)).toBe(second.value);
+    expect(
+      getEffectMask(
+        workspaceReducer(newDraft, { type: "set-selection", selection: null }),
+        saved,
+      ),
+    ).toBeNull();
+  });
+
   it("resets document-specific workspace state", () => {
     const changed = {
       ...initialWorkspaceState,
@@ -129,21 +241,5 @@ describe("workspace state", () => {
     expect(workspaceReducer(changed, { type: "reset-document" })).toBe(
       initialWorkspaceState,
     );
-  });
-});
-
-describe("brush overlay path", () => {
-  it("joins brush samples into one continuous SVG stroke", () => {
-    expect(
-      getBrushOverlayPath([
-        { x: 2, y: 3 },
-        { x: 5, y: 7 },
-        { x: 9, y: 11 },
-      ]),
-    ).toBe("M 2 3 L 5 7 L 9 11");
-  });
-
-  it("returns an empty path when there are no brush samples", () => {
-    expect(getBrushOverlayPath([])).toBe("");
   });
 });

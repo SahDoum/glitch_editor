@@ -1,4 +1,4 @@
-import type { SpatialMask } from "../document/masks";
+import type { NamedSpatialMask, SpatialMask } from "../document/masks";
 import type { JpegBlockCoordinate } from "../jpeg/block-geometry";
 
 export type CanvasTool =
@@ -6,6 +6,7 @@ export type CanvasTool =
   | "inspector"
   | "brush"
   | "select"
+  | "coefficient-glitch"
   | "repeat-block"
   | "shuffle"
   | "quantization";
@@ -25,11 +26,15 @@ export const TOOL_GROUPS: readonly {
     ],
   },
   {
-    label: "Coefficients",
+    label: "Masks",
     tools: [
       { id: "brush", label: "Brush" },
       { id: "select", label: "Select" },
     ],
+  },
+  {
+    label: "JPEG effects",
+    tools: [{ id: "coefficient-glitch", label: "Coefficient Glitch" }],
   },
   {
     label: "Blocks",
@@ -47,13 +52,43 @@ export const TOOL_GROUPS: readonly {
 export interface WorkspaceState {
   readonly activeTool: CanvasTool;
   readonly selectionMask: SpatialMask | null;
+  readonly activeMaskId: string | null;
   readonly selectedBlock: JpegBlockCoordinate | null;
   readonly isRightPanelCollapsed: boolean;
+}
+
+export interface WorkspaceOverlayVisibility {
+  readonly mask: boolean;
+  readonly inspectedBlock: boolean;
+}
+
+export function getWorkspaceOverlayVisibility(
+  tool: CanvasTool,
+): WorkspaceOverlayVisibility {
+  return {
+    mask:
+      tool === "brush" ||
+      tool === "select" ||
+      tool === "coefficient-glitch" ||
+      tool === "shuffle",
+    inspectedBlock: tool === "inspector",
+  };
+}
+
+export function getEffectMask(
+  state: WorkspaceState,
+  savedMasks: readonly NamedSpatialMask[],
+): SpatialMask | null {
+  return state.activeMaskId
+    ? (savedMasks.find(({ mask }) => mask.id === state.activeMaskId)?.mask ??
+        null)
+    : state.selectionMask;
 }
 
 export type WorkspaceAction =
   | { readonly type: "activate-tool"; readonly tool: CanvasTool }
   | { readonly type: "set-selection"; readonly selection: SpatialMask | null }
+  | { readonly type: "select-mask"; readonly maskId: string | null }
   | {
       readonly type: "select-block";
       readonly block: JpegBlockCoordinate | null;
@@ -67,6 +102,7 @@ export type WorkspaceAction =
 export const initialWorkspaceState: WorkspaceState = Object.freeze({
   activeTool: "select",
   selectionMask: null,
+  activeMaskId: null,
   selectedBlock: null,
   isRightPanelCollapsed: false,
 });
@@ -83,7 +119,13 @@ export function workspaceReducer(
         isRightPanelCollapsed: false,
       };
     case "set-selection":
-      return { ...state, selectionMask: action.selection };
+      return {
+        ...state,
+        selectionMask: action.selection,
+        activeMaskId: action.selection ? null : state.activeMaskId,
+      };
+    case "select-mask":
+      return { ...state, activeMaskId: action.maskId };
     case "select-block":
       return { ...state, selectedBlock: action.block };
     case "set-panel-collapsed":

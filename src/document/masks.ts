@@ -18,6 +18,11 @@ export interface SpatialMask {
   readonly shapes: readonly SpatialMaskShape[];
 }
 
+export interface NamedSpatialMask {
+  readonly name: string;
+  readonly mask: SpatialMask;
+}
+
 export type SpatialMaskShape =
   | {
       readonly kind: "rectangle";
@@ -272,6 +277,31 @@ export function getMaskFromParameters(value: unknown): SpatialMask | null {
   return isSpatialMask(value.mask) ? value.mask : null;
 }
 
+export function copySpatialMask(mask: SpatialMask): Result<SpatialMask> {
+  if (!isSpatialMask(mask)) {
+    return failure({
+      code: "INVALID_INPUT",
+      message: "The mask snapshot is invalid.",
+    });
+  }
+  const shape = mask.shapes[0]!;
+  if (shape.kind === "brush") {
+    return createBrushMask(shape.points, shape.radius, mask.width, mask.height);
+  }
+  return createSpatialMask(
+    {
+      kind: "rectangle",
+      coordinateSpace: "image-pixel",
+      x: shape.x,
+      y: shape.y,
+      width: shape.width,
+      height: shape.height,
+    },
+    mask.width,
+    mask.height,
+  );
+}
+
 export function spatialMaskToJson(mask: SpatialMask): JsonValue {
   return {
     schemaVersion: mask.schemaVersion,
@@ -294,4 +324,22 @@ export function spatialMaskToJson(mask: SpatialMask): JsonValue {
 
 export function spatialMaskParameters(mask: SpatialMask): JsonValue {
   return { mask: spatialMaskToJson(mask) };
+}
+
+export function namedSpatialMaskParameters(
+  name: string,
+  mask: SpatialMask,
+): JsonValue {
+  return {
+    name: name.trim(),
+    mask: spatialMaskToJson(mask),
+  };
+}
+
+export function isValidMaskName(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.trim().length > 0 &&
+    value.trim().length <= 48
+  );
 }

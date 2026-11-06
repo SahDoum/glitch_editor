@@ -21,6 +21,18 @@ export interface JpegComponentBlockGrid {
   rows: number;
 }
 
+export type JpegSelectionGrid = "dct" | "mcu";
+
+export interface ImagePoint {
+  readonly x: number;
+  readonly y: number;
+}
+
+export interface JpegSelectionGridCellSize {
+  readonly width: number;
+  readonly height: number;
+}
+
 export interface JpegBlockGeometry {
   readonly width: number;
   readonly height: number;
@@ -73,6 +85,147 @@ export function snapSelectionToComponentBlocks(
     y: top,
     width: right - left,
     height: bottom - top,
+  });
+}
+
+export function snapSelectionToMcus(
+  selection: SpatialSelection,
+  inspection: JpegInspection,
+): Result<SpatialSelection> {
+  if (
+    !Number.isFinite(selection.x) ||
+    !Number.isFinite(selection.y) ||
+    !Number.isFinite(selection.width) ||
+    !Number.isFinite(selection.height) ||
+    selection.width <= 0 ||
+    selection.height <= 0 ||
+    inspection.mcuWidth <= 0 ||
+    inspection.mcuHeight <= 0
+  ) {
+    return failure({
+      code: "INVALID_INPUT",
+      message: "The image-space selection or MCU geometry is invalid.",
+    });
+  }
+
+  const left = Math.max(
+    0,
+    Math.floor(selection.x / inspection.mcuWidth) * inspection.mcuWidth,
+  );
+  const top = Math.max(
+    0,
+    Math.floor(selection.y / inspection.mcuHeight) * inspection.mcuHeight,
+  );
+  const right = Math.min(
+    inspection.width,
+    Math.ceil((selection.x + selection.width) / inspection.mcuWidth) *
+      inspection.mcuWidth,
+  );
+  const bottom = Math.min(
+    inspection.height,
+    Math.ceil((selection.y + selection.height) / inspection.mcuHeight) *
+      inspection.mcuHeight,
+  );
+
+  return success({
+    kind: "rectangle",
+    coordinateSpace: "image-pixel",
+    x: left,
+    y: top,
+    width: right - left,
+    height: bottom - top,
+  });
+}
+
+export function getJpegSelectionGridCellSize(
+  inspection: JpegInspection,
+  componentId: number,
+  grid: JpegSelectionGrid,
+): Result<JpegSelectionGridCellSize> {
+  if (grid === "mcu") {
+    if (
+      !Number.isFinite(inspection.mcuWidth) ||
+      !Number.isFinite(inspection.mcuHeight) ||
+      inspection.mcuWidth <= 0 ||
+      inspection.mcuHeight <= 0
+    ) {
+      return failure({
+        code: "INVALID_INPUT",
+        message: "The selected JPEG grid is invalid.",
+      });
+    }
+    return success({
+      width: inspection.mcuWidth,
+      height: inspection.mcuHeight,
+    });
+  }
+
+  const component = inspection.components.find(
+    (candidate) => candidate.id === componentId,
+  );
+  if (!component) {
+    return failure({
+      code: "INVALID_INPUT",
+      message: "The selected JPEG component is invalid.",
+    });
+  }
+  const maxHorizontalSampling = Math.max(
+    ...inspection.components.map(
+      ({ horizontalSampling }) => horizontalSampling,
+    ),
+  );
+  const maxVerticalSampling = Math.max(
+    ...inspection.components.map(({ verticalSampling }) => verticalSampling),
+  );
+  const width = (8 * maxHorizontalSampling) / component.horizontalSampling;
+  const height = (8 * maxVerticalSampling) / component.verticalSampling;
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0
+  ) {
+    return failure({
+      code: "INVALID_INPUT",
+      message: "The selected JPEG grid is invalid.",
+    });
+  }
+  return success({ width, height });
+}
+
+export function snapImagePointToGrid(
+  point: ImagePoint,
+  inspection: JpegInspection,
+  componentId: number,
+  grid: JpegSelectionGrid,
+): Result<ImagePoint> {
+  if (
+    !Number.isFinite(point.x) ||
+    !Number.isFinite(point.y) ||
+    point.x < 0 ||
+    point.y < 0 ||
+    point.x > inspection.width ||
+    point.y > inspection.height
+  ) {
+    return failure({
+      code: "INVALID_INPUT",
+      message: "The brush point is outside the JPEG image.",
+    });
+  }
+
+  const cellSize = getJpegSelectionGridCellSize(inspection, componentId, grid);
+  if (!cellSize.ok) return cellSize;
+  const { width: cellWidth, height: cellHeight } = cellSize.value;
+
+  const imageX = Math.min(point.x, Math.max(0, inspection.width - 0.000001));
+  const imageY = Math.min(point.y, Math.max(0, inspection.height - 0.000001));
+  const cellX = Math.floor(imageX / cellWidth);
+  const cellY = Math.floor(imageY / cellHeight);
+  const cellLeft = cellX * cellWidth;
+  const cellTop = cellY * cellHeight;
+  return success({
+    x: cellLeft + Math.min(cellWidth, inspection.width - cellLeft) / 2,
+    y: cellTop + Math.min(cellHeight, inspection.height - cellTop) / 2,
   });
 }
 
@@ -310,6 +463,57 @@ export function getMaskBlockCoverage(
   }
 
   return success(coverage);
+}
+
+export function getMaskBlockCoveragePath(
+  mask: SpatialMask,
+  inspection: JpegInspection,
+  componentId: number,
+): Result<string> {
+  const coverage = getMaskBlockCoverage(mask, inspection, componentId);
+  if (!coverage.ok) return coverage;
+
+  const grid = getJpegComponentBlockGrid(inspection, componentId);
+  const cellSize = getJpegSelectionGridCellSize(inspection, componentId, "dct");
+  if (!grid) {
+    return failure({
+      code: "INVALID_INPUT",
+      message: "The selected JPEG component is invalid.",
+    });
+  }
+  if (!cellSize.ok) return cellSize;
+
+  const path: string[] = [];
+  for (let blockY = 0; blockY < grid.rows; blockY += 1) {
+    let blockX = 0;
+    while (blockX < grid.columns) {
+      const rowOffset = blockY * grid.columns;
+      while (
+        blockX < grid.columns &&
+        coverage.value[rowOffset + blockX] === 0
+      ) {
+        blockX += 1;
+      }
+      if (blockX === grid.columns) break;
+
+      const firstBlockX = blockX;
+      while (
+        blockX < grid.columns &&
+        coverage.value[rowOffset + blockX] === 1
+      ) {
+        blockX += 1;
+      }
+      const left = firstBlockX * cellSize.value.width;
+      const right = Math.min(inspection.width, blockX * cellSize.value.width);
+      const top = blockY * cellSize.value.height;
+      const bottom = Math.min(inspection.height, top + cellSize.value.height);
+      path.push(
+        `M${left} ${top}h${right - left}v${bottom - top}h${left - right}z`,
+      );
+    }
+  }
+
+  return success(path.join(""));
 }
 
 export function getMaskBlockCoverageAtLeastHalf(

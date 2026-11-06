@@ -3,9 +3,13 @@ import { describe, expect, it } from "vitest";
 import {
   getMaskBlockCoverage,
   getMaskBlockCoverageAtLeastHalf,
+  getMaskBlockCoveragePath,
+  getJpegSelectionGridCellSize,
   mapJpegBlockCoordinate,
   mapJpegImagePointToBlock,
+  snapImagePointToGrid,
   snapSelectionToComponentBlocks,
+  snapSelectionToMcus,
 } from "../../src/jpeg/block-geometry";
 import { inspectJpeg } from "../../src/jpeg/inspect";
 import {
@@ -263,6 +267,65 @@ describe("JPEG block coordinates", () => {
     });
   });
 
+  it("snaps brush points to the chosen component DCT grid and MCU grid", async () => {
+    const inspection = inspectJpeg(
+      await fixtureBytes("synthetic-color-420.jpg"),
+    );
+    expect(inspection.ok).toBe(true);
+    if (!inspection.ok) return;
+
+    expect(
+      snapImagePointToGrid({ x: 14, y: 7 }, inspection.value, 1, "dct"),
+    ).toEqual({ ok: true, value: { x: 12, y: 4 } });
+    expect(
+      snapImagePointToGrid({ x: 14, y: 7 }, inspection.value, 2, "dct"),
+    ).toEqual({ ok: true, value: { x: 8, y: 8 } });
+    expect(
+      snapImagePointToGrid({ x: 14, y: 7 }, inspection.value, 1, "mcu"),
+    ).toEqual({ ok: true, value: { x: 8, y: 8 } });
+    expect(getJpegSelectionGridCellSize(inspection.value, 1, "dct")).toEqual({
+      ok: true,
+      value: { width: 8, height: 8 },
+    });
+    expect(getJpegSelectionGridCellSize(inspection.value, 2, "dct")).toEqual({
+      ok: true,
+      value: { width: 16, height: 16 },
+    });
+    expect(getJpegSelectionGridCellSize(inspection.value, 1, "mcu")).toEqual({
+      ok: true,
+      value: {
+        width: inspection.value.mcuWidth,
+        height: inspection.value.mcuHeight,
+      },
+    });
+  });
+
+  it("snaps odd image-edge selections and brush points to visible MCU extents", async () => {
+    const inspection = inspectJpeg(
+      await fixtureBytes("synthetic-color-odd-420.jpg"),
+    );
+    expect(inspection.ok).toBe(true);
+    if (!inspection.ok) return;
+    const selection = createRectangleSelection(16, 8, 17, 9, 17, 9);
+    if (!selection.ok || !selection.value)
+      throw new Error("Invalid selection.");
+
+    expect(snapSelectionToMcus(selection.value, inspection.value)).toEqual({
+      ok: true,
+      value: {
+        kind: "rectangle",
+        coordinateSpace: "image-pixel",
+        x: 16,
+        y: 0,
+        width: 1,
+        height: 9,
+      },
+    });
+    expect(
+      snapImagePointToGrid({ x: 16.9, y: 8.9 }, inspection.value, 1, "dct"),
+    ).toEqual({ ok: true, value: { x: 16.5, y: 8.5 } });
+  });
+
   it("maps rectangular masks to visible component blocks, including odd edges", async () => {
     const inspection = inspectJpeg(
       await fixtureBytes("synthetic-color-odd-420.jpg"),
@@ -282,6 +345,14 @@ describe("JPEG block coordinates", () => {
     expect(getMaskBlockCoverage(mask.value, inspection.value, 2)).toMatchObject(
       { ok: true, value: new Uint8Array([0, 1]) },
     );
+    expect(getMaskBlockCoveragePath(mask.value, inspection.value, 1)).toEqual({
+      ok: true,
+      value: "M16 8h1v1h-1z",
+    });
+    expect(getMaskBlockCoveragePath(mask.value, inspection.value, 2)).toEqual({
+      ok: true,
+      value: "M16 0h1v9h-1z",
+    });
   });
 
   it("maps brush coverage in image pixels to component-specific blocks", async () => {
@@ -297,9 +368,24 @@ describe("JPEG block coordinates", () => {
     expect(getMaskBlockCoverage(mask.value, inspection.value, 1)).toMatchObject(
       { ok: true, value: new Uint8Array([1, 1, 1, 1]) },
     );
+    expect(getMaskBlockCoveragePath(mask.value, inspection.value, 1)).toEqual({
+      ok: true,
+      value: "M0 0h16v8h-16zM0 8h16v8h-16z",
+    });
     expect(getMaskBlockCoverage(mask.value, inspection.value, 2)).toMatchObject(
       { ok: true, value: new Uint8Array([1]) },
     );
+    expect(getMaskBlockCoveragePath(mask.value, inspection.value, 2)).toEqual({
+      ok: true,
+      value: "M0 0h16v16h-16z",
+    });
+
+    const oneBlockMask = createBrushMask([{ x: 4, y: 4 }], 0.1, 16, 16);
+    expect(oneBlockMask.ok).toBe(true);
+    if (!oneBlockMask.ok) return;
+    expect(
+      getMaskBlockCoveragePath(oneBlockMask.value, inspection.value, 1),
+    ).toEqual({ ok: true, value: "M0 0h8v8h-8z" });
   });
 
   it("selects only blocks with at least half of their visible area covered", async () => {

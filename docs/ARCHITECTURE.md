@@ -59,14 +59,29 @@ Coordinates import, document lifecycle, selection, operation dispatch, preview r
 
 Owns immutable source assets, document metadata, current editable representation, masks/selections, operation stack, and revision identifiers.
 
-The application has one global spatial selection in image-pixel
-coordinates, shared by Brush and Select; changing the active tool does
-not create a second selection or implicitly clear the current one.
-Selection rendering and tool input stay in the UI/application boundary,
-while mapping the selection to component blocks remains JPEG/operation
-work. The Inspector's selected 8×8 DCT block is separate state expressed
-in component/block coordinates; it must not be confused with the global
-pixel-space selection.
+Brush and Select author a draft spatial mask in image-pixel coordinates.
+Named masks are saved in editable document state through the versioned
+operation history. Mask-consuming JPEG effects use the latest draft by
+default or an explicitly selected saved mask, and embed an immutable mask
+snapshot and ID in their parameters; editing or selecting another mask
+cannot alter an existing operation. History can restore a snapshot as a
+newly identified draft without modifying the operation or creating a history
+entry. Tool-specific overlays are presentation
+state: mask-authoring tools show the draft, while Coefficient Glitch and
+Shuffle show the exact mask they will use. The Inspector's selected 8×8 DCT
+block is visible only for Inspector. The block coordinate remains distinct
+from image-pixel coordinates.
+
+Mask input snaps to the selected component's visible 8×8 DCT-block
+footprints by default, accounting for sampling factors, or to the
+image-space MCU grid in MCU mode. The stored mask remains image-pixel
+geometry; worker operations map it to component blocks and do not treat
+snapped pixels as block or MCU coordinates. Brush overlays render each full
+visible component DCT block selected by the existing mask-coverage mapping,
+without circular edges or partial blocks. The DCT/MCU setting controls sample
+snapping; the overlay therefore shows the component blocks an effect will
+change. This is a view of the existing image-pixel mask and does not change
+its stored shape or operation coverage.
 
 The tool bar owns tool activation and presents each tool's contextual
 controls in the right column. The right column contains the active tool
@@ -104,10 +119,14 @@ Do not collapse these into one generic `image` object.
 The original bytes are authoritative for reset and original export. A preview is never the authoritative JPEG representation.
 
 `OriginalAsset` keeps private byte storage and exposes copy-returning reads.
-The immutable editable document tracks its monotonic revision, image-pixel
-selection/masks, and versioned operation history separately from the source
+The immutable editable document tracks its monotonic revision, named
+image-pixel masks, and versioned operation history separately from the source
 JPEG. A spatial mask is mapped to visible component DCT blocks only in the
 JPEG worker; it is not itself a DCT-block coordinate or coefficient array.
+User experiment recipes are validated parameter data stored in local browser
+storage, not executable code or project-document state. A multi-step recipe
+is represented by one history entry and expands to its ordered coefficient
+operations during document replay.
 
 ## 4. JPEG engine boundary
 

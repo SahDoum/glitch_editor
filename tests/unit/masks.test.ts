@@ -3,6 +3,8 @@ import {
   createRectangleSelection,
   createSpatialMask,
   createBrushMask,
+  copySpatialMask,
+  getMaskFromParameters,
   isSpatialMask,
 } from "../../src/document/masks";
 
@@ -97,5 +99,45 @@ describe("spatial selections and masks", () => {
       ok: false,
       error: { code: "INVALID_INPUT" },
     });
+  });
+
+  it("copies rectangle and brush snapshots with new identities and independent geometry", () => {
+    const rectangle = createSpatialMask(
+      {
+        kind: "rectangle",
+        coordinateSpace: "image-pixel",
+        x: 2,
+        y: 3,
+        width: 8,
+        height: 9,
+      },
+      20,
+      16,
+    );
+    const brush = createBrushMask(
+      [
+        { x: 2, y: 3 },
+        { x: 5, y: 3 },
+      ],
+      2,
+      20,
+      16,
+    );
+    if (!rectangle.ok || !brush.ok) throw new Error("Expected masks");
+    for (const original of [rectangle.value, brush.value]) {
+      const snapshot = getMaskFromParameters({ mask: original });
+      if (!snapshot) throw new Error("Expected mask snapshot");
+      const copy = copySpatialMask(snapshot);
+      expect(copy.ok).toBe(true);
+      if (!copy.ok) throw new Error(copy.error.message);
+      expect(copy.value.id).not.toBe(original.id);
+      expect(copy.value.shapes).toEqual(original.shapes);
+      expect(copy.value.shapes).not.toBe(original.shapes);
+      expect(copy.value.shapes[0]).not.toBe(original.shapes[0]);
+      expect(copy.value.width).toBe(original.width);
+      expect(copy.value.height).toBe(original.height);
+    }
+    expect(getMaskFromParameters({ mask: { shapes: [] } })).toBeNull();
+    expect(getMaskFromParameters({ kind: "block-repeat" })).toBeNull();
   });
 });
