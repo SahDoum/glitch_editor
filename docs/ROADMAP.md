@@ -535,6 +535,33 @@ expected result rather than hidden.
 - Large-file processing reports progress and remains responsive.
 - No source asset is silently lost.
 
+## Milestone 10 — Static hosting and publication readiness
+
+### Tasks
+
+- [ ] Configure GitHub Pages to deploy the production build as a static site.
+      Account for the repository-site base path so app assets, including the
+      lazy-loaded JPEG codec, resolve correctly; keep image processing local
+      and do not introduce an upload service.
+- [ ] Measure and record the production payload baseline, including initial
+      and lazy-loaded assets. Track size changes in CI or release checks, set
+      an agreed size budget, and optimize only when measurements show it is
+      needed.
+- [ ] Confirm which contact details the user wants public and add only those
+      approved details to the site before publication.
+- [ ] Smoke-test the deployed GitHub Pages URL on the repository path, including
+      loading the app and its assets and verifying the local JPEG workflow.
+
+### Acceptance
+
+- The production build deploys from GitHub Actions and loads at the GitHub Pages
+  URL, with all app and codec assets resolving from the repository-site path.
+- The production payload has a recorded baseline and repeatable size tracking;
+  any size budget or optimization decision is based on measured output.
+- The published site contains the user's explicitly approved contact details
+  and does not expose unapproved personal information.
+- JPEG processing remains client-side, with no image upload behavior added.
+
 ## Next issues — Milestones 7–8
 
 1. Define Block Transform tool state and selection/drop interaction using the
