@@ -73,7 +73,8 @@
 
 ## ADR-008: Separate named masks, JPEG effects, and recipes
 
-- **Status:** Accepted
+- **Status:** Partially superseded by the current UI direction in ADR-010;
+  retained for operation/history compatibility and historical context.
 - **Date:** 2026-11-06
 - **Context:** The Milestone 6 interface combined Brush/Select mask authoring with coefficient-effect controls and applied every newly drawn mask immediately. The product notes require reusable masks, grid-aware input, tool-specific overlays, named experiments, and a more compact workspace. The earlier ADR-007 shared-selection workflow is superseded for mask/effect ownership; its Inspector interaction and separate presentation-state boundary remain.
 - **Decision:** Brush and Select are mask-authoring tools. A drawn image-pixel mask is a draft until saved under a unique name in the document operation history. Coefficient Glitch and Block Shuffle are separate effect tools that select a saved mask. Every applied effect/recipe stores the mask ID and exact mask snapshot, so subsequent mask creation or selection cannot mutate existing operations. DCT-block snapping is the default and uses the selected component's visible block footprint derived from sampling factors; users may explicitly choose the image-space MCU grid. Brush sample centers and rectangular bounds snap to the selected grid, while the stored mask and operation coordinates remain in image-pixel space.
@@ -95,3 +96,31 @@
 - **Stream experiment:** Plan entropy-coded scan corruption as a later, separate terminal byte-domain stage after coefficient operations and normal encoding. Run against a temporary copy from the verified baseline single-scan encoder. Preserve structural marker, restart-marker, and byte-stuffing boundaries; reject unverified input or ranges. Seed and bound edits. Undo returns to the clean encoded result; redo reproduces the corruption. A fully failed preview decode is an expected result: retain corrupt bytes for export and keep the clean preview available. Do not silently pixel-fallback or run coefficient edits after corruption.
 - **Consequences and limits:** This changes roadmap scope, not the current implementation or codec capability claim. Cross-image transplant, component conversion, stream transplant, arbitrary raw-byte editing, progressive/multi-scan support, and repeated encode/decode generations remain deferred. The terminal stream phase needs an explicit history/worker design rather than being inserted into the existing coefficient replay executor.
 - **Validation required before implementation is complete:** coefficient-level tests for block/DC/AC copy, swap, repeat, shuffle, overlap, bounds, deterministic replay, undo/redo, and original-byte immutability; independent decoding of supported encoded results; parser/stream tests proving protected boundaries, deterministic corruption, recoverable clean result, export retention after decode failure, cancellation, and explicit refusal of unsupported streams.
+
+## ADR-010: Icon-based experiment brushes and deferred mask expansion
+
+- **Status:** Accepted as the current product/interface direction.
+- **Context:** The editor needs a more approachable experiment workflow without
+  obscuring JPEG-domain semantics or losing existing recipes. Current mask
+  authoring is single-shape and expansion into multi-stroke masks and an
+  eraser is not the current development priority.
+- **Decision:** Present coefficient experiments as selectable brush icons,
+  including built-in and user-defined variants. Allow per-brush manual or
+  automatic application, with the setting persisted locally. Separate the
+  selected experiment from the Brush/Select canvas interaction. Keep
+  multi-step recipes available separately and preserve legacy saved data.
+- **Current behavior:** Use a left tool rail, the current mask draft rather
+  than a named-mask picker, immutable snapshots in operation history and
+  newest-first history display. After an automatically created operation is
+  accepted, clear the draft; on parameter-validation failure keep it.
+  Restoring a historical mask replaces the draft without confirmation.
+- **Scope:** The icon/brush paradigm is a reusable design direction, not a
+  claim that other JPEG domains already implement it. Research JPEG artifacts
+  and document candidate mechanisms, constraints and reproducible evidence
+  before selecting further brushes. Defer multi-stroke masks, erasing and
+  unified mask/effect undo pending renewed prioritization.
+- **Boundaries:** Preserve original bytes, typed operations, JPEG facade and
+  worker boundaries, and existing supported JPEG processes. Distinguish DCT,
+  DQT, blocks, entropy-coded scans and raw bytes; do not imply pixel-only
+  filtering or video-style prediction. See [INTERFACE.md](./INTERFACE.md) and
+  [ROADMAP.md](./ROADMAP.md) for the UI contract and follow-up checks.

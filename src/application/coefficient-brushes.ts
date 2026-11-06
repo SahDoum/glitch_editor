@@ -1,0 +1,276 @@
+import {
+  isCoefficientRecipeStep,
+  type CoefficientRecipeStep,
+} from "./experiment-recipes";
+import { failure, success, type Result } from "../shared/result";
+
+export interface CoefficientBrush {
+  readonly id: string;
+  readonly name: string;
+  readonly componentIndex: number;
+  readonly step: CoefficientRecipeStep;
+}
+
+export const BUILT_IN_COEFFICIENT_BRUSHES: readonly CoefficientBrush[] = [
+  {
+    id: "pixelate",
+    name: "Pixelate",
+    componentIndex: 0,
+    step: {
+      domain: "ac",
+      mode: "zero",
+      frequencyBand: "all",
+      strength: 0,
+      seed: 1,
+    },
+  },
+  {
+    id: "chroma-scale",
+    name: "Chroma scale",
+    componentIndex: 2,
+    step: {
+      domain: "ac",
+      mode: "scale",
+      frequencyBand: "all",
+      strength: 2,
+      seed: 1,
+    },
+  },
+];
+
+export const COEFFICIENT_BRUSH_STORAGE_KEY = "jpeg-glitch-editor.brushes.v1";
+export const BRUSH_AUTO_APPLY_STORAGE_KEY = "jpeg-glitch-editor.brush-auto.v1";
+export const DEFAULT_USER_BRUSH: CoefficientBrush = {
+  id: "user-default",
+  name: "User brush",
+  componentIndex: 0,
+  step: {
+    domain: "ac",
+    mode: "zero",
+    frequencyBand: "all",
+    strength: 0,
+    seed: 1,
+  },
+};
+const MAX_BRUSHES = 50;
+const MAX_STORAGE_SIZE = 256_000;
+
+function isCoefficientBrush(value: unknown): value is CoefficientBrush {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return false;
+  const { id, name, componentIndex, step } = value as Record<string, unknown>;
+  return (
+    typeof id === "string" &&
+    id.length > 0 &&
+    id.length <= 128 &&
+    typeof name === "string" &&
+    name.trim().length > 0 &&
+    name.length <= 48 &&
+    typeof componentIndex === "number" &&
+    Number.isSafeInteger(componentIndex) &&
+    componentIndex >= 0 &&
+    componentIndex < 256 &&
+    isCoefficientRecipeStep(step)
+  );
+}
+
+export function readCoefficientBrushes(
+  storage: Pick<Storage, "getItem">,
+): Result<readonly CoefficientBrush[]> {
+  let serialized: string | null;
+  try {
+    serialized = storage.getItem(COEFFICIENT_BRUSH_STORAGE_KEY);
+  } catch {
+    return failure({
+      code: "PROCESSING_FAILED",
+      message: "Saved brushes could not be read from local storage.",
+    });
+  }
+  if (serialized === null) return success([]);
+  if (serialized.length > MAX_STORAGE_SIZE)
+    return failure({
+      code: "INVALID_INPUT",
+      message: "Saved brushes exceed the supported storage size.",
+    });
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(serialized);
+  } catch {
+    return failure({
+      code: "INVALID_INPUT",
+      message: "Saved brushes contain invalid JSON.",
+    });
+  }
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length > MAX_BRUSHES ||
+    !parsed.every(isCoefficientBrush)
+  ) {
+    return failure({
+      code: "INVALID_INPUT",
+      message: "Saved brushes do not match the supported schema.",
+    });
+  }
+  const ids = [...BUILT_IN_COEFFICIENT_BRUSHES, ...parsed].map(
+    (brush) => brush.id,
+  );
+  if (new Set(ids).size !== ids.length)
+    return failure({
+      code: "INVALID_INPUT",
+      message: "Saved brushes contain duplicate identifiers.",
+    });
+  return success(parsed);
+}
+
+export function saveCoefficientBrush(
+  storage: Pick<Storage, "setItem">,
+  existing: readonly CoefficientBrush[],
+  brush: CoefficientBrush,
+): Result<readonly CoefficientBrush[]> {
+  if (!isCoefficientBrush(brush))
+    return failure({
+      code: "INVALID_INPUT",
+      message: "The brush settings are invalid.",
+    });
+  const all = [...BUILT_IN_COEFFICIENT_BRUSHES, ...existing];
+  if (
+    existing.length >= MAX_BRUSHES ||
+    all.some(
+      (item) =>
+        item.id === brush.id ||
+        item.name.trim().toLowerCase() === brush.name.trim().toLowerCase(),
+    )
+  ) {
+    return failure({
+      code: "INVALID_INPUT",
+      message: "The brush limit was reached or this brush name already exists.",
+    });
+  }
+  const next = [...existing, brush];
+  const serialized = JSON.stringify(next);
+  if (serialized.length > MAX_STORAGE_SIZE)
+    return failure({
+      code: "INVALID_INPUT",
+      message: "Saved brushes exceed the supported storage size.",
+    });
+  try {
+    storage.setItem(COEFFICIENT_BRUSH_STORAGE_KEY, serialized);
+  } catch {
+    return failure({
+      code: "PROCESSING_FAILED",
+      message: "The brush could not be saved to local storage.",
+    });
+  }
+  return success(next);
+}
+
+export function updateCoefficientBrush(
+  storage: Pick<Storage, "setItem">,
+  existing: readonly CoefficientBrush[],
+  brush: CoefficientBrush,
+): Result<readonly CoefficientBrush[]> {
+  if (
+    !isCoefficientBrush(brush) ||
+    BUILT_IN_COEFFICIENT_BRUSHES.some((item) => item.id === brush.id)
+  ) {
+    return failure({
+      code: "INVALID_INPUT",
+      message: "The brush settings are invalid or cannot be edited.",
+    });
+  }
+  const index = existing.findIndex((item) => item.id === brush.id);
+  if (index < 0) return saveCoefficientBrush(storage, existing, brush);
+  if (
+    [...BUILT_IN_COEFFICIENT_BRUSHES, ...existing].some(
+      (item) =>
+        item.id !== brush.id &&
+        item.name.trim().toLowerCase() === brush.name.trim().toLowerCase(),
+    )
+  ) {
+    return failure({
+      code: "INVALID_INPUT",
+      message: "A brush already uses this name.",
+    });
+  }
+  const next = existing.map((item) => (item.id === brush.id ? brush : item));
+  const serialized = JSON.stringify(next);
+  if (serialized.length > MAX_STORAGE_SIZE)
+    return failure({
+      code: "INVALID_INPUT",
+      message: "Saved brushes exceed the supported storage size.",
+    });
+  try {
+    storage.setItem(COEFFICIENT_BRUSH_STORAGE_KEY, serialized);
+  } catch {
+    return failure({
+      code: "PROCESSING_FAILED",
+      message: "The brush could not be saved to local storage.",
+    });
+  }
+  return success(next);
+}
+
+export function readBrushAutoApply(
+  storage: Pick<Storage, "getItem">,
+): Result<Readonly<Record<string, boolean>>> {
+  let serialized: string | null;
+  try {
+    serialized = storage.getItem(BRUSH_AUTO_APPLY_STORAGE_KEY);
+  } catch {
+    return failure({
+      code: "PROCESSING_FAILED",
+      message: "Brush automatic-apply settings could not be read.",
+    });
+  }
+  if (serialized === null) return success({});
+  if (serialized.length > MAX_STORAGE_SIZE)
+    return failure({
+      code: "INVALID_INPUT",
+      message: "Brush automatic-apply settings are too large.",
+    });
+  let value: unknown;
+  try {
+    value = JSON.parse(serialized);
+  } catch {
+    return failure({
+      code: "INVALID_INPUT",
+      message: "Brush automatic-apply settings contain invalid JSON.",
+    });
+  }
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    Object.entries(value).some(
+      ([key, enabled]) =>
+        key.length === 0 || key.length > 128 || typeof enabled !== "boolean",
+    )
+  ) {
+    return failure({
+      code: "INVALID_INPUT",
+      message: "Brush automatic-apply settings are invalid.",
+    });
+  }
+  return success(value as Record<string, boolean>);
+}
+
+export function writeBrushAutoApply(
+  storage: Pick<Storage, "setItem">,
+  settings: Readonly<Record<string, boolean>>,
+): Result<undefined> {
+  const serialized = JSON.stringify(settings);
+  if (serialized.length > MAX_STORAGE_SIZE)
+    return failure({
+      code: "INVALID_INPUT",
+      message: "Brush automatic-apply settings are too large.",
+    });
+  try {
+    storage.setItem(BRUSH_AUTO_APPLY_STORAGE_KEY, serialized);
+  } catch {
+    return failure({
+      code: "PROCESSING_FAILED",
+      message: "Brush automatic-apply settings could not be saved.",
+    });
+  }
+  return success(undefined);
+}

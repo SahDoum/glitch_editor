@@ -11,6 +11,102 @@
 - Record scope changes in `docs/DECISIONS.md`.
 - Treat support for a JPEG process as a product claim that requires fixtures and tests.
 
+## Current development priorities — interface and experiment brushes
+
+The current UI and its verified implementation boundaries are described in
+[INTERFACE.md](./INTERFACE.md). These priorities supersede the ordering of
+the historical «Next issues» list below; they do not imply that all listed
+capabilities are already implemented.
+
+### Next: research JPEG artifacts, then propose experiment brushes
+
+- [ ] Research a focused set of observable JPEG artifacts and techniques using
+  traceable sources and small licensed or synthetic fixtures. For each
+  candidate, identify the JPEG representation involved, the actual mechanism,
+  typical visual manifestation and its dependence on image content,
+  component, sampling and codec; record uncertainty and source provenance.
+- [ ] Map each candidate to existing typed operations and supported JPEG
+  processes. Clearly distinguish quantized coefficient edits, DQT
+  reinterpretation/requantization, block operations, entropy-coded scan
+  edits and raw-byte corruption. Do not frame JPEG as video datamoshing.
+- [ ] Propose a short, user-reviewable set of new icon-based brushes with
+  names, domain, exact default parameters, meaningful controls, area of
+  effect, deterministic seed if applicable, re-encoding/decode risks and
+  example before/after outcomes. Do not claim a visual outcome is universal.
+- [ ] Obtain an explicit decision before adding new public formats,
+  dependencies, operations, codec capabilities or support for additional
+  JPEG processes. Keep raw/entropy experiments isolated; no hidden pixel
+  substitutes or modifications of source bytes.
+- [ ] Implement selected brushes as small vertical slices, reusing existing
+  typed operations and the interaction principles in
+  [INTERFACE.md](./INTERFACE.md). Test parameter mapping and boundaries,
+  reproducible results, current-mask behavior where applicable, history,
+  errors and supported/unsupported inputs. Use deterministic visual and
+  coefficient-level golden fixtures, independent decoding and other
+  representation-specific checks where practical.
+  Update the experiment catalog only for verified behavior.
+
+#### Candidate artifact brushes to investigate
+
+These are research candidates, not implemented brushes or proven mappings
+to the current coefficient operations. Establish the mechanism and a
+reproducible example for each before selecting parameters or promising a
+visual result.
+
+- [ ] **Ringing:** investigate oscillations around high-contrast edges in
+  reconstructed 8×8 DCT blocks, including the hypothesis that suppression
+  or loss of precision of high-frequency coefficients contributes to them.
+  Compare frequency bands, quantization and edge alignment.
+- [ ] **Posterization:** investigate whether JPEG quantization can produce a
+  useful posterization-like appearance, and distinguish it from deliberate
+  pixel-value or palette reduction. Identify image and gradient conditions
+  and whether existing JPEG-domain operations can reproduce it.
+- [ ] **Contouring / banding:** investigate visible steps in smooth gradients,
+  potential relationships with quantization and posterization, and whether
+  this warrants a distinct brush or a shared experiment. Do not assume the
+  same mechanism or outcome without evidence.
+- [ ] **Blockiness in busy regions:** investigate how block boundaries become
+  visible in detailed or textured regions, how this differs from blockiness
+  in smooth areas, and which coefficient-domain manipulations can create a
+  controllable effect without conflating blocks with MCUs.
+- [ ] **Staircase noise:** define the desired appearance on diagonal edges;
+  investigate whether it arises from DCT quantization, chroma subsampling,
+  aliasing or another mechanism in each example. Only propose a JPEG-domain
+  brush if its mechanism and limitations are supported by evidence.
+
+### Remaining interface work
+
+- [ ] Consider the icon-based experiment-brush paradigm for other tools
+  where technically appropriate, without implying all operations use masks.
+- [ ] Improve the compactness and readability of history while preserving
+  enable/disable, order changes, removal, mask restoration and Undo/Redo.
+- [ ] Evaluate a compact right panel with Effect / History / Information tabs;
+  preserve inspector access, collapsed state, keyboard access and error
+  visibility. This remains a proposal, not the current layout.
+- [ ] Improve built-in brush names, descriptions and icons using observed,
+  validated outcomes; maintain access to existing user brushes and recipes.
+- [ ] Check keyboard access, accessible names, focus states and responsive
+  layout as the interface evolves, without hiding errors or original comparison.
+- [ ] Evaluate temporary live preview only after performance measurement and a
+  separate product decision; handle stale worker responses, cancellation and
+  unconfirmed output explicitly.
+
+### Deferred: further mask and eraser development
+
+Do not treat these as prerequisites for brush research or routine interface
+work. Keep the existing single-shape mask behavior and immutable snapshots
+honestly documented until the user reprioritizes this work.
+
+- [ ] Add combining multiple strokes/rectangles and erasing/subtraction.
+- [ ] Define shared undo/redo for mask changes and effects, including reset,
+  mask restoration and error handling.
+- [ ] Consider mask visibility/opacity controls and explicit whole-image
+  selection.
+- [ ] Before implementation, agree on versioning, migration, work limits and
+  compatibility with existing operation snapshots and named-mask data;
+  test sampling-aware coverage and overlay consistency. Do not change the
+  representation or public interfaces without the required approval.
+
 ## Milestone 0 — Repository and engineering foundation (complete)
 
 ### Tasks

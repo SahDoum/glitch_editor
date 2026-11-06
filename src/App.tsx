@@ -21,7 +21,6 @@ import {
   applyBlockTransferOperation,
   applyCoefficientRecipeOperation,
   applyCoefficientGlitchOperation,
-  applyMaskToDocument,
   applyQuantizationOperation,
   createJpegDocumentSession,
   type JpegEditableState,
@@ -50,7 +49,6 @@ import {
   createRectangleSelection,
   createSpatialMask,
   getMaskFromParameters,
-  type NamedSpatialMask,
   type SpatialMask,
   type SpatialSelection,
 } from "./document/masks";
@@ -82,8 +80,17 @@ import {
   type ExperimentRecipe,
 } from "./application/experiment-recipes";
 import {
+  BUILT_IN_COEFFICIENT_BRUSHES,
+  DEFAULT_USER_BRUSH,
+  readCoefficientBrushes,
+  readBrushAutoApply,
+  updateCoefficientBrush,
+  writeBrushAutoApply,
+  type CoefficientBrush,
+} from "./application/coefficient-brushes";
+import {
   initialWorkspaceState,
-  getEffectMask,
+  getHistoryDisplayEntries,
   getWorkspaceOverlayVisibility,
   TOOL_GROUPS,
   workspaceReducer,
@@ -94,7 +101,6 @@ import { getRectangleSelection } from "./ui/selection-overlay";
 const MARKER_LIMIT = 250;
 const EMPTY_JPEG_OPERATIONS: JpegEditableState["jpegOperations"] =
   Object.freeze([]);
-const EMPTY_NAMED_MASKS: JpegEditableState["masks"] = Object.freeze([]);
 type ImagePoint = { x: number; y: number };
 type BlockTransformGesture = {
   readonly kind:
@@ -116,7 +122,7 @@ function getToolIconPaths(tool: CanvasTool): readonly string[] {
     case "brush":
       return ["m4 16 9-9 4 4-9 9H4v-4Z", "m12 8 3-3 4 4-3 3", "M4 21h7"];
     case "select":
-      return ["M4 4h16v16H4z", "M9 4v3", "M15 4v3", "M4 9h3", "M4 15h3"];
+      return ["M4 4h16v16H4z"];
     case "coefficient-glitch":
       return [
         "M12 3v4",
@@ -157,6 +163,7 @@ function CollapsibleSection({
   count,
   className = "",
   detailsRef,
+  initiallyOpen = true,
   children,
 }: {
   id: string;
@@ -165,12 +172,13 @@ function CollapsibleSection({
   count?: number;
   className?: string;
   detailsRef?: Ref<HTMLDetailsElement>;
+  initiallyOpen?: boolean;
   children: ReactNode;
 }) {
   return (
     <details
       className={`collapsible-section ${className}`}
-      open
+      open={initiallyOpen}
       ref={detailsRef}
     >
       <summary className="collapsible-summary" aria-controls={`${id}-content`}>
@@ -404,48 +412,14 @@ function describeMask(mask: SpatialMask): string {
   return `Image-pixel brush · radius ${shape.radius.toFixed(1)} px · ${shape.points.length} samples`;
 }
 
-function EffectMaskPicker({
-  activeMaskId,
-  draft,
-  savedMasks,
-  mask,
-  onSelect,
-}: {
-  activeMaskId: string | null;
-  draft: SpatialMask | null;
-  savedMasks: readonly NamedSpatialMask[];
-  mask: SpatialMask | null;
-  onSelect: (maskId: string | null) => void;
-}) {
+function EffectMaskPicker({ mask }: { mask: SpatialMask | null }) {
   return (
     <>
-      <label className="coefficient-field">
-        <span>Mask used by this effect</span>
-        <select
-          value={activeMaskId ?? ""}
-          onChange={(event) => onSelect(event.currentTarget.value || null)}
-        >
-          <option value="">
-            {draft ? "Current draft mask" : "Draw or choose a mask"}
-          </option>
-          {savedMasks.map((saved) => (
-            <option key={saved.mask.id} value={saved.mask.id}>
-              {saved.name}
-            </option>
-          ))}
-        </select>
-      </label>
       {mask ? (
-        <p className="coefficient-note">
-          {activeMaskId
-            ? savedMasks.find(({ mask: saved }) => saved.id === activeMaskId)
-                ?.name
-            : "Current draft mask"}{" "}
-          · {describeMask(mask)}
-        </p>
+        <p className="coefficient-note">Current mask · {describeMask(mask)}</p>
       ) : (
         <p className="coefficient-note">
-          Draw a mask with Brush or Select, or choose a saved mask.
+          Draw a mask with Brush or Select before applying this effect.
         </p>
       )}
     </>
@@ -469,6 +443,44 @@ function loadInitialUserRecipes(): {
   return result.ok
     ? { recipes: result.value, error: "" }
     : { recipes: [], error: result.error.message };
+}
+
+function loadInitialBrushes(): {
+  brushes: readonly CoefficientBrush[];
+  error: string;
+} {
+  let storage: Storage;
+  try {
+    storage = window.localStorage;
+  } catch {
+    return {
+      brushes: [],
+      error: "Saved brushes are unavailable in this browser.",
+    };
+  }
+  const result = readCoefficientBrushes(storage);
+  return result.ok
+    ? { brushes: result.value, error: "" }
+    : { brushes: [], error: result.error.message };
+}
+
+function loadInitialBrushAutoApply(): {
+  settings: Readonly<Record<string, boolean>>;
+  error: string;
+} {
+  let storage: Storage;
+  try {
+    storage = window.localStorage;
+  } catch {
+    return {
+      settings: {},
+      error: "Brush automatic-apply settings are unavailable.",
+    };
+  }
+  const result = readBrushAutoApply(storage);
+  return result.ok
+    ? { settings: result.value, error: "" }
+    : { settings: {}, error: result.error.message };
 }
 
 function MetadataInspector({
@@ -501,6 +513,7 @@ function MetadataInspector({
         title="Structure"
         kicker="JPEG INSPECTOR"
         detailsRef={jpegInspectorRef}
+        initiallyOpen={false}
       >
         <dl className="metadata-list">
           <div>
@@ -529,6 +542,7 @@ function MetadataInspector({
         id="frame-components"
         title="Components"
         kicker="FRAME COMPONENTS"
+        initiallyOpen={false}
       >
         <ul className="component-list">
           {inspection.components.map((component) => {
@@ -561,6 +575,7 @@ function MetadataInspector({
         id="dqt-tables"
         title="Current 8×8 matrices"
         kicker="DQT QUANTIZATION TABLES"
+        initiallyOpen={false}
       >
         {quantizationTables.map((table) => (
           <div className="quantization-table-view" key={table.id}>
@@ -591,6 +606,7 @@ function MetadataInspector({
         id="block-geometry"
         title="Block geometry"
         kicker="BLOCK GEOMETRY"
+        initiallyOpen={false}
       >
         <dl className="metadata-list">
           <div>
@@ -627,6 +643,7 @@ function MetadataInspector({
         title="Marker sequence"
         kicker="ENCODED FILE"
         count={inspection.markers.length}
+        initiallyOpen={false}
       >
         <div className="marker-table-wrap">
           <table className="marker-table">
@@ -1087,7 +1104,7 @@ function App() {
   );
   const {
     activeTool: toolMode,
-    activeMaskId,
+    panelTool,
     isRightPanelCollapsed,
     selectedBlock,
     selectionMask: globalSelectionMask,
@@ -1130,7 +1147,18 @@ function App() {
     readonly y: number;
   } | null>(null);
   const [brushSize, setBrushSize] = useState(32);
-  const [maskName, setMaskName] = useState("");
+  const [initialBrushState] = useState(loadInitialBrushes);
+  const [userBrushes, setUserBrushes] = useState(initialBrushState.brushes);
+  const [brushStorageError, setBrushStorageError] = useState(
+    initialBrushState.error,
+  );
+  const [selectedBrushId, setSelectedBrushId] = useState("pixelate");
+  const [brushName, setBrushName] = useState("");
+  const [initialAutoApply] = useState(loadInitialBrushAutoApply);
+  const [brushAutoApply, setBrushAutoApply] = useState(
+    initialAutoApply.settings,
+  );
+  const [brushAutoError, setBrushAutoError] = useState(initialAutoApply.error);
   const [initialRecipeState] = useState(loadInitialUserRecipes);
   const [userRecipes, setUserRecipes] = useState(initialRecipeState.recipes);
   const [recipeStorageError, setRecipeStorageError] = useState(
@@ -1165,8 +1193,14 @@ function App() {
   const imageStage = useRef<HTMLDivElement>(null);
   const jpegOperations =
     historyDocument?.currentState.jpegOperations ?? EMPTY_JPEG_OPERATIONS;
-  const savedMasks = historyDocument?.currentState.masks ?? EMPTY_NAMED_MASKS;
-  const activeMask = getEffectMask(workspaceState, savedMasks);
+  const activeMask = globalSelectionMask;
+  const brushes = [
+    ...BUILT_IN_COEFFICIENT_BRUSHES,
+    ...(userBrushes.some((brush) => brush.id === DEFAULT_USER_BRUSH.id)
+      ? userBrushes
+      : [DEFAULT_USER_BRUSH, ...userBrushes]),
+  ];
+  const selectedBrush = brushes.find((brush) => brush.id === selectedBrushId);
   const allRecipes = [...BUILT_IN_EXPERIMENT_RECIPES, ...userRecipes];
   const selectedRecipe =
     allRecipes.find((recipe) => recipe.id === selectedRecipeId) ?? null;
@@ -1320,6 +1354,7 @@ function App() {
     setCoefficientMode("zero");
     setCoefficientStrength(1);
     setCoefficientSeed(1);
+    setSelectedBrushId("pixelate");
     setRepeatSource(null);
     setRepeatDraft(null);
     setRepeatDestination(null);
@@ -1333,7 +1368,6 @@ function App() {
     blockTransformGesture.current = null;
     setBrushSize(32);
     setMaskGrid("dct");
-    setMaskName("");
     setRecipeDraft([]);
     setRecipeName("");
     dispatchWorkspace({ type: "select-mask", maskId: null });
@@ -1362,14 +1396,6 @@ function App() {
     }
     setErrorMessage("");
     setHistoryDocument(result.value);
-    if (
-      workspaceState.activeMaskId &&
-      !result.value.currentState.masks.some(
-        ({ mask }) => mask.id === workspaceState.activeMaskId,
-      )
-    ) {
-      dispatchWorkspace({ type: "select-mask", maskId: null });
-    }
     const history = operationHistory.current;
     setHistoryAvailability({
       canUndo: history?.canUndo ?? false,
@@ -1861,6 +1887,14 @@ function App() {
       }
       setSelection(null);
       dispatchWorkspace({ type: "set-selection", selection: mask.value });
+      if (
+        panelTool === "coefficient-glitch" &&
+        brushAutoApply[selectedBrushId]
+      ) {
+        if (applyCoefficientOperation(mask.value)) {
+          dispatchWorkspace({ type: "set-selection", selection: null });
+        }
+      }
       return;
     }
     const start = selectionStart.current;
@@ -1878,9 +1912,15 @@ function App() {
         } else {
           setSelection(null);
           dispatchWorkspace({ type: "set-selection", selection: mask.value });
+          if (
+            panelTool === "coefficient-glitch" &&
+            brushAutoApply[selectedBrushId]
+          ) {
+            if (applyCoefficientOperation(mask.value)) {
+              dispatchWorkspace({ type: "set-selection", selection: null });
+            }
+          }
         }
-      } else {
-        dispatchWorkspace({ type: "set-selection", selection: null });
       }
     }
     selectionStart.current = null;
@@ -1895,34 +1935,150 @@ function App() {
     setBlockTransferDraft(null);
     setRepeatDraft(null);
     setSelection(null);
-    dispatchWorkspace({ type: "activate-tool", tool });
+    const maskEffect =
+      tool === "coefficient-glitch" ||
+      (tool === "block-transform" && blockTransformMode === "shuffle");
+    const preservePanel =
+      (tool === "brush" || tool === "select") &&
+      (panelTool === "coefficient-glitch" ||
+        (panelTool === "block-transform" && blockTransformMode === "shuffle"));
+    if (
+      maskEffect &&
+      (tool === "coefficient-glitch" || tool === "block-transform")
+    ) {
+      dispatchWorkspace({ type: "activate-mask-effect", tool });
+    } else {
+      dispatchWorkspace({ type: "activate-tool", tool, preservePanel });
+    }
     if (activeToolPanel.current) activeToolPanel.current.open = true;
   }
 
-  function applyCoefficientOperation() {
+  function applyCoefficientOperation(mask = activeMask) {
     const history = operationHistory.current;
-    const mask = activeMask;
     if (!history || !mask) {
       setErrorMessage(
         "Draw or select a mask before applying a coefficient glitch.",
       );
+      return false;
+    }
+    const result = applyCoefficientGlitchOperation(history, {
+      kind: "coefficients",
+      mask,
+      componentIndex,
+      domain: coefficientDomain,
+      mode: coefficientMode,
+      frequencyBand,
+      strength:
+        coefficientMode === "invert" || coefficientMode === "isolate"
+          ? 0
+          : coefficientStrength,
+      seed: coefficientSeed,
+    });
+    updateHistory(result);
+    return result.ok;
+  }
+
+  function selectCoefficientBrush(id: string) {
+    const brush = brushes.find((candidate) => candidate.id === id);
+    if (!brush) {
+      setErrorMessage("The selected brush is unavailable.");
       return;
     }
-    updateHistory(
-      applyCoefficientGlitchOperation(history, {
-        kind: "coefficients",
-        mask,
-        componentIndex,
-        domain: coefficientDomain,
-        mode: coefficientMode,
-        frequencyBand,
-        strength:
-          coefficientMode === "invert" || coefficientMode === "isolate"
-            ? 0
-            : coefficientStrength,
-        seed: coefficientSeed,
-      }),
-    );
+    setSelectedBrushId(id);
+    setBrushName(brush.name);
+    setComponentIndex(brush.componentIndex);
+    setCoefficientDomain(brush.step.domain);
+    setCoefficientMode(brush.step.mode);
+    setFrequencyBand(brush.step.frequencyBand);
+    setCoefficientStrength(brush.step.strength);
+    setCoefficientSeed(brush.step.seed);
+    setErrorMessage("");
+  }
+
+  function saveCurrentBrush() {
+    let storage: Storage;
+    try {
+      storage = window.localStorage;
+    } catch {
+      setBrushStorageError("Saved brushes are unavailable in this browser.");
+      return;
+    }
+    if (brushStorageError) {
+      setErrorMessage("Resolve the brush storage error before saving.");
+      return;
+    }
+    const brush: CoefficientBrush = {
+      id: selectedBrushId,
+      name: brushName.trim(),
+      componentIndex,
+      step: createCurrentRecipeStep(),
+    };
+    const saved = updateCoefficientBrush(storage, userBrushes, brush);
+    if (!saved.ok) {
+      setErrorMessage(saved.error.message);
+      return;
+    }
+    setUserBrushes(saved.value);
+    setErrorMessage("");
+  }
+
+  function addCoefficientBrush() {
+    if (brushStorageError) {
+      setErrorMessage("Resolve the brush storage error before adding a brush.");
+      return;
+    }
+    let storage: Storage;
+    try {
+      storage = window.localStorage;
+    } catch {
+      setBrushStorageError("Saved brushes are unavailable in this browser.");
+      return;
+    }
+    let number = 2;
+    while (
+      brushes.some(
+        (brush) => brush.name.toLowerCase() === `user brush ${number}`,
+      )
+    )
+      number += 1;
+    const brush = {
+      ...DEFAULT_USER_BRUSH,
+      id: crypto.randomUUID(),
+      name: `User brush ${number}`,
+    };
+    const saved = updateCoefficientBrush(storage, userBrushes, brush);
+    if (!saved.ok) {
+      setErrorMessage(saved.error.message);
+      return;
+    }
+    setUserBrushes(saved.value);
+    setSelectedBrushId(brush.id);
+    setBrushName(brush.name);
+    setComponentIndex(brush.componentIndex);
+    setCoefficientDomain(brush.step.domain);
+    setCoefficientMode(brush.step.mode);
+    setFrequencyBand(brush.step.frequencyBand);
+    setCoefficientStrength(brush.step.strength);
+    setCoefficientSeed(brush.step.seed);
+    setErrorMessage("");
+  }
+
+  function changeBrushAutoApply(checked: boolean) {
+    if (brushAutoError) return;
+    let storage: Storage;
+    try {
+      storage = window.localStorage;
+    } catch {
+      setBrushAutoError("Brush automatic-apply settings are unavailable.");
+      return;
+    }
+    const next = { ...brushAutoApply, [selectedBrushId]: checked };
+    const result = writeBrushAutoApply(storage, next);
+    if (!result.ok) {
+      setBrushAutoError(result.error.message);
+      return;
+    }
+    setBrushAutoApply(next);
   }
 
   function applyBlockRepeat() {
@@ -1989,35 +2145,6 @@ function App() {
     dispatchWorkspace({ type: "set-selection", selection: null });
   }
 
-  function saveCurrentMask() {
-    const history = operationHistory.current;
-    if (!history || !globalSelectionMask) {
-      setErrorMessage("Draw a mask before saving it.");
-      return;
-    }
-    const saved = applyMaskToDocument(history, globalSelectionMask, maskName);
-    if (!saved.ok) {
-      setErrorMessage(saved.error.message);
-      return;
-    }
-    updateHistory(saved);
-    dispatchWorkspace({
-      type: "select-mask",
-      maskId: globalSelectionMask.id,
-    });
-    clearSelection();
-    setMaskName("");
-  }
-
-  function loadSavedMask(maskId: string) {
-    const saved = savedMasks.find(({ mask }) => mask.id === maskId);
-    if (!saved) return;
-    dispatchWorkspace({ type: "set-selection", selection: saved.mask });
-    dispatchWorkspace({ type: "select-mask", maskId: saved.mask.id });
-    setSelection(getRectangleSelection(saved.mask));
-    setMaskName(`${saved.name} copy`);
-  }
-
   function restoreHistoryMask(mask: SpatialMask) {
     if (
       !document ||
@@ -2042,7 +2169,6 @@ function App() {
     setBrushDraft([]);
     setSelection(null);
     dispatchWorkspace({ type: "set-selection", selection: restored.value });
-    setMaskName("");
     setErrorMessage("");
   }
 
@@ -2247,7 +2373,7 @@ function App() {
         : null;
   const activeToolLabel =
     TOOL_GROUPS.flatMap((group) => group.tools).find(
-      (tool) => tool.id === toolMode,
+      (tool) => tool.id === panelTool,
     )?.label ?? "Tool settings";
   return (
     <main className={`workspace ${document ? "has-tool-bar" : ""}`}>
@@ -2316,10 +2442,6 @@ function App() {
               {isEncoding ? "Encoding…" : "Export JPEG"}
             </button>
           )}
-          <span className="local-badge">
-            <span className="status-dot" aria-hidden="true" />
-            Local workspace
-          </span>
         </div>
       </header>
 
@@ -2336,11 +2458,11 @@ function App() {
               <div className="tool-group-buttons">
                 {group.tools.map((tool) => (
                   <button
-                    className={`tool-button ${toolMode === tool.id ? "is-active" : ""}`}
+                    className={`tool-button ${toolMode === tool.id || panelTool === tool.id ? "is-active" : ""}`}
                     key={tool.id}
                     type="button"
                     aria-label={tool.label}
-                    aria-pressed={toolMode === tool.id}
+                    aria-pressed={toolMode === tool.id || panelTool === tool.id}
                     title={tool.label}
                     onClick={() => activateTool(tool.id)}
                   >
@@ -2355,7 +2477,13 @@ function App() {
                       aria-hidden="true"
                     >
                       {getToolIconPaths(tool.id).map((path) => (
-                        <path d={path} key={path} />
+                        <path
+                          d={path}
+                          key={path}
+                          strokeDasharray={
+                            tool.id === "select" ? "3 3" : undefined
+                          }
+                        />
                       ))}
                     </svg>
                     <span>{tool.label}</span>
@@ -2397,8 +2525,8 @@ function App() {
               <div className="milestone-note">
                 <span className="note-index">03</span>
                 <span>
-                  Drop a JPEG to inspect it, select a region, and build a
-                  reversible mask history.
+                  Drop a JPEG to inspect it, select a region, and apply
+                  reversible JPEG effects.
                 </span>
               </div>
             </div>
@@ -2416,9 +2544,11 @@ function App() {
                       ? "Applying JPEG-domain operations in the local worker…"
                       : editedBytes && editedPreviewError
                         ? editedPreviewError
-                        : editedBytes
+                        : editedBytes && !showOriginal
                           ? "libjpeg-turbo re-encoding · source bytes remain unchanged"
                           : "Original JPEG · no pixel-only editing"}
+                    {" · "}
+                    {document.inspection.width} × {document.inspection.height}
                   </p>
                 </div>
                 <div className="overlay-controls">
@@ -2535,17 +2665,6 @@ function App() {
                   />
                 </div>
               </div>
-              <div className="preview-caption">
-                <span>
-                  {document.inspection.width} × {document.inspection.height}
-                </span>
-                <span>
-                  {editedBytes && !showOriginal
-                    ? editedPreviewError ||
-                      "JPEG glitch operation · re-encoded preview"
-                    : "Original decoded preview · source bytes unchanged"}
-                </span>
-              </div>
             </div>
           )}
           {isDragging && (
@@ -2648,26 +2767,90 @@ function App() {
                       )}
                     </section>
                   )}
-                  {toolMode === "coefficient-glitch" && (
+                  {panelTool === "coefficient-glitch" && (
                     <section className="inspector-section selection-panel">
                       <div className="section-kicker">
                         JPEG-DOMAIN EFFECT · DCT
                       </div>
                       <h2>Coefficient experiments</h2>
+                      <div className="coefficient-field">
+                        <span>Coefficient brushes</span>
+                        <div
+                          className="brush-picker"
+                          role="group"
+                          aria-label="Coefficient brushes"
+                        >
+                          {brushes.map((brush) => (
+                            <button
+                              className={`brush-preset ${selectedBrushId === brush.id ? "is-active" : ""}`}
+                              type="button"
+                              key={brush.id}
+                              aria-label={brush.name}
+                              aria-pressed={selectedBrushId === brush.id}
+                              title={brush.name}
+                              onClick={() => selectCoefficientBrush(brush.id)}
+                            >
+                              <span aria-hidden="true">
+                                {brush.id === "pixelate"
+                                  ? "▦"
+                                  : brush.id === "chroma-scale"
+                                    ? "◈"
+                                    : "✎"}
+                              </span>
+                              <small>{brush.name}</small>
+                            </button>
+                          ))}
+                          <button
+                            className="brush-preset brush-add"
+                            type="button"
+                            aria-label="Add user brush"
+                            title="Add user brush"
+                            disabled={!!brushStorageError}
+                            onClick={addCoefficientBrush}
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+                      <label className="coefficient-note">
+                        <input
+                          type="checkbox"
+                          checked={!!brushAutoApply[selectedBrushId]}
+                          disabled={!!brushAutoError}
+                          onChange={(event) =>
+                            changeBrushAutoApply(event.currentTarget.checked)
+                          }
+                        />{" "}
+                        Apply automatically after drawing
+                      </label>
+                      {brushStorageError && (
+                        <p className="coefficient-error" role="alert">
+                          {brushStorageError} Saving brushes is unavailable.
+                        </p>
+                      )}
+                      {brushAutoError && (
+                        <p className="coefficient-error" role="alert">
+                          {brushAutoError}
+                        </p>
+                      )}
                       <p className="operation-description">
                         These operations edit quantized DCT coefficients, then
                         re-encode a new JPEG. They do not edit decoded pixels or
                         the original JPEG bytes.
                       </p>
-                      <EffectMaskPicker
-                        activeMaskId={activeMaskId}
-                        draft={globalSelectionMask}
-                        savedMasks={savedMasks}
-                        mask={activeMask}
-                        onSelect={(maskId) =>
-                          dispatchWorkspace({ type: "select-mask", maskId })
-                        }
-                      />
+                      <p className="coefficient-note">
+                        {selectedBrush?.name} ·{" "}
+                        {coefficientDomain.toUpperCase()} · {coefficientMode} ·{" "}
+                        {frequencyBand}
+                        {brushAutoApply[selectedBrushId]
+                          ? " · each completed mask is applied immediately"
+                          : " · draw a mask, then apply"}
+                      </p>
+                      <EffectMaskPicker mask={activeMask} />
+                      <p className="coefficient-note">
+                        Select Brush or Select in the toolbar to edit the mask
+                        without closing these effect settings.
+                      </p>
                       <label className="coefficient-field">
                         <span>Component</span>
                         <select
@@ -2676,6 +2859,12 @@ function App() {
                             setComponentIndex(Number(event.currentTarget.value))
                           }
                         >
+                          {componentIndex >=
+                            document.inspection.components.length && (
+                            <option value={componentIndex}>
+                              Component {componentIndex} unavailable
+                            </option>
+                          )}
                           {document.inspection.components.map(
                             (component, index) => (
                               <option key={component.id} value={index}>
@@ -2690,142 +2879,21 @@ function App() {
                           )}
                         </select>
                       </label>
-                      <p className="coefficient-note">
-                        Y/Cb/Cr labels are common ID conventions, not guaranteed
-                        color metadata. Component index and sampling factors are
-                        authoritative. Select Cb or Cr to experiment on chroma
-                        coefficients independently.
-                      </p>
-                      <label className="coefficient-field tool-field">
-                        <span>Coefficient domain</span>
-                        <select
-                          value={coefficientDomain}
-                          disabled={
-                            coefficientMode === "offset" ||
-                            coefficientMode === "invert" ||
-                            coefficientMode === "isolate"
-                          }
-                          onChange={(event) => {
-                            const next = event.currentTarget.value;
-                            if (next === "dc" || next === "ac") {
-                              setCoefficientDomain(next);
-                              if (next === "dc") setFrequencyBand("all");
-                            }
-                          }}
-                        >
-                          <option value="ac">AC coefficients</option>
-                          <option value="dc">DC coefficients</option>
-                        </select>
-                      </label>
-                      <label className="coefficient-field tool-field">
-                        <span>Operation</span>
-                        <select
-                          value={coefficientMode}
-                          onChange={(event) => {
-                            const next = event.currentTarget.value;
-                            if (
-                              next === "zero" ||
-                              next === "scale" ||
-                              next === "randomize" ||
-                              next === "offset" ||
-                              next === "invert" ||
-                              next === "isolate"
-                            ) {
-                              setCoefficientMode(next);
-                              if (next === "offset") {
-                                setCoefficientDomain("dc");
-                                setFrequencyBand("all");
-                              } else if (
-                                next === "invert" ||
-                                next === "isolate"
-                              ) {
-                                setCoefficientDomain("ac");
-                                if (
-                                  next === "isolate" &&
-                                  frequencyBand === "all"
-                                ) {
-                                  setFrequencyBand("low");
-                                }
-                              }
-                            }
-                          }}
-                        >
-                          <option value="zero">
-                            Zero selected coefficients
-                          </option>
-                          <option value="scale">Scale coefficients</option>
-                          <option value="randomize">
-                            Randomize coefficients
-                          </option>
-                          <option value="offset">Add DC offset</option>
-                          <option value="invert">Invert AC signs</option>
-                          <option value="isolate">
-                            Keep selected AC frequency band
-                          </option>
-                        </select>
-                      </label>
-                      <label className="coefficient-field tool-field">
-                        <span>
-                          {coefficientDomain === "ac"
-                            ? "AC frequency band"
-                            : "DC"}
-                        </span>
-                        <select
-                          value={frequencyBand}
-                          disabled={coefficientDomain === "dc"}
-                          onChange={(event) => {
-                            const next = GLITCH_FREQUENCY_BANDS.find(
-                              (band) => band === event.currentTarget.value,
-                            );
-                            if (next) setFrequencyBand(next);
-                          }}
-                        >
-                          {GLITCH_FREQUENCY_BANDS.map((band) => {
-                            const range = DCT_FREQUENCY_BAND_RANGES[band];
-                            return (
-                              <option
-                                key={band}
-                                value={band}
-                                disabled={
-                                  coefficientMode === "isolate" &&
-                                  band === "all"
-                                }
-                              >
-                                {band === "all" ? "All AC" : band} · u+v{" "}
-                                {range.minimum}–{range.maximum}
-                              </option>
-                            );
-                          })}
-                        </select>
-                      </label>
-                      {["scale", "randomize", "offset"].includes(
-                        coefficientMode,
-                      ) && (
+                      {componentIndex >=
+                        document.inspection.components.length && (
+                        <p className="coefficient-error" role="alert">
+                          This image has no component {componentIndex}. Choose
+                          another brush or component.
+                        </p>
+                      )}
+                      {coefficientMode === "scale" && (
                         <label className="coefficient-field tool-field">
-                          <span>
-                            {coefficientMode === "scale"
-                              ? "Scale multiplier"
-                              : coefficientMode === "randomize"
-                                ? "Random coefficient range"
-                                : "DC offset"}
-                          </span>
+                          <span>Scale multiplier · {coefficientStrength}</span>
                           <input
-                            type="number"
-                            min={
-                              coefficientMode === "scale"
-                                ? "-8"
-                                : coefficientMode === "offset"
-                                  ? "-2047"
-                                  : "1"
-                            }
-                            max={
-                              coefficientMode === "scale"
-                                ? "8"
-                                : coefficientMode === "offset"
-                                  ? "2047"
-                                  : "2047"
-                            }
-                            step={coefficientMode === "scale" ? "0.1" : "1"}
+                            type="range"
+                            min="-8"
+                            max="8"
+                            step="0.1"
                             value={coefficientStrength}
                             onChange={(event) =>
                               setCoefficientStrength(
@@ -2835,30 +2903,226 @@ function App() {
                           />
                         </label>
                       )}
-                      {coefficientMode === "randomize" && (
-                        <label className="coefficient-field tool-field">
-                          <span>Deterministic seed</span>
-                          <input
-                            type="number"
-                            min="0"
-                            max="4294967295"
-                            step="1"
-                            value={coefficientSeed}
-                            onChange={(event) =>
-                              setCoefficientSeed(
-                                Number(event.currentTarget.value),
-                              )
-                            }
-                          />
-                        </label>
+                      <button
+                        className="operation-button"
+                        type="button"
+                        disabled={
+                          !activeMask ||
+                          isEncoding ||
+                          componentIndex >=
+                            document.inspection.components.length
+                        }
+                        onClick={() => applyCoefficientOperation()}
+                      >
+                        Apply {selectedBrush?.name ?? "brush"}
+                      </button>
+                      {!BUILT_IN_COEFFICIENT_BRUSHES.some(
+                        (brush) => brush.id === selectedBrushId,
+                      ) && (
+                        <div className="recipe-compose">
+                          <p className="coefficient-note">
+                            Y/Cb/Cr labels are common ID conventions, not
+                            guaranteed color metadata. Component index and
+                            sampling factors are authoritative. Select Cb or Cr
+                            to experiment on chroma coefficients independently.
+                          </p>
+                          <label className="coefficient-field tool-field">
+                            <span>Coefficient domain</span>
+                            <select
+                              value={coefficientDomain}
+                              disabled={
+                                coefficientMode === "offset" ||
+                                coefficientMode === "invert" ||
+                                coefficientMode === "isolate"
+                              }
+                              onChange={(event) => {
+                                const next = event.currentTarget.value;
+                                if (next === "dc" || next === "ac") {
+                                  setCoefficientDomain(next);
+                                  if (next === "dc") setFrequencyBand("all");
+                                }
+                              }}
+                            >
+                              <option value="ac">AC coefficients</option>
+                              <option value="dc">DC coefficients</option>
+                            </select>
+                          </label>
+                          <label className="coefficient-field tool-field">
+                            <span>Operation</span>
+                            <select
+                              value={coefficientMode}
+                              onChange={(event) => {
+                                const next = event.currentTarget.value;
+                                if (
+                                  next === "zero" ||
+                                  next === "scale" ||
+                                  next === "randomize" ||
+                                  next === "offset" ||
+                                  next === "invert" ||
+                                  next === "isolate"
+                                ) {
+                                  setCoefficientMode(next);
+                                  if (next === "offset") {
+                                    setCoefficientDomain("dc");
+                                    setFrequencyBand("all");
+                                  } else if (
+                                    next === "invert" ||
+                                    next === "isolate"
+                                  ) {
+                                    setCoefficientDomain("ac");
+                                    if (
+                                      next === "isolate" &&
+                                      frequencyBand === "all"
+                                    ) {
+                                      setFrequencyBand("low");
+                                    }
+                                  }
+                                }
+                              }}
+                            >
+                              <option value="zero">
+                                Zero selected coefficients
+                              </option>
+                              <option value="scale">Scale coefficients</option>
+                              <option value="randomize">
+                                Randomize coefficients
+                              </option>
+                              <option value="offset">Add DC offset</option>
+                              <option value="invert">Invert AC signs</option>
+                              <option value="isolate">
+                                Keep selected AC frequency band
+                              </option>
+                            </select>
+                          </label>
+                          <label className="coefficient-field tool-field">
+                            <span>
+                              {coefficientDomain === "ac"
+                                ? "AC frequency band"
+                                : "DC"}
+                            </span>
+                            <select
+                              value={frequencyBand}
+                              disabled={coefficientDomain === "dc"}
+                              onChange={(event) => {
+                                const next = GLITCH_FREQUENCY_BANDS.find(
+                                  (band) => band === event.currentTarget.value,
+                                );
+                                if (next) setFrequencyBand(next);
+                              }}
+                            >
+                              {GLITCH_FREQUENCY_BANDS.map((band) => {
+                                const range = DCT_FREQUENCY_BAND_RANGES[band];
+                                return (
+                                  <option
+                                    key={band}
+                                    value={band}
+                                    disabled={
+                                      coefficientMode === "isolate" &&
+                                      band === "all"
+                                    }
+                                  >
+                                    {band === "all" ? "All AC" : band} · u+v{" "}
+                                    {range.minimum}–{range.maximum}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </label>
+                          {["scale", "randomize", "offset"].includes(
+                            coefficientMode,
+                          ) && (
+                            <label className="coefficient-field tool-field">
+                              <span>
+                                {coefficientMode === "scale"
+                                  ? "Scale multiplier"
+                                  : coefficientMode === "randomize"
+                                    ? "Random coefficient range"
+                                    : "DC offset"}
+                              </span>
+                              <input
+                                type="number"
+                                min={
+                                  coefficientMode === "scale"
+                                    ? "-8"
+                                    : coefficientMode === "offset"
+                                      ? "-2047"
+                                      : "1"
+                                }
+                                max={
+                                  coefficientMode === "scale"
+                                    ? "8"
+                                    : coefficientMode === "offset"
+                                      ? "2047"
+                                      : "2047"
+                                }
+                                step={coefficientMode === "scale" ? "0.1" : "1"}
+                                value={coefficientStrength}
+                                onChange={(event) =>
+                                  setCoefficientStrength(
+                                    Number(event.currentTarget.value),
+                                  )
+                                }
+                              />
+                            </label>
+                          )}
+                          {coefficientMode === "randomize" && (
+                            <label className="coefficient-field tool-field">
+                              <span>Deterministic seed</span>
+                              <input
+                                type="number"
+                                min="0"
+                                max="4294967295"
+                                step="1"
+                                value={coefficientSeed}
+                                onChange={(event) =>
+                                  setCoefficientSeed(
+                                    Number(event.currentTarget.value),
+                                  )
+                                }
+                              />
+                            </label>
+                          )}
+                          <p className="coefficient-note">
+                            Save changes to this brush in this browser. Clearing
+                            browser data removes saved brushes.
+                          </p>
+                          <label className="coefficient-field">
+                            <span>Brush name</span>
+                            <input
+                              type="text"
+                              maxLength={48}
+                              value={brushName}
+                              onChange={(event) =>
+                                setBrushName(event.currentTarget.value)
+                              }
+                            />
+                          </label>
+                          <div className="operation-actions">
+                            <button
+                              className="operation-button secondary"
+                              type="button"
+                              disabled={
+                                !brushName.trim() || !!brushStorageError
+                              }
+                              onClick={saveCurrentBrush}
+                            >
+                              Save brush
+                            </button>
+                          </div>
+                        </div>
                       )}
-                      <div className="recipe-editor">
+                      <details className="recipe-editor">
+                        <summary>Multi-step recipes</summary>
                         <div className="section-kicker">EXPERIMENT PRESETS</div>
                         {recipeStorageError && (
                           <p className="coefficient-error" role="alert">
                             {recipeStorageError}
                           </p>
                         )}
+                        <p className="coefficient-note">
+                          Your recipes are stored locally in this browser and
+                          may be lost if its data is cleared.
+                        </p>
                         <label className="coefficient-field">
                           <span>Preset or saved sequence</span>
                           <select
@@ -2953,18 +3217,7 @@ function App() {
                             </button>
                           </div>
                         </details>
-                      </div>
-                      <div className="operation-actions">
-                        <button
-                          className="operation-button"
-                          type="button"
-                          disabled={!activeMask || isEncoding}
-                          onClick={applyCoefficientOperation}
-                        >
-                          Apply {coefficientMode} to selected{" "}
-                          {coefficientDomain}
-                        </button>
-                      </div>
+                      </details>
                     </section>
                   )}
                   {(toolMode === "brush" || toolMode === "select") && (
@@ -2975,8 +3228,7 @@ function App() {
                       </h2>
                       <p className="operation-description">
                         Create a spatial mask in image-pixel coordinates.
-                        Effects use the current draft by default; save it by
-                        name to reuse it later. Effects keep the exact mask
+                        Effects use the current mask and keep the exact mask
                         snapshot used in their history entry.
                       </p>
                       <label className="coefficient-field">
@@ -3060,27 +3312,7 @@ function App() {
                           Draft · {describeMask(globalSelectionMask)}
                         </p>
                       )}
-                      <label className="coefficient-field">
-                        <span>Mask name</span>
-                        <input
-                          type="text"
-                          maxLength={48}
-                          value={maskName}
-                          onChange={(event) =>
-                            setMaskName(event.currentTarget.value)
-                          }
-                          placeholder="Name this mask"
-                        />
-                      </label>
                       <div className="operation-actions">
-                        <button
-                          className="operation-button"
-                          type="button"
-                          disabled={!globalSelectionMask || !maskName.trim()}
-                          onClick={saveCurrentMask}
-                        >
-                          Save mask to history
-                        </button>
                         <button
                           className="operation-button secondary"
                           type="button"
@@ -3090,48 +3322,9 @@ function App() {
                           Clear draft
                         </button>
                       </div>
-                      <details className="saved-mask-list">
-                        <summary>SAVED MASKS · {savedMasks.length}</summary>
-                        <div className="saved-mask-items">
-                          {savedMasks.length > 0 ? (
-                            savedMasks.map((saved) => (
-                              <div
-                                className="saved-mask-entry"
-                                key={saved.mask.id}
-                              >
-                                <span>{saved.name}</span>
-                                <button
-                                  className="operation-button secondary"
-                                  type="button"
-                                  onClick={() => loadSavedMask(saved.mask.id)}
-                                >
-                                  Load
-                                </button>
-                                <button
-                                  className="operation-button secondary"
-                                  type="button"
-                                  onClick={() =>
-                                    dispatchWorkspace({
-                                      type: "select-mask",
-                                      maskId: saved.mask.id,
-                                    })
-                                  }
-                                >
-                                  Use
-                                </button>
-                              </div>
-                            ))
-                          ) : (
-                            <p className="operation-empty">
-                              Saved masks are available to coefficient and block
-                              effects.
-                            </p>
-                          )}
-                        </div>
-                      </details>
                     </section>
                   )}
-                  {toolMode === "block-transform" && (
+                  {panelTool === "block-transform" && (
                     <section className="inspector-section">
                       <div className="section-kicker">JPEG COEFFICIENTS</div>
                       <h2>Block Transform</h2>
@@ -3162,6 +3355,21 @@ function App() {
                               setBlockTransferDraft(null);
                               setRepeatDraft(null);
                               setBlockTransformMode(mode);
+                              if (mode === "shuffle") {
+                                dispatchWorkspace({
+                                  type: "activate-mask-effect",
+                                  tool: "block-transform",
+                                });
+                              } else {
+                                selectionStart.current = null;
+                                brushPoints.current = [];
+                                setBrushDraft([]);
+                                setSelection(null);
+                                dispatchWorkspace({
+                                  type: "activate-tool",
+                                  tool: "block-transform",
+                                });
+                              }
                             }}
                           >
                             {label}
@@ -3342,18 +3550,7 @@ function App() {
                             within the selected mask. Every selected block is
                             used once; blocks outside it are unchanged.
                           </p>
-                          <EffectMaskPicker
-                            activeMaskId={activeMaskId}
-                            draft={globalSelectionMask}
-                            savedMasks={savedMasks}
-                            mask={activeMask}
-                            onSelect={(maskId) =>
-                              dispatchWorkspace({
-                                type: "select-mask",
-                                maskId,
-                              })
-                            }
-                          />
+                          <EffectMaskPicker mask={activeMask} />
                           <label className="coefficient-field tool-field">
                             <span>Deterministic seed</span>
                             <input
@@ -3399,12 +3596,15 @@ function App() {
                 >
                   <section className="inspector-section operation-stack">
                     <p className="operation-description">
-                      Enabled operations replay in order from the original
-                      document. Reordering recomputes later state.
+                      New operations appear at the top. Enabled operations
+                      replay from the bottom up; reordering recomputes later
+                      state.
                     </p>
                     {historyDocument?.operations.length ? (
                       <ol className="operation-list">
-                        {historyDocument.operations.map((operation, index) => {
+                        {getHistoryDisplayEntries(
+                          historyDocument.operations,
+                        ).map(({ operation, index }) => {
                           const mask = getMaskFromParameters(
                             operation.parameters,
                           );
@@ -3553,11 +3753,14 @@ function App() {
                                 <button
                                   className="operation-button secondary"
                                   type="button"
-                                  disabled={index === 0}
+                                  disabled={
+                                    index ===
+                                    historyDocument.operations.length - 1
+                                  }
                                   aria-label="Move operation up"
                                   onClick={() =>
                                     mutateHistory((history) =>
-                                      history.move(operation.id, index - 1),
+                                      history.move(operation.id, index + 1),
                                     )
                                   }
                                 >
@@ -3566,15 +3769,11 @@ function App() {
                                 <button
                                   className="operation-button secondary"
                                   type="button"
-                                  disabled={
-                                    index ===
-                                    (historyDocument?.operations.length ?? 0) -
-                                      1
-                                  }
+                                  disabled={index === 0}
                                   aria-label="Move operation down"
                                   onClick={() =>
                                     mutateHistory((history) =>
-                                      history.move(operation.id, index + 1),
+                                      history.move(operation.id, index - 1),
                                     )
                                   }
                                 >
@@ -3599,7 +3798,7 @@ function App() {
                       </ol>
                     ) : (
                       <p className="operation-empty">
-                        Save a named mask or apply an effect to start history.
+                        Apply an effect to start history.
                       </p>
                     )}
                     <button
@@ -3607,6 +3806,13 @@ function App() {
                       type="button"
                       disabled={!historyDocument?.operations.length}
                       onClick={() => {
+                        if (
+                          !window.confirm(
+                            "Reset all operations and clear the current mask? Undo can restore operations, but not the cleared mask.",
+                          )
+                        ) {
+                          return;
+                        }
                         const history = operationHistory.current;
                         if (history) updateHistory(history.resetToOriginal());
                         clearSelection();
@@ -3621,6 +3827,7 @@ function App() {
                   title="Original asset"
                   kicker="ORIGINAL ASSET"
                   className="source-section"
+                  initiallyOpen={false}
                 >
                   <div className="source-card">
                     <p

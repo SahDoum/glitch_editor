@@ -6,6 +6,7 @@ import {
 import {
   initialWorkspaceState,
   getEffectMask,
+  getHistoryDisplayEntries,
   getWorkspaceOverlayVisibility,
   TOOL_GROUPS,
   workspaceReducer,
@@ -13,6 +14,17 @@ import {
 import { getRectangleSelection } from "../../src/ui/selection-overlay";
 
 describe("workspace state", () => {
+  it("displays the newest operation first without changing replay order", () => {
+    const operations = ["first", "second", "third"];
+    expect(getHistoryDisplayEntries(operations)).toEqual([
+      { operation: "third", index: 2 },
+      { operation: "second", index: 1 },
+      { operation: "first", index: 0 },
+    ]);
+    expect(operations).toEqual(["first", "second", "third"]);
+    expect(getHistoryDisplayEntries([])).toEqual([]);
+  });
+
   it("defines the milestone toolbar groups and tools in order", () => {
     expect(
       TOOL_GROUPS.map((group) => [
@@ -46,6 +58,73 @@ describe("workspace state", () => {
 
     expect(next.activeTool).toBe("brush");
     expect(next.selectionMask).toBe(mask.value);
+  });
+
+  it("can edit a mask without replacing the selected effect panel", () => {
+    const effect = workspaceReducer(initialWorkspaceState, {
+      type: "activate-tool",
+      tool: "coefficient-glitch",
+    });
+    const drawing = workspaceReducer(effect, {
+      type: "activate-tool",
+      tool: "brush",
+      preservePanel: true,
+    });
+    expect(drawing.activeTool).toBe("brush");
+    expect(drawing.panelTool).toBe("coefficient-glitch");
+    const hand = workspaceReducer(drawing, {
+      type: "activate-tool",
+      tool: "hand",
+    });
+    expect(hand.panelTool).toBe("hand");
+  });
+
+  it("keeps the chosen mask tool when activating a mask-consuming effect", () => {
+    const selecting = workspaceReducer(initialWorkspaceState, {
+      type: "activate-tool",
+      tool: "select",
+    });
+    for (const tool of ["coefficient-glitch", "block-transform"] as const) {
+      const effect = workspaceReducer(selecting, {
+        type: "activate-mask-effect",
+        tool,
+      });
+      expect(effect.activeTool).toBe("select");
+      expect(effect.panelTool).toBe(tool);
+      const brushing = workspaceReducer(effect, {
+        type: "activate-tool",
+        tool: "brush",
+        preservePanel: true,
+      });
+      expect(brushing.activeTool).toBe("brush");
+      expect(brushing.panelTool).toBe(tool);
+      const selectingAgain = workspaceReducer(brushing, {
+        type: "activate-tool",
+        tool: "select",
+        preservePanel: true,
+      });
+      expect(selectingAgain.activeTool).toBe("select");
+      expect(selectingAgain.panelTool).toBe(tool);
+    }
+  });
+
+  it("defaults to the brush when entering a mask effect from a non-mask tool", () => {
+    const hand = workspaceReducer(initialWorkspaceState, {
+      type: "activate-tool",
+      tool: "hand",
+    });
+    const effect = workspaceReducer(hand, {
+      type: "activate-mask-effect",
+      tool: "coefficient-glitch",
+    });
+    expect(effect.activeTool).toBe("brush");
+    expect(effect.panelTool).toBe("coefficient-glitch");
+    const transform = workspaceReducer(effect, {
+      type: "activate-tool",
+      tool: "block-transform",
+    });
+    expect(transform.activeTool).toBe("block-transform");
+    expect(transform.panelTool).toBe("block-transform");
   });
 
   it("keeps the rectangle selection frame available after changing tools", () => {

@@ -1,6 +1,12 @@
 import type { NamedSpatialMask, SpatialMask } from "../document/masks";
 import type { JpegBlockCoordinate } from "../jpeg/block-geometry";
 
+export function getHistoryDisplayEntries<T>(
+  operations: readonly T[],
+): readonly { readonly operation: T; readonly index: number }[] {
+  return operations.map((operation, index) => ({ operation, index })).reverse();
+}
+
 export type CanvasTool =
   | "hand"
   | "inspector"
@@ -47,6 +53,7 @@ export const TOOL_GROUPS: readonly {
 
 export interface WorkspaceState {
   readonly activeTool: CanvasTool;
+  readonly panelTool: CanvasTool;
   readonly selectionMask: SpatialMask | null;
   readonly activeMaskId: string | null;
   readonly selectedBlock: JpegBlockCoordinate | null;
@@ -82,7 +89,15 @@ export function getEffectMask(
 }
 
 export type WorkspaceAction =
-  | { readonly type: "activate-tool"; readonly tool: CanvasTool }
+  | {
+      readonly type: "activate-tool";
+      readonly tool: CanvasTool;
+      readonly preservePanel?: boolean;
+    }
+  | {
+      readonly type: "activate-mask-effect";
+      readonly tool: "coefficient-glitch" | "block-transform";
+    }
   | { readonly type: "set-selection"; readonly selection: SpatialMask | null }
   | { readonly type: "select-mask"; readonly maskId: string | null }
   | {
@@ -97,6 +112,7 @@ export type WorkspaceAction =
 
 export const initialWorkspaceState: WorkspaceState = Object.freeze({
   activeTool: "select",
+  panelTool: "select",
   selectionMask: null,
   activeMaskId: null,
   selectedBlock: null,
@@ -112,6 +128,17 @@ export function workspaceReducer(
       return {
         ...state,
         activeTool: action.tool,
+        panelTool: action.preservePanel ? state.panelTool : action.tool,
+        isRightPanelCollapsed: false,
+      };
+    case "activate-mask-effect":
+      return {
+        ...state,
+        activeTool:
+          state.activeTool === "brush" || state.activeTool === "select"
+            ? state.activeTool
+            : "brush",
+        panelTool: action.tool,
         isRightPanelCollapsed: false,
       };
     case "set-selection":

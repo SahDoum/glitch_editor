@@ -197,13 +197,17 @@ coordinates; - MCU coordinates; - byte/bit offsets in the encoded file.
 
 ## 6. User interface
 
+For the implemented UI and reusable experiment-brush interaction pattern,
+see [the interface guide](./docs/INTERFACE.md). The requirements below include
+future capabilities and must not be interpreted as implementation claims.
+
 ### 6.1 Main layout
 
 A desktop-oriented responsive workspace:
 
 - **Top bar:** file name, open/import, save project, export, undo,
   redo, compare.
-- **Tool bar:** grouped tool icons for **Manipulation** (Hand,
+- **Left tool rail:** grouped tool icons for **Manipulation** (Hand,
   Inspector), **Coefficients** (Brush, Select), **Blocks** (Repeat
   Block, Shuffle), and **Quantization** (Quantization Matrix). The
   selected tool has a clear active state.
@@ -242,14 +246,13 @@ tools. They edit a draft mask in image-pixel coordinates. DCT-block
 snapping is the default and uses the selected component's sampling-aware
 block footprint; an explicit MCU grid is available. Brush sample centers
 snap to that grid and its mask is mapped to whole component blocks by the
-JPEG operation pipeline. Rectangle edges snap to the same grid. Saving a
-draft gives it a reusable name and adds it to document history. A newly
-drawn draft is the default mask for Coefficient Glitch, its recipes, and
-Block Shuffle; users may select a saved mask instead. These tools show the
-mask they will use and retain an immutable snapshot when applied, so later
+JPEG operation pipeline. Rectangle edges snap to the same grid. The current
+draft is used for Coefficient Glitch, its recipes, and Block Shuffle; named
+masks are no longer exposed in the interface. These tools show the mask they
+will use and retain an immutable snapshot when applied, so later
 mask edits cannot rewrite prior results. A history entry containing a mask
 can restore a copy as the current draft, replacing any existing draft without
-changing history or the image. Mask overlays are also shown while authoring;
+changing history or the image and without a confirmation dialog. Mask overlays are also shown while authoring;
 tools that do not use masks hide them without clearing mask data.
 
 ### 6.3 Tool inspector
@@ -305,9 +308,9 @@ operations and must not promise that all operations commute.
 
 ### 6.5 Masks, recipes, and compact workflow
 
-Keep mask authoring distinct from applying JPEG-domain edits. Users may
-save and reuse named spatial masks; an effect history entry keeps its
-own mask snapshot and stable mask ID. Use image-pixel coordinates as the
+Keep mask authoring distinct from applying JPEG-domain edits. An effect
+history entry keeps its own mask snapshot and stable mask ID. Use
+image-pixel coordinates as the
 stored mask representation, with sampling-aware snapping to component
 8×8 DCT-block footprints by default and an explicit MCU-grid mode.
 
@@ -318,15 +321,25 @@ in the browser. Applying a multi-step recipe is one undoable history
 action. Each recipe step is labeled as a quantized-coefficient edit that
 produces a re-encoded JPEG; it is not raw-byte or entropy-stream damage.
 
+Coefficient brush presets expose one component and coefficient operation at
+a time. Built-in Pixelate zeros all AC coefficients in component 0; Chroma
+scale scales all AC coefficients in component 2 by two, with an adjustable
+multiplier. Users can save additional parameterized brushes locally. A
+persisted setting for each brush selects whether a completed mask is
+applied immediately or using the apply button. Successful automatic
+operation creation clears the draft mask; failed validation leaves it intact.
+A brush requiring a missing
+component is unavailable until a valid component is selected.
+
 Reduce redundant canvas/tool spacing and show toolbar icons with
 accessible names and tooltips at constrained widths. Keep original/result
 comparison, active-tool context, errors, and export status visible without
 a persistent lower status strip. Focused DQT cells remain visibly focused
 in the matrix editor.
 
-A combined brush that creates a mask and applies a selected experiment
-in the same gesture may be explored later; it must retain the same
-reversible operation and mask-snapshot semantics.
+Coefficient brushes can already apply an experiment after a completed mask
+gesture when automatic application is enabled. This creates a reversible
+operation with an immutable mask snapshot; it is not continuous pixel painting.
 
 ## 7. Tool specification
 
@@ -343,12 +356,11 @@ intersecting DCT blocks and MCUs; - snap to the selected component's DCT
 blocks by default or to MCUs in explicit MCU-grid mode.
 
 **Brush mask** - paint an editable mask; - brush size, hardness,
-opacity; - snap sample centers to the selected DCT/MCU grid; - save and
-name masks for reuse by JPEG-effect tools.
+opacity; - snap sample centers to the selected DCT/MCU grid.
 
 The mask is a spatial control surface. The engine must map it to the
 appropriate JPEG units for each operation. Coefficient Glitch and
-Block Shuffle consume a named mask; DCT block and MCU coordinates remain
+Block Shuffle consume the current draft mask; DCT block and MCU coordinates remain
 separate from image-pixel coordinates.
 
 ### 7.2 DCT tools
@@ -373,7 +385,7 @@ inversion and frequency isolation for selected coefficients, plus a
 signed DC offset. Coefficient ranges are bounded to the baseline
 representation supported by the current encoder. Randomize stores an
 unsigned 32-bit seed so replay is reproducible. Coefficient Glitch is a
-separate effect tool and requires a saved named mask.
+separate effect tool and requires a current draft mask.
 
 **Experiment recipes** - choose a named built-in recipe or a locally
 saved user recipe; - recipes contain ordered coefficient-operation
@@ -840,9 +852,8 @@ recorded in `docs/ROADMAP.md` and ADR-005.
 
 ### Milestone 6.5 --- Mask and experiment workflow (implementation slice)
 
-- named reusable image-pixel masks saved in operation history;
-- mask-consuming coefficient effects default to the current draft or use a
-  selected named mask, display it, and store immutable mask snapshots in
+- image-pixel mask drafts and immutable snapshots in effect history;
+- mask-consuming coefficient effects use the current draft, display it, and store immutable mask snapshots in
   their history entries;
 - named built-in coefficient recipes and locally saved user sequences,
   each applied as one undoable operation;

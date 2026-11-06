@@ -19,6 +19,8 @@ The coefficient prototype uses libjpeg-turbo WebAssembly. This software is based
 
 - [Product specification](./PRODUCT.md)
 - [Architecture](./docs/ARCHITECTURE.md)
+- [Current interface and experiment-brush paradigm](./docs/INTERFACE.md)
+- [UI proposals and implementation checkpoints](./docs/UX_SIMPLIFICATION_PROPOSAL.md)
 - [Roadmap](./docs/ROADMAP.md)
 - [JPEG test strategy](./docs/JPEG_TEST_STRATEGY.md)
 - [Glitch experiments catalog](./GLITCH_EXPERIMENTS.md)

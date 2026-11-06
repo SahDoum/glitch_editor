@@ -4,6 +4,10 @@
 **Scope:** desktop-oriented, client-side browser application  
 **Primary principle:** keep the original JPEG bytes, decoded preview, editable JPEG representation, and operation history as distinct things.
 
+For the implemented UI, experiment-brush interaction and current limitations,
+see [INTERFACE.md](./INTERFACE.md); future work and deferrals are tracked in
+[ROADMAP.md](./ROADMAP.md).
+
 ## 1. Architectural goals
 
 1. Make JPEG-domain edits explicit and reproducible.
@@ -60,11 +64,11 @@ Coordinates import, document lifecycle, selection, operation dispatch, preview r
 Owns immutable source assets, document metadata, current editable representation, masks/selections, operation stack, and revision identifiers.
 
 Brush and Select author a draft spatial mask in image-pixel coordinates.
-Named masks are saved in editable document state through the versioned
-operation history. Mask-consuming JPEG effects use the latest draft by
-default or an explicitly selected saved mask, and embed an immutable mask
-snapshot and ID in their parameters; editing or selecting another mask
-cannot alter an existing operation. History can restore a snapshot as a
+The interface uses the current draft for mask-consuming JPEG effects and no
+longer exposes named masks. The underlying named-mask operation remains
+available for compatibility with existing operation data. Effects embed an
+immutable mask snapshot and ID in their parameters; editing the draft cannot
+alter an existing operation. History can restore a snapshot as a
 newly identified draft without modifying the operation or creating a history
 entry. Tool-specific overlays are presentation
 state: mask-authoring tools show the draft, while Coefficient Glitch and
@@ -83,11 +87,28 @@ snapping; the overlay therefore shows the component blocks an effect will
 change. This is a view of the existing image-pixel mask and does not change
 its stored shape or operation coverage.
 
-The tool bar owns tool activation and presents each tool's contextual
-controls in the right column. The right column contains the active tool
-panel followed by History and the collapsible document/JPEG information
-sections. UI collapse state is presentation state, not document or
-operation data.
+The toolbar is a vertical rail to the left of the canvas and presents
+contextual controls in the right column. Coefficient Glitch and block Shuffle retain an
+independently selected Brush or Select canvas tool, and both selections are
+shown in the toolbar. Block transfer and repeat use their own canvas gestures.
+The right column contains the tool panel followed by History and the collapsible document/JPEG
+information sections. History displays newer operations above older ones
+without changing their bottom-to-top replay order. UI collapse and panel
+selection are presentation state, not document or operation data.
+
+Coefficient brush presets hold a component index and a single coefficient
+operation. The built-in presets select component 0 with AC zeroing and
+component 2 with AC scaling by two, respectively; a missing component is
+reported rather than substituted. Custom brushes are validated and saved
+locally under a separate storage key from multi-step recipes. Each brush's
+automatic-apply toggle is saved locally per brush: when enabled, a completed
+brush or rectangle mask immediately creates an ordinary undoable coefficient
+operation and clears the draft mask after the operation is accepted. If
+validation fails, the draft remains available for correction. The operation's
+mask snapshot can be restored from history if encoding fails.
+The current single-shape mask replaces the previous draft; automatic apply
+does not imply an additive brush. Effect history contains an immutable mask
+snapshot; restoring it replaces the draft without confirmation.
 
 ### `jpeg/`
 
