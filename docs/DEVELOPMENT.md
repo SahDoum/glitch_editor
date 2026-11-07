@@ -20,6 +20,7 @@ npm run typecheck       # TypeScript, strict mode
 npm test                # Unit tests, once
 npm run test:watch      # Unit tests in watch mode
 npm run build           # Typecheck and production build
+npm run size            # Report sizes of the existing production build
 npm run preview         # Serve the production build locally
 npm run check            # Run formatting, lint, typecheck, tests, and build
 ```
@@ -40,6 +41,59 @@ The selected stack follows `docs/ARCHITECTURE.md`:
 - No JPEG parser, codec, WASM module, telemetry, analytics, or upload dependency was included in Milestone 0. The coefficient codec choice and current editing scope are recorded in ADR-003 and ADR-005.
 
 Direct dependency versions are pinned in `package.json` and the complete dependency graph is locked in `package-lock.json`. The `minimatch` override pins the patched 11.0.1 release throughout the development toolchain. Reassess bundle/runtime cost and JPEG codec licensing before introducing any image-processing dependency.
+
+## Publication and payload
+
+The CI workflow builds with the repository name as the GitHub Pages base path,
+then publishes `dist/` on pushes to `main` after verification. In GitHub
+repository settings, select **Pages > Build and deployment > Source: GitHub
+Actions**, and permit the `github-pages` deployment environment. The expected
+repository-site URL is `https://sahdoum.github.io/glitch_editor/`. The
+workflow must actually run successfully and the deployed site must be tested
+before publication is considered complete. Forks use their own repository
+name; user/organization root Pages sites and custom base paths need a workflow
+change.
+
+The Pages workflow sets `VITE_GTM_CONTAINER_ID=GTM-K6BK97GW`, the public
+Google Tag Manager container ID provided by the owner. A local build has no
+container unless the variable is supplied; an invalid ID fails the build.
+The standard GTM initialization event and asynchronous container script run
+on page open, as requested by the owner. The welcome screen discloses this.
+To count visits, configure and publish a Google tag in that GTM container
+using a GA4 web stream's `G-...` measurement ID and an All Pages trigger.
+The container's current configuration is unknown. Confirm the deployed site's
+page view in GTM preview and GA4 Realtime; loading the container alone does
+not prove visits were recorded.
+
+GTM can run arbitrary tags configured by its administrators. The application
+does not send image files, project data, filenames, or edit events to GTM,
+but container tags can access the page and collect visit/device/network data,
+including URLs and referrers. Review every tag, automatic event and GA4
+setting, and restrict container access to preserve the local-first privacy
+promise; avoid sending sensitive URLs or user data. Review applicable privacy
+and consent requirements before activation. No consent management is
+implemented. Unlike the prior direct GA4 integration, the app cannot enforce
+page URL or referrer filtering on tags managed by GTM.
+
+Reproduce the repository-path build and payload report:
+
+```bash
+npm run build -- --base=/glitch_editor/
+npm run size
+npm run preview -- --host 127.0.0.1 --base=/glitch_editor/
+```
+
+Open the `/glitch_editor/` path, import a synthetic fixture from
+`tests/fixtures/`, inspect coefficients, apply an edit and verify export.
+Check the browser network panel for the worker and both codec files under the
+same base path and for unexpected image uploads. Repeat on the actual Pages
+URL. The size report lists every static build file, grouping HTML and directly
+referenced assets as initial and the rest as deferred. It reports raw bytes
+and independently gzip-compressed estimates, not actual browser downloads:
+workers and codecs load on demand, hosting compression may differ, and the
+remote Google script is excluded. CI publishes the report in each job summary.
+No size budget has been agreed; the measurements are a baseline, not a
+release gate.
 
 The coefficient reader and editor link the pinned
 `@ai-ecoverse/wasm-libjpeg-turbo` static WebAssembly library at build time. It

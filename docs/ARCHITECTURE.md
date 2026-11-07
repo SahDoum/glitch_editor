@@ -4,6 +4,13 @@
 **Scope:** desktop-oriented, client-side browser application  
 **Primary principle:** keep the original JPEG bytes, decoded preview, editable JPEG representation, and operation history as distinct things.
 
+Google Tag Manager is a separate page-load integration, not part of the
+JPEG pipeline. When configured, its third-party script can receive visit data
+and execute container-managed tags; the application does not send image files
+or edit events to it. Container configuration must also respect this boundary. See
+[DEVELOPMENT.md](./DEVELOPMENT.md#publication-and-payload) for privacy and
+deployment limits.
+
 For the implemented UI, experiment-brush interaction and current limitations,
 see [INTERFACE.md](./INTERFACE.md); future work and deferrals are tracked in
 [ROADMAP.md](./ROADMAP.md).

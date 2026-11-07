@@ -122,6 +122,25 @@ textarea:focus-visible {
   gap: 10px;
 }
 
+.contact-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 24px;
+  font-size: 12px;
+}
+
+.contact-links a,
+.analytics-notice a {
+  color: var(--accent);
+}
+
+.welcome .analytics-notice {
+  margin-top: 12px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .brand {
   display: inline-flex;
   flex: 0 0 auto;

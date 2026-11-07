@@ -2,6 +2,12 @@
 
 A browser-based, non-destructive workspace for JPEG experiments. Image work is designed to stay in the browser; this project does not include a backend or image-upload service.
 
+The publication build loads Google Tag Manager on page open, which can send
+visit data to Google and run tags configured by the container owner. JPEG
+processing remains local; the application itself does not send image files
+to analytics. An unconfigured build does not load the container.
+See [publication setup](./docs/DEVELOPMENT.md#publication-and-payload).
+
 ## Development
 
 ```bash

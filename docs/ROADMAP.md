@@ -608,13 +608,18 @@ expected result rather than hidden.
 - [ ] Configure GitHub Pages to deploy the production build as a static site.
       Account for the repository-site base path so app assets, including the
       lazy-loaded JPEG codec, resolve correctly; keep image processing local
-      and do not introduce an upload service.
+      and do not introduce an upload service. Workflow is implemented;
+      GitHub Pages configuration and the first deployment remain to be verified.
 - [ ] Measure and record the production payload baseline, including initial
       and lazy-loaded assets. Track size changes in CI or release checks, set
       an agreed size budget, and optimize only when measurements show it is
-      needed.
-- [ ] Confirm which contact details the user wants public and add only those
+      needed. Baseline and CI reporting are implemented; a budget is not yet
+      agreed.
+- [x] Confirm which contact details the user wants public and add only those
       approved details to the site before publication.
+- [ ] Add Google Analytics 4 visit counting through the supplied Google Tag
+      Manager container. The loader is implemented, but the container's GA4
+      tag and live reporting remain to be configured and verified.
 - [ ] Smoke-test the deployed GitHub Pages URL on the repository path, including
       loading the app and its assets and verifying the local JPEG workflow.
 
@@ -627,6 +632,28 @@ expected result rather than hidden.
 - The published site contains the user's explicitly approved contact details
   and does not expose unapproved personal information.
 - JPEG processing remains client-side, with no image upload behavior added.
+- Google Analytics counts visits when configured in the GTM container; its
+  network and privacy implications are disclosed, and an unconfigured build
+  makes no analytics requests.
+
+### Publication status and payload baseline
+
+The approved Instagram, Telegram, and GitHub links are shown on the welcome
+screen. The owner selected analytics on page load, without a consent prompt;
+legal/consent requirements must be assessed before enabling it. The supplied
+GTM container's GA4 configuration and the GitHub Pages deployment still
+require verification.
+
+On 2026-11-07, Node 20.20.0, `npm run build -- --base=/glitch_editor/`
+followed by `npm run size` measured 377,125 initial bytes (107,747 gzip),
+552,486 deferred bytes (137,104 gzip), and 929,611 total bytes (244,851
+gzip), without an analytics ID. This is a historical baseline before replacing
+the direct GA4 integration with GTM. The GTM-enabled build measured 377,258
+initial bytes (107,792 gzip) and 929,744 total bytes (244,896 gzip).
+Deferred files comprise all workers and codec files; not every file is fetched
+in every session. Gzip sizes are estimates per file, not observed network
+transfers, and exclude Google's remotely hosted script. See
+[DEVELOPMENT.md](./DEVELOPMENT.md) for reproduction and CI reports.
 
 ## Next issues — Milestones 7–8
 

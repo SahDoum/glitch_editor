@@ -3178,7 +3178,11 @@ function App() {
   return (
     <main className={`workspace ${document ? "has-tool-bar" : ""}`}>
       <header className="topbar">
-        <a className="brand" href="/" aria-label="JPEG Glitch Editor home">
+        <a
+          className="brand"
+          href={import.meta.env.BASE_URL}
+          aria-label="JPEG Glitch Editor home"
+        >
           <span className="brand-mark" aria-hidden="true">
             J
           </span>
@@ -3420,6 +3424,20 @@ function App() {
                   reversible JPEG effects.
                 </span>
               </div>
+              <nav className="contact-links" aria-label="Contact">
+                <a href="https://instagram.com/sahdoum">Instagram</a>
+                <a href="https://t.me/achekhonte">Telegram</a>
+                <a href="https://github.com/sahdoum">GitHub</a>
+              </nav>
+              {import.meta.env.VITE_GTM_CONTAINER_ID && (
+                <p className="analytics-notice">
+                  This site uses Google Tag Manager for visit analytics. Google
+                  receives visit data; images are processed locally.{" "}
+                  <a href="https://policies.google.com/privacy">
+                    Google privacy policy
+                  </a>
+                </p>
+              )}
             </div>
           ) : (
             <div className="preview-workspace">
