@@ -22,37 +22,42 @@ export const TOOL_GROUPS: readonly {
   readonly tools: readonly {
     readonly id: CanvasTool;
     readonly label: string;
+    readonly shortcut: string;
   }[];
 }[] = [
   {
     label: "Manipulation",
     tools: [
-      { id: "hand", label: "Hand" },
-      { id: "inspector", label: "Inspector" },
+      { id: "hand", label: "Hand", shortcut: "V" },
+      { id: "inspector", label: "Inspector", shortcut: "I" },
     ],
   },
   {
     label: "Masks",
     tools: [
-      { id: "brush", label: "Brush" },
-      { id: "select", label: "Select" },
+      { id: "brush", label: "Brush", shortcut: "B" },
+      { id: "select", label: "Select", shortcut: "M" },
     ],
   },
   {
     label: "JPEG effects",
-    tools: [{ id: "coefficient-glitch", label: "Coefficient Glitch" }],
+    tools: [
+      { id: "coefficient-glitch", label: "Coefficient Glitch", shortcut: "G" },
+    ],
   },
   {
     label: "Blocks",
-    tools: [{ id: "block-transform", label: "Block Transform" }],
+    tools: [{ id: "block-transform", label: "Block Transform", shortcut: "T" }],
   },
   {
     label: "Quantization",
-    tools: [{ id: "quantization", label: "Quantization Matrix" }],
+    tools: [
+      { id: "quantization", label: "Quantization Matrix", shortcut: "Q" },
+    ],
   },
   {
     label: "Entropy experiments",
-    tools: [{ id: "scan-corrupt", label: "Scan Corrupt" }],
+    tools: [{ id: "scan-corrupt", label: "Scan Corrupt", shortcut: "C" }],
   },
 ];
 
@@ -68,6 +73,44 @@ export interface WorkspaceState {
 export interface WorkspaceOverlayVisibility {
   readonly mask: boolean;
   readonly inspectedBlock: boolean;
+}
+
+export type WorkspaceShortcut =
+  "undo" | "redo" | "save" | "open-file" | "select-all" | null;
+
+export function getWorkspaceShortcut(input: {
+  readonly key: string;
+  readonly ctrlKey: boolean;
+  readonly metaKey: boolean;
+  readonly shiftKey: boolean;
+  readonly altKey?: boolean;
+}): WorkspaceShortcut {
+  if ((!input.ctrlKey && !input.metaKey) || input.altKey) return null;
+  switch (input.key.toLowerCase()) {
+    case "z":
+      return input.shiftKey ? "redo" : "undo";
+    case "y":
+      return "redo";
+    case "s":
+      return "save";
+    case "o":
+      return "open-file";
+    case "a":
+      return "select-all";
+    default:
+      return null;
+  }
+}
+
+export function getCanvasToolShortcut(key: string): CanvasTool | null {
+  const shortcut = key.toUpperCase();
+  for (const group of TOOL_GROUPS) {
+    const tool = group.tools.find(
+      ({ shortcut: keyShortcut }) => keyShortcut === shortcut,
+    );
+    if (tool) return tool.id;
+  }
+  return null;
 }
 
 export function getWorkspaceOverlayVisibility(

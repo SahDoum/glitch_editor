@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useReducer,
@@ -6,6 +7,7 @@ import {
   useState,
   type ChangeEvent,
   type DragEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent,
   type Ref,
   type ReactNode,
@@ -26,6 +28,11 @@ import {
   type JpegEditableState,
 } from "./application/jpeg-document";
 import { importJpeg, type ImportedJpeg } from "./application/import-jpeg";
+import {
+  createJgeProjectFile,
+  readJgeProjectFile,
+  type JgeProjectData,
+} from "./project/project-file";
 import {
   getJpegComponentBlockGrid,
   getMaskBlockCoveragePath,
@@ -92,6 +99,8 @@ import {
   initialWorkspaceState,
   getHistoryDisplayEntries,
   getWorkspaceOverlayVisibility,
+  getWorkspaceShortcut,
+  getCanvasToolShortcut,
   TOOL_GROUPS,
   workspaceReducer,
   type CanvasTool,
@@ -114,6 +123,8 @@ import {
 } from "./jpeg/scan-decode-diagnostic";
 
 const MARKER_LIMIT = 250;
+const APPLICATION_VERSION = "0.1.0";
+const JPEG_CODEC_VERSION = "libjpeg-turbo 3.2.0";
 const EMPTY_JPEG_OPERATIONS: JpegEditableState["jpegOperations"] =
   Object.freeze([]);
 type ImagePoint = { x: number; y: number };
@@ -290,6 +301,7 @@ function ImageOverlays({
   brushRadius,
   componentId,
   selectedBlock,
+  keyboardCursor,
   blockTransferSource,
   blockTransferDestination,
 }: {
@@ -302,6 +314,7 @@ function ImageOverlays({
   brushRadius: number;
   componentId: number;
   selectedBlock: JpegBlockCoordinate | null;
+  keyboardCursor: JpegBlockCoordinate | null;
   blockTransferSource: SpatialSelection | null;
   blockTransferDestination: SpatialSelection | null;
 }) {
@@ -427,6 +440,15 @@ function ImageOverlays({
           y={selectedBlock.imageY}
           width={selectedBlock.imageWidth}
           height={selectedBlock.imageHeight}
+        />
+      )}
+      {keyboardCursor && (
+        <rect
+          className="keyboard-cursor-overlay"
+          x={keyboardCursor.imageX}
+          y={keyboardCursor.imageY}
+          width={keyboardCursor.imageWidth}
+          height={keyboardCursor.imageHeight}
         />
       )}
     </svg>
@@ -1140,11 +1162,20 @@ function App() {
   });
   const [errorMessage, setErrorMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState("Inspecting JPEG…");
+  const [isSavingProject, setIsSavingProject] = useState(false);
+  const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
+  const [projectNotice, setProjectNotice] = useState("");
   const [isEncoding, setIsEncoding] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [showBlocks, setShowBlocks] = useState(false);
   const [showMcus, setShowMcus] = useState(false);
   const [showOriginal, setShowOriginal] = useState(false);
+  const [keyboardCursor, setKeyboardCursor] =
+    useState<JpegBlockCoordinate | null>(null);
+  const [canvasHasKeyboardFocus, setCanvasHasKeyboardFocus] = useState(false);
+  const [canvasKeyboardAnnouncement, setCanvasKeyboardAnnouncement] =
+    useState("");
   const [workspaceState, dispatchWorkspace] = useReducer(
     workspaceReducer,
     initialWorkspaceState,
@@ -1157,6 +1188,8 @@ function App() {
     selectionMask: globalSelectionMask,
   } = workspaceState;
   const activeToolPanel = useRef<HTMLDetailsElement>(null);
+  const saveDialogRef = useRef<HTMLDialogElement>(null);
+  const cleanEncodedPreviewErrorRef = useRef(cleanEncodedPreviewError);
   const [maskGrid, setMaskGrid] = useState<JpegSelectionGrid>("dct");
   const [componentIndex, setComponentIndex] = useState(0);
   const [inspectorComponentId, setInspectorComponentId] = useState(0);
@@ -1231,7 +1264,12 @@ function App() {
   const scanCorruptionHistory = useRef(new ScanCorruptionHistory());
   const cleanEncodedBytes = useRef<Uint8Array | null>(null);
   const scanCorruptionController = useRef<AbortController | null>(null);
+  const pendingProjectStages = useRef<
+    readonly ScanCorruptionParameters[] | null
+  >(null);
+  const projectStagesReplayStarted = useRef(false);
   const selectionStart = useRef<{ x: number; y: number } | null>(null);
+  const keyboardSelectionAnchor = useRef<JpegBlockCoordinate | null>(null);
   const blockTransformGesture = useRef<BlockTransformGesture | null>(null);
   const brushPoints = useRef<ImagePoint[]>([]);
   const panStart = useRef<{
@@ -1263,6 +1301,13 @@ function App() {
     [document, jpegOperations],
   );
 
+  useEffect(() => {
+    const dialog = saveDialogRef.current;
+    if (!dialog) return;
+    if (isSaveDialogOpen && !dialog.open) dialog.showModal();
+    else if (!isSaveDialogOpen && dialog.open) dialog.close();
+  }, [isSaveDialogOpen]);
+
   useEffect(
     () => () => {
       if (document) URL.revokeObjectURL(document.previewUrl);
@@ -1283,6 +1328,10 @@ function App() {
     },
     [cleanEncodedPreviewUrl],
   );
+
+  useEffect(() => {
+    cleanEncodedPreviewErrorRef.current = cleanEncodedPreviewError;
+  }, [cleanEncodedPreviewError]);
 
   useEffect(() => {
     scanCorruptionController.current?.abort();
@@ -1325,7 +1374,6 @@ function App() {
       const previewUrl = URL.createObjectURL(
         new Blob([outputBuffer], { type: "image/jpeg" }),
       );
-      setEditedBytes(encoded.value);
       let previewError = "";
       try {
         const preview = new Image();
@@ -1363,6 +1411,7 @@ function App() {
         );
         setCleanEncodedPreviewError("");
       }
+      setEditedBytes(encoded.value);
       setIsEncoding(false);
     })();
 
@@ -1384,9 +1433,36 @@ function App() {
     const controller = new AbortController();
     importController.current = controller;
     setErrorMessage("");
+    setProjectNotice("");
     setIsLoading(true);
+    const isProjectFile = file.name.toLowerCase().endsWith(".jpglitch");
+    setLoadingMessage(isProjectFile ? "Opening project…" : "Inspecting JPEG…");
 
-    const result = await importJpeg(file, controller.signal);
+    let projectData: JgeProjectData | null = null;
+    let jpegFile = file;
+    if (isProjectFile) {
+      const savedProject = await readJgeProjectFile(
+        file,
+        (message) => setLoadingMessage(message),
+        controller.signal,
+      );
+      if (currentRequest !== requestId.current) return;
+      if (!savedProject.ok) {
+        importController.current = null;
+        setIsLoading(false);
+        setErrorMessage(savedProject.error.message);
+        return;
+      }
+      projectData = savedProject.value;
+      const sourceBuffer = new ArrayBuffer(projectData.source.bytes.byteLength);
+      new Uint8Array(sourceBuffer).set(projectData.source.bytes);
+      jpegFile = new File([sourceBuffer], projectData.source.fileName, {
+        type: "image/jpeg",
+      });
+      setLoadingMessage("Inspecting embedded JPEG…");
+    }
+
+    const result = await importJpeg(jpegFile, controller.signal);
     if (currentRequest !== requestId.current) {
       if (result.ok) URL.revokeObjectURL(result.value.previewUrl);
       return;
@@ -1405,6 +1481,27 @@ function App() {
       setErrorMessage(history.error.message);
       return;
     }
+    if (projectData) {
+      const restored = history.value.restoreOperations(projectData.operations);
+      if (!restored.ok) {
+        URL.revokeObjectURL(result.value.previewUrl);
+        setErrorMessage(
+          `The saved operation stack could not be restored: ${restored.error.message}`,
+        );
+        return;
+      }
+      if (
+        projectData.draftMask &&
+        (projectData.draftMask.width !== result.value.inspection.width ||
+          projectData.draftMask.height !== result.value.inspection.height)
+      ) {
+        URL.revokeObjectURL(result.value.previewUrl);
+        setErrorMessage(
+          "The saved draft mask dimensions do not match the embedded JPEG.",
+        );
+        return;
+      }
+    }
 
     scanCorruptionController.current?.abort();
     scanCorruptionController.current = null;
@@ -1412,6 +1509,11 @@ function App() {
     cleanEncodedBytes.current = null;
     operationHistory.current = history.value;
     setHistoryDocument(history.value.snapshot);
+    pendingProjectStages.current =
+      projectData && projectData.scanCorruptionStages.length > 0
+        ? projectData.scanCorruptionStages
+        : null;
+    projectStagesReplayStarted.current = false;
     setEditedPreviewUrl(null);
     setEditedBytes(null);
     setEditedPreviewError("");
@@ -1421,13 +1523,17 @@ function App() {
     setScanDecodeDiagnostic(null);
     setIsScanCorrupting(false);
     setShowCleanEncoded(false);
-    setIsEncoding(false);
+    setIsEncoding(history.value.snapshot.operations.length > 0);
     setHistoryAvailability({
       canUndo: history.value.canUndo,
       canRedo: history.value.canRedo,
     });
     setSelection(null);
     dispatchWorkspace({ type: "reset-document" });
+    dispatchWorkspace({
+      type: "set-selection",
+      selection: projectData?.draftMask ?? null,
+    });
     setBrushDraft([]);
     setComponentIndex(0);
     setInspectorComponentId(result.value.inspection.components[0]?.id ?? 0);
@@ -1459,6 +1565,15 @@ function App() {
     setShowOriginal(false);
     setZoom(1);
     setDocument(result.value);
+    if (
+      projectData &&
+      (projectData.applicationVersion !== APPLICATION_VERSION ||
+        projectData.codecVersion !== JPEG_CODEC_VERSION)
+    ) {
+      setProjectNotice(
+        `Created with app ${projectData.applicationVersion} and ${projectData.codecVersion}; replayed JPEG output may differ from its previous export.`,
+      );
+    }
   }
 
   function updateHistory(
@@ -1590,6 +1705,196 @@ function App() {
     }
     setSelection(nextSelection);
     return nextSelection;
+  }
+
+  const selectAllImage = useCallback(() => {
+    if (!document) return;
+    const result = createRectangleSelection(
+      0,
+      0,
+      document.inspection.width,
+      document.inspection.height,
+      document.inspection.width,
+      document.inspection.height,
+    );
+    if (!result.ok || !result.value) {
+      setErrorMessage(
+        result.ok
+          ? "The whole-image selection could not be created."
+          : result.error.message,
+      );
+      return;
+    }
+    const mask = createSpatialMask(
+      result.value,
+      document.inspection.width,
+      document.inspection.height,
+    );
+    if (!mask.ok) {
+      setErrorMessage(mask.error.message);
+      return;
+    }
+    keyboardSelectionAnchor.current = null;
+    setSelection(null);
+    dispatchWorkspace({ type: "set-selection", selection: mask.value });
+    setCanvasKeyboardAnnouncement("Selected the entire image.");
+    setErrorMessage("");
+  }, [document]);
+
+  function getCanvasComponentId() {
+    return toolMode === "inspector"
+      ? inspectorComponentId
+      : (document?.inspection.components[componentIndex]?.id ?? -1);
+  }
+
+  function getInitialKeyboardCursor() {
+    if (!document) return null;
+    const componentId = getCanvasComponentId();
+    const grid = getJpegComponentBlockGrid(document.inspection, componentId);
+    if (!grid) return null;
+    const preferredBlock =
+      selectedBlock?.componentId === componentId ? selectedBlock : null;
+    const coordinate = mapJpegBlockCoordinate(
+      document.inspection,
+      componentId,
+      preferredBlock?.blockX ?? Math.floor(grid.columns / 2),
+      preferredBlock?.blockY ?? Math.floor(grid.rows / 2),
+    );
+    return coordinate.ok ? coordinate.value : null;
+  }
+
+  function updateKeyboardSelection(
+    anchor: JpegBlockCoordinate,
+    cursor: JpegBlockCoordinate,
+  ): SpatialSelection | null {
+    const left = Math.min(anchor.imageX, cursor.imageX);
+    const top = Math.min(anchor.imageY, cursor.imageY);
+    const right = Math.max(
+      anchor.imageX + anchor.imageWidth,
+      cursor.imageX + cursor.imageWidth,
+    );
+    const bottom = Math.max(
+      anchor.imageY + anchor.imageHeight,
+      cursor.imageY + cursor.imageHeight,
+    );
+    return updateSelection({ x: left, y: top }, { x: right, y: bottom });
+  }
+
+  function onCanvasKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (!document || (toolMode !== "select" && toolMode !== "inspector"))
+      return;
+    const componentId = getCanvasComponentId();
+    const grid = getJpegComponentBlockGrid(document.inspection, componentId);
+    if (!grid) return;
+    const cursor =
+      keyboardCursor?.componentId === componentId
+        ? keyboardCursor
+        : getInitialKeyboardCursor();
+    if (!cursor) return;
+
+    if (
+      event.key === "ArrowLeft" ||
+      event.key === "ArrowRight" ||
+      event.key === "ArrowUp" ||
+      event.key === "ArrowDown"
+    ) {
+      event.preventDefault();
+      const blockX = Math.max(
+        0,
+        Math.min(
+          grid.columns - 1,
+          cursor.blockX +
+            (event.key === "ArrowLeft"
+              ? -1
+              : event.key === "ArrowRight"
+                ? 1
+                : 0),
+        ),
+      );
+      const blockY = Math.max(
+        0,
+        Math.min(
+          grid.rows - 1,
+          cursor.blockY +
+            (event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0),
+        ),
+      );
+      const moved = mapJpegBlockCoordinate(
+        document.inspection,
+        componentId,
+        blockX,
+        blockY,
+      );
+      if (!moved.ok) {
+        setErrorMessage(moved.error.message);
+        return;
+      }
+      setKeyboardCursor(moved.value);
+      if (toolMode === "select" && keyboardSelectionAnchor.current) {
+        updateKeyboardSelection(keyboardSelectionAnchor.current, moved.value);
+      }
+      setCanvasKeyboardAnnouncement(
+        `DCT block ${moved.value.blockX + 1} of ${grid.columns}, row ${moved.value.blockY + 1} of ${grid.rows}.`,
+      );
+      return;
+    }
+
+    if (event.key === "Escape" && toolMode === "select") {
+      event.preventDefault();
+      keyboardSelectionAnchor.current = null;
+      setSelection(null);
+      dispatchWorkspace({ type: "set-selection", selection: null });
+      setCanvasKeyboardAnnouncement("Selection cleared.");
+      return;
+    }
+
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    if (toolMode === "inspector") {
+      dispatchWorkspace({
+        type: "select-block",
+        block: cursor,
+      });
+      setCanvasKeyboardAnnouncement(
+        `Inspected DCT block ${cursor.blockX + 1}, row ${cursor.blockY + 1}, component ${cursor.componentId}.`,
+      );
+      setErrorMessage("");
+      return;
+    }
+
+    if (keyboardSelectionAnchor.current) {
+      const completedSelection = updateKeyboardSelection(
+        keyboardSelectionAnchor.current,
+        cursor,
+      );
+      if (!completedSelection) return;
+      const mask = createSpatialMask(
+        completedSelection,
+        document.inspection.width,
+        document.inspection.height,
+      );
+      if (!mask.ok) {
+        setErrorMessage(mask.error.message);
+        return;
+      }
+      keyboardSelectionAnchor.current = null;
+      setSelection(null);
+      dispatchWorkspace({ type: "set-selection", selection: mask.value });
+      if (
+        panelTool === "coefficient-glitch" &&
+        brushAutoApply[selectedBrushId] &&
+        applyCoefficientOperation(mask.value)
+      ) {
+        dispatchWorkspace({ type: "set-selection", selection: null });
+      }
+      setCanvasKeyboardAnnouncement("Rectangle selection complete.");
+      return;
+    }
+    keyboardSelectionAnchor.current = cursor;
+    updateKeyboardSelection(cursor, cursor);
+    setCanvasKeyboardAnnouncement(
+      `Selection started at DCT block ${cursor.blockX + 1}, row ${cursor.blockY + 1}. Use arrow keys to extend it, then Enter to finish or Escape to clear.`,
+    );
   }
 
   function snapBrushPoint(
@@ -2395,129 +2700,85 @@ function App() {
     return false;
   }
 
-  async function showCorruptedResult(
-    bytes: Uint8Array,
-    reports: readonly ScanCorruptionReport[],
-    diagnostic: ScanDecodeDiagnostic,
-    signal: AbortSignal,
-  ) {
-    setEditedBytes(bytes);
-    setScanCorruptionReports(reports);
-    setScanDecodeDiagnostic(diagnostic);
-    const latestReport = reports.at(-1);
-    if (latestReport) {
-      setScanCorruptionMode(latestReport.mode);
-      setScanCorruptionCount(latestReport.count);
-      setScanCorruptionRangeStart(latestReport.rangeStart);
-      setScanCorruptionRangeEnd(latestReport.rangeEnd);
-      setScanCorruptionSeed(latestReport.seed);
-    }
-    setShowOriginal(false);
-    setShowCleanEncoded(false);
-    let previewUrl: string;
-    try {
-      previewUrl = createJpegPreviewUrl(bytes);
-    } catch {
-      setEditedPreviewUrl(null);
-      setEditedPreviewError(
-        "A preview could not be created for the corrupted scan. The corrupt bytes remain available to export; the clean encoded preview remains separate.",
-      );
-      setErrorMessage("");
-      setIsEncoding(false);
-      setIsScanCorrupting(false);
-      scanCorruptionController.current = null;
-      const history = operationHistory.current;
-      setHistoryAvailability({
-        canUndo:
-          (history?.canUndo ?? false) || scanCorruptionHistory.current.canUndo,
-        canRedo:
-          (history?.canRedo ?? false) || scanCorruptionHistory.current.canRedo,
-      });
-      return;
-    }
-    let previewError = "";
-    try {
-      const preview = new Image();
-      preview.src = previewUrl;
-      await preview.decode();
-      if (
-        document &&
-        (preview.naturalWidth !== document.inspection.width ||
-          preview.naturalHeight !== document.inspection.height)
-      ) {
-        previewError =
-          "The corrupted JPEG preview dimensions differ from the source image.";
+  const showCorruptedResult = useCallback(
+    async (
+      bytes: Uint8Array,
+      reports: readonly ScanCorruptionReport[],
+      diagnostic: ScanDecodeDiagnostic,
+      signal: AbortSignal,
+    ) => {
+      setEditedBytes(bytes);
+      setScanCorruptionReports(reports);
+      setScanDecodeDiagnostic(diagnostic);
+      const latestReport = reports.at(-1);
+      if (latestReport) {
+        setScanCorruptionMode(latestReport.mode);
+        setScanCorruptionCount(latestReport.count);
+        setScanCorruptionRangeStart(latestReport.rangeStart);
+        setScanCorruptionRangeEnd(latestReport.rangeEnd);
+        setScanCorruptionSeed(latestReport.seed);
       }
-    } catch {
-      previewError =
-        "The browser decoder could not render the corrupted scan. The corrupt bytes remain available to export; the clean encoded preview is shown for comparison.";
-    }
-
-    if (signal.aborted) {
-      URL.revokeObjectURL(previewUrl);
-      return;
-    }
-    if (previewError) {
-      URL.revokeObjectURL(previewUrl);
-      setEditedPreviewUrl(null);
-      setEditedPreviewError(previewError);
-    } else {
-      setEditedPreviewUrl(previewUrl);
-      setEditedPreviewError("");
-    }
-    setShowOriginal(false);
-    setShowCleanEncoded(false);
-    setErrorMessage("");
-    setIsEncoding(false);
-    setIsScanCorrupting(false);
-    scanCorruptionController.current = null;
-    const history = operationHistory.current;
-    setHistoryAvailability({
-      canUndo:
-        (history?.canUndo ?? false) || scanCorruptionHistory.current.canUndo,
-      canRedo:
-        (history?.canRedo ?? false) || scanCorruptionHistory.current.canRedo,
-    });
-  }
-
-  async function replayScanStages(
-    stages: readonly ScanCorruptionParameters[],
-    commitHistory: () => boolean,
-  ) {
-    const cleanBytes = cleanEncodedBytes.current;
-    if (!cleanBytes) {
-      setErrorMessage(
-        "Apply a coefficient or DQT operation and wait for its clean JPEG encoding before using Scan Corrupt.",
-      );
-      return;
-    }
-    if (stages.length === 0) {
-      if (!commitHistory()) {
-        setErrorMessage("The Scan Corrupt history could not be updated.");
+      setShowOriginal(false);
+      setShowCleanEncoded(false);
+      let previewUrl: string;
+      try {
+        previewUrl = createJpegPreviewUrl(bytes);
+      } catch {
+        setEditedPreviewUrl(null);
+        setEditedPreviewError(
+          "A preview could not be created for the corrupted scan. The corrupt bytes remain available to export; the clean encoded preview remains separate.",
+        );
+        setErrorMessage("");
+        setIsEncoding(false);
+        setIsScanCorrupting(false);
+        scanCorruptionController.current = null;
+        const history = operationHistory.current;
+        setHistoryAvailability({
+          canUndo:
+            (history?.canUndo ?? false) ||
+            scanCorruptionHistory.current.canUndo,
+          canRedo:
+            (history?.canRedo ?? false) ||
+            scanCorruptionHistory.current.canRedo,
+        });
         return;
       }
-      const restoredBytes = cleanBytes.slice();
-      setEditedBytes(restoredBytes);
-      setScanCorruptionReports([]);
-      setScanDecodeDiagnostic(null);
-      setEditedPreviewError(cleanEncodedPreviewError);
-      if (cleanEncodedPreviewError) {
-        setEditedPreviewUrl(null);
-      } else {
-        try {
-          setEditedPreviewUrl(createJpegPreviewUrl(restoredBytes));
-        } catch {
-          setEditedPreviewUrl(null);
-          setEditedPreviewError(
-            "The clean encoded JPEG remains available to export, but its preview could not be created.",
-          );
+      let previewError = "";
+      try {
+        const preview = new Image();
+        preview.src = previewUrl;
+        await preview.decode();
+        if (
+          document &&
+          (preview.naturalWidth !== document.inspection.width ||
+            preview.naturalHeight !== document.inspection.height)
+        ) {
+          previewError =
+            "The corrupted JPEG preview dimensions differ from the source image.";
         }
+      } catch {
+        previewError =
+          "The browser decoder could not render the corrupted scan. The corrupt bytes remain available to export; the clean encoded preview is shown for comparison.";
+      }
+
+      if (signal.aborted) {
+        URL.revokeObjectURL(previewUrl);
+        return;
+      }
+      if (previewError) {
+        URL.revokeObjectURL(previewUrl);
+        setEditedPreviewUrl(null);
+        setEditedPreviewError(previewError);
+      } else {
+        setEditedPreviewUrl(previewUrl);
+        setEditedPreviewError("");
       }
       setShowOriginal(false);
       setShowCleanEncoded(false);
       setErrorMessage("");
       setIsEncoding(false);
       setIsScanCorrupting(false);
+      scanCorruptionController.current = null;
       const history = operationHistory.current;
       setHistoryAvailability({
         canUndo:
@@ -2525,44 +2786,118 @@ function App() {
         canRedo:
           (history?.canRedo ?? false) || scanCorruptionHistory.current.canRedo,
       });
+    },
+    [document],
+  );
+
+  const replayScanStages = useCallback(
+    async (
+      stages: readonly ScanCorruptionParameters[],
+      commitHistory: () => boolean,
+    ) => {
+      const cleanBytes = cleanEncodedBytes.current;
+      if (!cleanBytes) {
+        setErrorMessage(
+          "Apply a coefficient or DQT operation and wait for its clean JPEG encoding before using Scan Corrupt.",
+        );
+        return;
+      }
+      if (stages.length === 0) {
+        if (!commitHistory()) {
+          setErrorMessage("The Scan Corrupt history could not be updated.");
+          return;
+        }
+        const restoredBytes = cleanBytes.slice();
+        setEditedBytes(restoredBytes);
+        setScanCorruptionReports([]);
+        setScanDecodeDiagnostic(null);
+        setEditedPreviewError(cleanEncodedPreviewErrorRef.current);
+        if (cleanEncodedPreviewErrorRef.current) {
+          setEditedPreviewUrl(null);
+        } else {
+          try {
+            setEditedPreviewUrl(createJpegPreviewUrl(restoredBytes));
+          } catch {
+            setEditedPreviewUrl(null);
+            setEditedPreviewError(
+              "The clean encoded JPEG remains available to export, but its preview could not be created.",
+            );
+          }
+        }
+        setShowOriginal(false);
+        setShowCleanEncoded(false);
+        setErrorMessage("");
+        setIsEncoding(false);
+        setIsScanCorrupting(false);
+        const history = operationHistory.current;
+        setHistoryAvailability({
+          canUndo:
+            (history?.canUndo ?? false) ||
+            scanCorruptionHistory.current.canUndo,
+          canRedo:
+            (history?.canRedo ?? false) ||
+            scanCorruptionHistory.current.canRedo,
+        });
+        return;
+      }
+
+      const controller = new AbortController();
+      scanCorruptionController.current?.abort();
+      scanCorruptionController.current = controller;
+      setIsEncoding(true);
+      setIsScanCorrupting(true);
+      setErrorMessage("");
+      const corrupted = await corruptEncodedJpeg(
+        cleanBytes,
+        stages,
+        controller.signal,
+      );
+      if (controller.signal.aborted) return;
+      if (!corrupted.ok) {
+        setErrorMessage(corrupted.error.message);
+        setIsEncoding(false);
+        setIsScanCorrupting(false);
+        scanCorruptionController.current = null;
+        return;
+      }
+      if (!commitHistory()) {
+        setErrorMessage("The Scan Corrupt history could not be updated.");
+        setIsEncoding(false);
+        setIsScanCorrupting(false);
+        scanCorruptionController.current = null;
+        return;
+      }
+      scanCorruptionController.current = null;
+      setIsScanCorrupting(false);
+      await showCorruptedResult(
+        corrupted.value.bytes,
+        corrupted.value.reports,
+        corrupted.value.diagnostic,
+        controller.signal,
+      );
+    },
+    [showCorruptedResult],
+  );
+
+  useEffect(() => {
+    const stages = pendingProjectStages.current;
+    if (!editedBytes || !stages || projectStagesReplayStarted.current) {
       return;
     }
 
-    const controller = new AbortController();
-    scanCorruptionController.current?.abort();
-    scanCorruptionController.current = controller;
-    setIsEncoding(true);
-    setIsScanCorrupting(true);
-    setErrorMessage("");
-    const corrupted = await corruptEncodedJpeg(
-      cleanBytes,
-      stages,
-      controller.signal,
-    );
-    if (controller.signal.aborted) return;
-    if (!corrupted.ok) {
-      setErrorMessage(corrupted.error.message);
-      setIsEncoding(false);
-      setIsScanCorrupting(false);
-      scanCorruptionController.current = null;
-      return;
-    }
-    if (!commitHistory()) {
-      setErrorMessage("The Scan Corrupt history could not be updated.");
-      setIsEncoding(false);
-      setIsScanCorrupting(false);
-      scanCorruptionController.current = null;
-      return;
-    }
-    scanCorruptionController.current = null;
-    setIsScanCorrupting(false);
-    await showCorruptedResult(
-      corrupted.value.bytes,
-      corrupted.value.reports,
-      corrupted.value.diagnostic,
-      controller.signal,
-    );
-  }
+    projectStagesReplayStarted.current = true;
+    void replayScanStages(stages, () => {
+      scanCorruptionHistory.current.clear();
+      for (const stage of stages) {
+        if (!scanCorruptionHistory.current.record(stage).ok) {
+          scanCorruptionHistory.current.clear();
+          return false;
+        }
+      }
+      pendingProjectStages.current = null;
+      return true;
+    });
+  }, [editedBytes, replayScanStages]);
 
   function applyScanCorruption() {
     const history = scanCorruptionHistory.current;
@@ -2649,6 +2984,52 @@ function App() {
     link.click();
     link.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function downloadProjectFile() {
+    if (!document || !historyDocument) return;
+    setIsSavingProject(true);
+    setErrorMessage("");
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    try {
+      const result = await createJgeProjectFile(
+        {
+          source: {
+            fileName: document.originalAsset.fileName,
+            sha256: document.originalAsset.sha256,
+            bytes: document.originalAsset.readBytes(),
+          },
+          operations: historyDocument.operations,
+          draftMask: globalSelectionMask,
+          scanCorruptionStages:
+            scanCorruptionHistory.current.activeStages.length > 0
+              ? scanCorruptionHistory.current.activeStages
+              : (pendingProjectStages.current ?? []),
+        },
+        { application: APPLICATION_VERSION, codec: JPEG_CODEC_VERSION },
+      );
+      if (!result.ok) {
+        setErrorMessage(result.error.message);
+        return;
+      }
+
+      const baseName =
+        document.originalAsset.fileName
+          .replace(/\.[^.]+$/, "")
+          .replace(/[\\/:*?"<>|]/g, "_")
+          .slice(0, 100) || "project";
+      const url = URL.createObjectURL(result.value);
+      const link = window.document.createElement("a");
+      link.href = url;
+      link.download = `${baseName}.jpglitch`;
+      link.hidden = true;
+      window.document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } finally {
+      setIsSavingProject(false);
+    }
   }
 
   function onFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -2746,6 +3127,54 @@ function App() {
       ? cleanEncodedPreviewUrl
       : (editedPreviewUrl ??
         (hasScanCorruption ? cleanEncodedPreviewUrl : document?.previewUrl));
+
+  useEffect(() => {
+    function onWorkspaceKeyDown(event: KeyboardEvent) {
+      if (saveDialogRef.current?.open) return;
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          target.matches("input, textarea, select, [role='textbox']"))
+      ) {
+        return;
+      }
+
+      const shortcut = getWorkspaceShortcut(event);
+      if (shortcut === "select-all") {
+        if (toolMode !== "select" || !document) return;
+        event.preventDefault();
+        selectAllImage();
+        return;
+      }
+      if (!event.ctrlKey && !event.metaKey && !event.altKey && document) {
+        const tool = getCanvasToolShortcut(event.key);
+        if (!tool) return;
+        event.preventDefault();
+        keyboardSelectionAnchor.current = null;
+        dispatchWorkspace({ type: "activate-tool", tool });
+        setKeyboardCursor(null);
+        setCanvasKeyboardAnnouncement(`${tool} tool selected.`);
+        return;
+      }
+      if (!shortcut) return;
+      const targetSelector = {
+        undo: 'button[aria-label="Undo"]',
+        redo: 'button[aria-label="Redo"]',
+        save: 'button[aria-label="Save"]',
+        "open-file": 'button[aria-label="Open file"]',
+      }[shortcut];
+      const button =
+        window.document.querySelector<HTMLButtonElement>(targetSelector);
+      if (!button || button.disabled) return;
+      event.preventDefault();
+      button.click();
+    }
+
+    window.addEventListener("keydown", onWorkspaceKeyDown);
+    return () => window.removeEventListener("keydown", onWorkspaceKeyDown);
+  }, [document, selectAllImage, toolMode]);
+
   return (
     <main className={`workspace ${document ? "has-tool-bar" : ""}`}>
       <header className="topbar">
@@ -2771,6 +3200,7 @@ function App() {
               onClick={handleUndo}
               disabled={!historyAvailability.canUndo || isEncoding}
               aria-label="Undo"
+              aria-keyshortcuts="Control+Z Meta+Z"
               title="Undo"
             >
               ↶
@@ -2781,6 +3211,7 @@ function App() {
               onClick={handleRedo}
               disabled={!historyAvailability.canRedo || isEncoding}
               aria-label="Redo"
+              aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z Control+Y Meta+Y"
               title="Redo"
             >
               ↷
@@ -2790,18 +3221,35 @@ function App() {
             ref={fileInput}
             className="visually-hidden"
             type="file"
-            accept="image/jpeg,.jpg,.jpeg"
-            aria-label="Choose a JPEG file"
+            accept="image/jpeg,.jpg,.jpeg,.jpglitch,application/vnd.jpeg-glitch-editor.project+json"
+            aria-label="Choose a JPEG or editor project file"
+            tabIndex={-1}
             onChange={onFileChange}
           />
           <button
             className="open-button"
             type="button"
+            aria-label="Open file"
             onClick={() => fileInput.current?.click()}
             disabled={isLoading}
+            aria-keyshortcuts="Control+O Meta+O"
+            title="Open a JPEG or .jpglitch project (Ctrl/⌘+O)"
           >
-            {isLoading ? "Inspecting…" : "Open JPEG"}
+            {isLoading ? loadingMessage : "Open file"}
           </button>
+          {document && (
+            <button
+              className="open-button"
+              type="button"
+              aria-label="Save"
+              onClick={() => setIsSaveDialogOpen(true)}
+              disabled={isSavingProject || isLoading}
+              aria-keyshortcuts="Control+S Meta+S"
+              title="Save as JPEG or .jpglitch (Ctrl/⌘+S)"
+            >
+              {isSavingProject ? "Saving…" : "Save"}
+            </button>
+          )}
           {document && (
             <button
               className="export-button"
@@ -2825,6 +3273,69 @@ function App() {
       </header>
 
       {document && (
+        <dialog
+          ref={saveDialogRef}
+          className="save-dialog"
+          aria-labelledby="save-dialog-title"
+          aria-describedby="save-dialog-description"
+          onCancel={(event) => {
+            event.preventDefault();
+            setIsSaveDialogOpen(false);
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            setIsSaveDialogOpen(false);
+          }}
+          onClose={() => setIsSaveDialogOpen(false)}
+        >
+          <h2 id="save-dialog-title">Choose what to save</h2>
+          <p id="save-dialog-description">
+            Export the current JPEG experiment, or save a .jpglitch project with
+            the exact original JPEG and editable operations. The original file
+            is never overwritten.
+          </p>
+          <div className="save-dialog-actions">
+            <button
+              className="open-button"
+              type="button"
+              autoFocus
+              disabled={!editedBytes || isEncoding}
+              title={
+                editedBytes
+                  ? "Export the current JPEG experiment"
+                  : "Apply a JPEG operation before exporting an image"
+              }
+              onClick={() => {
+                setIsSaveDialogOpen(false);
+                downloadEditedJpeg();
+              }}
+            >
+              Save image (.jpg)
+            </button>
+            <button
+              className="open-button"
+              type="button"
+              disabled={isSavingProject || isLoading}
+              onClick={() => {
+                setIsSaveDialogOpen(false);
+                void downloadProjectFile();
+              }}
+            >
+              Save editable project (.jpglitch)
+            </button>
+            <button
+              className="tool-toggle"
+              type="button"
+              onClick={() => setIsSaveDialogOpen(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        </dialog>
+      )}
+
+      {document && (
         <nav className="tool-bar" aria-label="Editing tools">
           {TOOL_GROUPS.map((group) => (
             <div
@@ -2842,7 +3353,8 @@ function App() {
                     type="button"
                     aria-label={tool.label}
                     aria-pressed={toolMode === tool.id || panelTool === tool.id}
-                    title={tool.label}
+                    aria-keyshortcuts={tool.shortcut}
+                    title={`${tool.label} (${tool.shortcut})`}
                     onClick={() => activateTool(tool.id)}
                   >
                     <svg
@@ -3028,6 +3540,23 @@ function App() {
                 <div
                   className={`preview-image-wrap ${toolMode === "select" ? "is-selecting" : ""} ${toolMode === "brush" ? "is-brushing" : ""} ${toolMode === "inspector" ? "is-inspecting" : ""} ${toolMode === "hand" ? "is-panning" : ""} ${toolMode === "block-transform" && (blockTransformMode === "transfer" || blockTransformMode === "repeat") ? "is-block-transforming" : ""}`}
                   style={{ transform: `scale(${zoom})` }}
+                  role="group"
+                  tabIndex={0}
+                  aria-label="JPEG image canvas"
+                  aria-describedby={
+                    toolMode === "select" || toolMode === "inspector"
+                      ? "canvas-keyboard-help"
+                      : undefined
+                  }
+                  aria-keyshortcuts={
+                    toolMode === "select" ? "Control+A Meta+A" : undefined
+                  }
+                  onFocus={() => {
+                    setCanvasHasKeyboardFocus(true);
+                    setKeyboardCursor(getInitialKeyboardCursor());
+                  }}
+                  onBlur={() => setCanvasHasKeyboardFocus(false)}
+                  onKeyDown={onCanvasKeyDown}
                   onPointerDown={onImagePointerDown}
                   onPointerMove={onImagePointerMove}
                   onPointerUp={onImagePointerUp}
@@ -3069,11 +3598,28 @@ function App() {
                     selectedBlock={
                       overlayVisibility.inspectedBlock ? selectedBlock : null
                     }
+                    keyboardCursor={
+                      canvasHasKeyboardFocus ? keyboardCursor : null
+                    }
                     blockTransferSource={blockTransferSourceSelection}
                     blockTransferDestination={blockTransferDestinationSelection}
                   />
                 </div>
               </div>
+              {(toolMode === "select" || toolMode === "inspector") && (
+                <p id="canvas-keyboard-help" className="canvas-keyboard-help">
+                  {toolMode === "select"
+                    ? "Keyboard: Ctrl/⌘+A selects the whole image; arrows move one DCT block; Enter starts or commits a rectangular mask; Escape clears it."
+                    : "Keyboard: arrow keys move one DCT block; Enter inspects the focused block."}
+                </p>
+              )}
+              <span
+                className="visually-hidden"
+                role="status"
+                aria-live="polite"
+              >
+                {canvasKeyboardAnnouncement}
+              </span>
             </div>
           )}
           {isDragging && (
@@ -3115,6 +3661,11 @@ function App() {
                 </span>
                 <span>{errorMessage}</span>
               </div>
+            )}
+            {projectNotice && (
+              <p className="project-notice" role="status">
+                {projectNotice}
+              </p>
             )}
             {document ? (
               <>

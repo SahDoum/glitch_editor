@@ -21,30 +21,30 @@ capabilities are already implemented.
 ### Next: research JPEG artifacts, then propose experiment brushes
 
 - [ ] Research a focused set of observable JPEG artifacts and techniques using
-  traceable sources and small licensed or synthetic fixtures. For each
-  candidate, identify the JPEG representation involved, the actual mechanism,
-  typical visual manifestation and its dependence on image content,
-  component, sampling and codec; record uncertainty and source provenance.
+      traceable sources and small licensed or synthetic fixtures. For each
+      candidate, identify the JPEG representation involved, the actual mechanism,
+      typical visual manifestation and its dependence on image content,
+      component, sampling and codec; record uncertainty and source provenance.
 - [ ] Map each candidate to existing typed operations and supported JPEG
-  processes. Clearly distinguish quantized coefficient edits, DQT
-  reinterpretation/requantization, block operations, entropy-coded scan
-  edits and raw-byte corruption. Do not frame JPEG as video datamoshing.
+      processes. Clearly distinguish quantized coefficient edits, DQT
+      reinterpretation/requantization, block operations, entropy-coded scan
+      edits and raw-byte corruption. Do not frame JPEG as video datamoshing.
 - [ ] Propose a short, user-reviewable set of new icon-based brushes with
-  names, domain, exact default parameters, meaningful controls, area of
-  effect, deterministic seed if applicable, re-encoding/decode risks and
-  example before/after outcomes. Do not claim a visual outcome is universal.
+      names, domain, exact default parameters, meaningful controls, area of
+      effect, deterministic seed if applicable, re-encoding/decode risks and
+      example before/after outcomes. Do not claim a visual outcome is universal.
 - [ ] Obtain an explicit decision before adding new public formats,
-  dependencies, operations, codec capabilities or support for additional
-  JPEG processes. Keep raw/entropy experiments isolated; no hidden pixel
-  substitutes or modifications of source bytes.
+      dependencies, operations, codec capabilities or support for additional
+      JPEG processes. Keep raw/entropy experiments isolated; no hidden pixel
+      substitutes or modifications of source bytes.
 - [ ] Implement selected brushes as small vertical slices, reusing existing
-  typed operations and the interaction principles in
-  [INTERFACE.md](./INTERFACE.md). Test parameter mapping and boundaries,
-  reproducible results, current-mask behavior where applicable, history,
-  errors and supported/unsupported inputs. Use deterministic visual and
-  coefficient-level golden fixtures, independent decoding and other
-  representation-specific checks where practical.
-  Update the experiment catalog only for verified behavior.
+      typed operations and the interaction principles in
+      [INTERFACE.md](./INTERFACE.md). Test parameter mapping and boundaries,
+      reproducible results, current-mask behavior where applicable, history,
+      errors and supported/unsupported inputs. Use deterministic visual and
+      coefficient-level golden fixtures, independent decoding and other
+      representation-specific checks where practical.
+      Update the experiment catalog only for verified behavior.
 
 #### Candidate artifact brushes to investigate
 
@@ -54,42 +54,42 @@ reproducible example for each before selecting parameters or promising a
 visual result.
 
 - [ ] **Ringing:** investigate oscillations around high-contrast edges in
-  reconstructed 8×8 DCT blocks, including the hypothesis that suppression
-  or loss of precision of high-frequency coefficients contributes to them.
-  Compare frequency bands, quantization and edge alignment.
+      reconstructed 8×8 DCT blocks, including the hypothesis that suppression
+      or loss of precision of high-frequency coefficients contributes to them.
+      Compare frequency bands, quantization and edge alignment.
 - [ ] **Posterization:** investigate whether JPEG quantization can produce a
-  useful posterization-like appearance, and distinguish it from deliberate
-  pixel-value or palette reduction. Identify image and gradient conditions
-  and whether existing JPEG-domain operations can reproduce it.
+      useful posterization-like appearance, and distinguish it from deliberate
+      pixel-value or palette reduction. Identify image and gradient conditions
+      and whether existing JPEG-domain operations can reproduce it.
 - [ ] **Contouring / banding:** investigate visible steps in smooth gradients,
-  potential relationships with quantization and posterization, and whether
-  this warrants a distinct brush or a shared experiment. Do not assume the
-  same mechanism or outcome without evidence.
+      potential relationships with quantization and posterization, and whether
+      this warrants a distinct brush or a shared experiment. Do not assume the
+      same mechanism or outcome without evidence.
 - [ ] **Blockiness in busy regions:** investigate how block boundaries become
-  visible in detailed or textured regions, how this differs from blockiness
-  in smooth areas, and which coefficient-domain manipulations can create a
-  controllable effect without conflating blocks with MCUs.
+      visible in detailed or textured regions, how this differs from blockiness
+      in smooth areas, and which coefficient-domain manipulations can create a
+      controllable effect without conflating blocks with MCUs.
 - [ ] **Staircase noise:** define the desired appearance on diagonal edges;
-  investigate whether it arises from DCT quantization, chroma subsampling,
-  aliasing or another mechanism in each example. Only propose a JPEG-domain
-  brush if its mechanism and limitations are supported by evidence.
+      investigate whether it arises from DCT quantization, chroma subsampling,
+      aliasing or another mechanism in each example. Only propose a JPEG-domain
+      brush if its mechanism and limitations are supported by evidence.
 
 ### Remaining interface work
 
 - [ ] Consider the icon-based experiment-brush paradigm for other tools
-  where technically appropriate, without implying all operations use masks.
+      where technically appropriate, without implying all operations use masks.
 - [ ] Improve the compactness and readability of history while preserving
-  enable/disable, order changes, removal, mask restoration and Undo/Redo.
+      enable/disable, order changes, removal, mask restoration and Undo/Redo.
 - [ ] Evaluate a compact right panel with Effect / History / Information tabs;
-  preserve inspector access, collapsed state, keyboard access and error
-  visibility. This remains a proposal, not the current layout.
+      preserve inspector access, collapsed state, keyboard access and error
+      visibility. This remains a proposal, not the current layout.
 - [ ] Improve built-in brush names, descriptions and icons using observed,
-  validated outcomes; maintain access to existing user brushes and recipes.
+      validated outcomes; maintain access to existing user brushes and recipes.
 - [ ] Check keyboard access, accessible names, focus states and responsive
-  layout as the interface evolves, without hiding errors or original comparison.
+      layout as the interface evolves, without hiding errors or original comparison.
 - [ ] Evaluate temporary live preview only after performance measurement and a
-  separate product decision; handle stale worker responses, cancellation and
-  unconfirmed output explicitly.
+      separate product decision; handle stale worker responses, cancellation and
+      unconfirmed output explicitly.
 
 ### Deferred: further mask and eraser development
 
@@ -99,13 +99,13 @@ honestly documented until the user reprioritizes this work.
 
 - [ ] Add combining multiple strokes/rectangles and erasing/subtraction.
 - [ ] Define shared undo/redo for mask changes and effects, including reset,
-  mask restoration and error handling.
+      mask restoration and error handling.
 - [ ] Consider mask visibility/opacity controls and explicit whole-image
-  selection.
+      selection.
 - [ ] Before implementation, agree on versioning, migration, work limits and
-  compatibility with existing operation snapshots and named-mask data;
-  test sampling-aware coverage and overlay consistency. Do not change the
-  representation or public interfaces without the required approval.
+      compatibility with existing operation snapshots and named-mask data;
+      test sampling-aware coverage and overlay consistency. Do not change the
+      representation or public interfaces without the required approval.
 
 ## Milestone 0 — Repository and engineering foundation (complete)
 
@@ -228,7 +228,7 @@ asset remains byte-for-byte unchanged. Re-encoding does not promise metadata
 preservation: the bridge copies saved APP/COM markers except APP0 and APP14;
 the codec may generate its own JFIF marker. The app lazily loads the generated
 WASM codec, built with `npm run build:jpeg-codec` using Emscripten 4.0.23.
-Input/output JPEGs are capped at 50 MiB, coefficient storage at 128 MiB, and
+Input/output JPEGs are capped at 50 MiB, coefficient storage at 256 MiB, and
 worker DCT processing is bounded. See ADR-005 for the codec decision and
 export behavior.
 
@@ -444,60 +444,60 @@ become undecodable, and the visible effect depends on decoder behavior.
 ### Interaction and pipeline
 
 - [x] Add a **Scan Corrupt** tool/panel available only when the current
-  coefficient result can be encoded by the supported baseline single-scan
-  encoder. Label the target as entropy-coded scan bytes, not pixels, DCT
-  blocks, MCUs, or arbitrary whole-file bytes.
+      coefficient result can be encoded by the supported baseline single-scan
+      encoder. Label the target as entropy-coded scan bytes, not pixels, DCT
+      blocks, MCUs, or arbitrary whole-file bytes.
 - [x] Expose bounded deterministic controls: corruption mode (bit flip or
-  byte replacement), count/strength, scan-relative range, and unsigned 32-bit
-  seed. A scan-relative range is not a pixel location and must not imply a
-  predictable visual location.
+      byte replacement), count/strength, scan-relative range, and unsigned 32-bit
+      seed. A scan-relative range is not a pixel location and must not imply a
+      predictable visual location.
 - [x] Run corruption after all coefficient/DQT operations and after normal
-  encoding. The operation must work on a copy of the encoded output, never the
-  imported source or the last saved export.
+      encoding. The operation must work on a copy of the encoded output, never the
+      imported source or the last saved export.
 - [x] Keep the operation terminal in the history pipeline. Undo returns to the
-  clean encoded coefficient result; redo and parameter edits replay from that
-  clean result with the same seed. Permit explicitly stacked corruption
-  stages only as byte-domain operations on the same bounded scan; do not run
-  coefficient operations or silently re-encode after the first corruption.
+      clean encoded coefficient result; redo and parameter edits replay from that
+      clean result with the same seed. Permit explicitly stacked corruption
+      stages only as byte-domain operations on the same bounded scan; do not run
+      coefficient operations or silently re-encode after the first corruption.
 - [x] Show distinct states for corruption complete, preview decoded, and
-  preview decode failed. If decoding fails completely, retain and offer export
-  of the corrupt bytes with a clear warning, while keeping the clean encoded
-  preview available for comparison and undo.
+      preview decode failed. If decoding fails completely, retain and offer export
+      of the corrupt bytes with a clear warning, while keeping the clean encoded
+      preview available for comparison and undo.
 - [x] Report seed, selected range, number of changed bytes/bits, preview status,
-  and safe parser/decoder diagnostics. Do not describe partial decoder recovery
-  as guaranteed.
+      and safe parser/decoder diagnostics. Do not describe partial decoder recovery
+      as guaranteed.
 
 ### Structural checks and failure policy
 
 - [x] Initially accept only a known output from the editor's supported
-  baseline single-scan encoder. Parse and validate scan boundaries before
-  changing bytes; reject unknown, malformed, multi-scan, or unsupported inputs.
+      baseline single-scan encoder. Parse and validate scan boundaries before
+      changing bytes; reject unknown, malformed, multi-scan, or unsupported inputs.
 - [x] Protect marker segments, SOI/EOI, restart markers, and byte-stuffing
-  structure. Restrict changes to verified entropy data and ensure modified
-  values cannot create new marker boundaries. Revalidate output bounds after
-  corruption.
+      structure. Restrict changes to verified entropy data and ensure modified
+      values cannot create new marker boundaries. Revalidate output bounds after
+      corruption.
 - [x] A structurally bounded stream that no longer decodes is an expected
-  experiment, not an operation error: preserve its bytes, report decode
-  failure, and do not silently substitute a pixel preview as the result.
+      experiment, not an operation error: preserve its bytes, report decode
+      failure, and do not silently substitute a pixel preview as the result.
 - [x] Reject invalid ranges, non-finite/out-of-range parameters, excessive
-  work, cancellation, and worker failures explicitly. Keep original bytes and
-  the clean encoded result recoverable in every case.
+      work, cancellation, and worker failures explicitly. Keep original bytes and
+      the clean encoded result recoverable in every case.
 - [x] Do not add general-purpose raw-byte editing or stream transplant to this
-  milestone. Do not claim support for progressive, arithmetic-coded, or
-  multi-scan JPEGs.
+      milestone. Do not claim support for progressive, arithmetic-coded, or
+      multi-scan JPEGs.
 
 ### Tests and acceptance
 
 - [x] Test parser bounds, byte-stuffing/restart-marker protection, exact
-  modified ranges, fixed output length, determinism, invalid parameters, and
-  original-byte immutability.
-- [ ] Include a fixture/result where independent decoding succeeds and one
-  where corruption causes decode failure; in both cases verify encoded bytes
-  remain available and undo restores the clean result.
+      modified ranges, fixed output length, determinism, invalid parameters, and
+      original-byte immutability.
+- [x] Include a fixture/result where independent decoding succeeds and one
+      where corruption causes decode failure; in both cases verify encoded bytes
+      remain available and undo restores the clean result.
 - [x] Test repeated corruption stages replay in order and that coefficient
-  edits cannot be placed after the terminal stream-corruption stage.
+      edits cannot be placed after the terminal stream-corruption stage.
 - [x] Browser-check visible preview failure, diagnostic, export, undo/redo,
-  cancellation, and recovery to the clean encoded preview.
+      cancellation, and recovery to the clean encoded preview.
 
 Acceptance: bounded, seeded corruption of a verified entropy-coded scan is
 reproducible and undoable. Decoder failure, including total preview failure,
@@ -511,29 +511,95 @@ expected result rather than hidden.
 - Browser smoke-tested a clean coefficient encode followed by scan corruption,
   parameter updates, stacked stages, terminal locking, undo/redo, cancellation,
   clean-preview recovery, and export availability. A preview decoder rejection
-  was deliberately simulated to exercise the failure UI and confirm that the
-  corrupt result remains exportable.
-- The integrated browser harness does not expose native Blob download events.
-  An actual corrupted stream that fails an independent decoder has not yet
-  been captured and validated; the corresponding fixture/result acceptance
-  item remains open.
+  was initially simulated to exercise the failure UI. Follow-up testing used a
+  real result from the coefficient encoder: replacing 8 entropy bytes with seed
+  0 produced a one-warning preview, kept JPEG export enabled, and Undo restored
+  the clean encoded preview; Redo reproduced the corruption.
+- An opt-in integration test passes the baseline synthetic fixture and a
+  deterministic 8-byte, seed-0 replacement result to the independent `djpeg`
+  decoder. The clean fixture decodes successfully; the corrupt result exits
+  with a decoder error. The test also verifies that the corrupt bytes remain
+  available, Undo restores the exact clean bytes, and Redo reproduces the same
+  output. Run it with
+  `JPEG_INDEPENDENT_DECODER=/opt/homebrew/bin/djpeg npx vitest run tests/unit/scan-corruption.test.ts`.
+- The integrated browser harness does not expose native Blob download events;
+  the decoder-failure result was verified in memory rather than captured as a
+  downloaded file.
 
 ## Milestone 9 — Project persistence and polish
 
 ### Tasks
 
-- [ ] Define project file format and schema version.
-- [ ] Save/reopen operation stack, masks, parameters, and source asset or relink metadata.
-- [ ] Add autosave/recovery if appropriate.
-- [ ] Add keyboard shortcuts and accessibility pass.
-- [ ] Profile large images and optimize only measured bottlenecks.
-- [ ] Browser compatibility and security review.
+- [x] Define the versioned `.jpglitch` JSON format.
+- [x] Save/reopen the operation stack, masks, parameters, random seeds, and
+      embedded exact source JPEG; validate size and SHA-256 before import.
+- [x] Decide against automatic browser-storage recovery for now; saving a
+      project is explicit because it embeds up to 50 MiB of source data.
+- [x] Add keyboard shortcuts for open, save project, undo, and redo.
+- [x] Check accessible names on visible controls across all eight tools, along
+      with keyboard navigation, focus states, and responsive layouts.
+- [ ] Complete a screen-reader and assistive-technology pass.
+- [x] Profile 10/40 MP JPEG import and maximum-size project files; optimize
+      measured Base64 responsiveness and large-payload validation bottlenecks.
+- [x] Perform a static security review; no confirmed vulnerabilities were
+      identified.
+- [x] Smoke-test application loading and JPEG import in available Chromium,
+      Firefox, and Safari browsers.
 
 ### Acceptance
 
 - Project reopens with the same operation stack and reproducible result.
 - Large-file processing reports progress and remains responsive.
 - No source asset is silently lost.
+
+### Verification status
+
+- Production-preview coefficient operations completed on the 6,240 × 4,160
+  (about 26 MP) 4:4:4 test photograph in 871 ms, with a maximum sampled timer
+  gap of 29 ms. A nearly full-image operation on a generated 40 MP 4:2:0 JPEG
+  completed in 856 ms, with a maximum sampled timer gap of 36 ms. These are
+  single-environment measurements, not performance guarantees for other
+  browsers or devices.
+- Responsive layout was checked at viewport widths of 320, 360, 375, 680,
+  860, 1,024, and 1,440 px without horizontal page overflow. Safari checks
+  across all eight tool panels found no visible buttons without a name or
+  visible form controls without an associated label. Keyboard tab navigation
+  and focus states were also checked in the integrated browser.
+- Basic smoke tests loaded the application in integrated Chromium 150, headless
+  Firefox 129.0.1, and Safari 26.4. In Safari, the synthetic 4:2:0 fixture was
+  imported, selected with Ctrl+A, processed by a coefficient operation, and
+  corrupted with byte replacement (8 bytes, seed 0, full scan range). Ctrl+Z
+  restored the clean encoded preview; Ctrl+Shift+Z restored the corrupted
+  preview; JPEG export stayed enabled and Ctrl+S opened both save-format
+  choices. Safari's WebDriver pointer clicks did not reliably activate the
+  operation buttons, so those button handlers were triggered with DOM clicks.
+  This is a smoke pass, not an exhaustive compatibility matrix across browser
+  versions, operating systems, or assistive technologies.
+- Follow-up accessibility fixes remove the visually hidden file input from
+  sequential keyboard navigation, add focus-visible styling for selects and
+  textareas, and improve contrast of small metadata labels. A full
+  screen-reader and assistive-technology pass remains open. Image-canvas
+  selection and inspection now support keyboard-only navigation: arrow keys
+  move by DCT block; Enter starts/commits a shared rectangular mask or inspects
+  a block; Escape clears the selection. Brush authoring, panning, and block
+  transforms remain pointer-operated and do not yet have keyboard alternatives.
+- Integrated-browser keyboard testing on the 6,240 × 4,160 test photograph
+  verified DCT-block navigation, one- and two-block rectangle sizing, mask
+  commit and Escape clearing, and selecting a block for coefficient inspection.
+- Global shortcuts now cover undo/redo, open, a save-format chooser, Select All
+  in Select mode, and single-key tool switching. Tool keys are also shown in
+  native hover tooltips. Keyboard painting and keyboard panning are not
+  required for the toolbar shortcut workflow.
+- Browser testing is smoke-level only; coverage does not represent an
+  exhaustive compatibility matrix across versions, platforms, or assistive
+  technologies.
+- Safari 26.4 completed a browser save/reopen round-trip: the UI saved an
+  editable `.jpglitch` project containing the original fixture and an applied
+  coefficient operation, and reopening it restored the operation and preview
+  without errors. Project bytes were captured from the generated browser Blob
+  for this test; the browser's native download UI was not part of the check.
+  Project-save preparation now yields with a timer rather than relying on an
+  animation frame, which can be suspended while a browser tab is hidden.
 
 ## Milestone 10 — Static hosting and publication readiness
 

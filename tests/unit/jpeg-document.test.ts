@@ -171,6 +171,91 @@ describe("JPEG document operation session", () => {
     );
   });
 
+  it("restores a saved mask and seeded JPEG operation against the same source", async () => {
+    const bytes = new Uint8Array(
+      await readFile(
+        new URL("../fixtures/synthetic-color-420.jpg", import.meta.url),
+      ),
+    );
+    const inspection = inspectJpeg(bytes);
+    const asset = OriginalAsset.create({
+      fileName: "synthetic-color-420.jpg",
+      sha256: "a".repeat(64),
+      bytes,
+    });
+    expect(inspection.ok).toBe(true);
+    expect(asset.ok).toBe(true);
+    if (!inspection.ok || !asset.ok) return;
+
+    const imported = {
+      originalAsset: asset.value,
+      inspection: inspection.value,
+      previewUrl: "blob:local-test",
+    };
+    const originalSession = createJpegDocumentSession(imported);
+    if (!originalSession.ok) throw new Error(originalSession.error.message);
+    const mask = createSpatialMask(
+      {
+        kind: "rectangle",
+        coordinateSpace: "image-pixel",
+        x: 0,
+        y: 0,
+        width: 8,
+        height: 8,
+      },
+      inspection.value.width,
+      inspection.value.height,
+    );
+    if (!mask.ok) throw new Error(mask.error.message);
+    expect(
+      applyMaskToDocument(originalSession.value, mask.value, "Saved area").ok,
+    ).toBe(true);
+    expect(
+      applyCoefficientGlitchOperation(originalSession.value, {
+        kind: "coefficients",
+        mask: mask.value,
+        componentIndex: 0,
+        domain: "ac",
+        mode: "randomize",
+        frequencyBand: "mid",
+        strength: 8,
+        seed: 137,
+      }).ok,
+    ).toBe(true);
+    const savedOperations = originalSession.value.snapshot.operations;
+
+    const reopenedSession = createJpegDocumentSession(imported);
+    if (!reopenedSession.ok) throw new Error(reopenedSession.error.message);
+    const restored = reopenedSession.value.restoreOperations(savedOperations);
+
+    expect(restored).toMatchObject({
+      ok: true,
+      value: {
+        currentState: {
+          masks: [{ name: "Saved area", mask: { id: mask.value.id } }],
+          jpegOperations: [
+            {
+              mode: "randomize",
+              frequencyBand: "mid",
+              seed: 137,
+            },
+          ],
+        },
+        operations: [
+          { type: "spatial/apply-mask", status: "applied" },
+          {
+            type: "jpeg/glitch/coefficients",
+            status: "applied",
+            seed: 137,
+          },
+        ],
+      },
+    });
+    expect(reopenedSession.value.snapshot.originalAsset.readBytes()).toEqual(
+      bytes,
+    );
+  });
+
   it("rejects block repeats that leave the component block grid", async () => {
     const bytes = new Uint8Array(
       await readFile(

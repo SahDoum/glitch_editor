@@ -126,6 +126,16 @@ Worker entry points and message protocol. CPU-heavy work must not block pointer 
 
 Project serialization, schema migration, local persistence, and asset packaging.
 
+The current `.jpglitch` version 1 format is JSON with an embedded Base64 copy
+of the immutable original JPEG, its SHA-256 digest and byte length, versioned
+operation records, the current draft mask, and terminal Scan Corrupt
+parameters. Project input is size-bounded and parsed, decoded, and integrity
+checked in a Web Worker before its source is passed through the normal JPEG
+import and inspection path. Reopening validates operations against the
+registered definitions and replays them from the embedded source. The project
+does not serialize preview bytes or an undo/redo timeline; JPEG output is
+recomputed using the recorded application and codec versions.
+
 ## 3. Core representations
 
 Do not collapse these into one generic `image` object.
@@ -173,7 +183,8 @@ The libjpeg-turbo WebAssembly C bridge runs in a dedicated worker. It reads a
 selected 8×8 quantized coefficient block and applies registered coefficient
 edits to the codec's coefficient arrays before writing a new JPEG. The bridge
 supports only the process subset below and bounds coefficient storage to
-128 MiB. This is the selected codec path for the current editing slice; it is
+256 MiB, within the generated module's 512 MiB maximum heap. This is the
+selected codec path for the current editing slice; it is
 not a claim of broad JPEG process support.
 
 The Scan Corrupt worker reuses the pinned codec to decode the corrupted output

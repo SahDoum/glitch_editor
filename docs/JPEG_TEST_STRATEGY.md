@@ -56,6 +56,12 @@ parameter edits, delete, undo/redo, and stale preview discard.
 - Scan corruption → successful or failed preview decode → retained export →
   scanline/warning diagnostic → undo to clean encoded result.
 - Save project → reopen → replay operations.
+- Save `.jpglitch` → verify embedded source digest and exact bytes → reopen in
+  the editor → verify operation order, enabled state, mask snapshots, draft
+  mask, and deterministic replay.
+- Reject unsupported project schema versions, malformed Base64, source
+  length/hash mismatches, unsafe file names, excessive project size, and
+  operation records that do not validate against the imported JPEG.
 
 ### Golden/reference tests
 
@@ -80,6 +86,8 @@ parameter edits, delete, undo/redo, and stale preview discard.
   and undo/redo.
 - Undo/redo and operation stack controls.
 - Export download and reopen.
+- Project save/open and the Ctrl/⌘ keyboard shortcuts; verify that shortcuts
+  do not intercept typing in form controls.
 - No network request carrying image bytes.
 
 ## 3. Fixture corpus
@@ -127,7 +135,7 @@ files are rejected before reading.
 
 The libjpeg-turbo coefficient bridge accepts only 8-bit baseline sequential
 Huffman JPEGs with one interleaved scan and one or three components. It rejects
-coefficient arrays exceeding 128 MiB. Coefficients are read in natural 8×8
+coefficient arrays exceeding 256 MiB. Coefficients are read in natural 8×8
 block order; image-space masks map to visible component blocks, distinct from
 MCU padding. Coordinate mapping and mask coverage are tested for grayscale
 and 4:2:0, 4:2:2, and 4:4:4 sampling, including odd image dimensions. The

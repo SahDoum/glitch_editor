@@ -733,14 +733,19 @@ metadata; - never overwrite the imported file implicitly.
 
 ### Project file
 
-A project file should store: - source image reference or embedded
-original bytes (user choice); - operation stack; - masks and
-selections; - tool settings; - random seeds; - codec and application
-version; - optional preview thumbnail.
+A The versioned `.jpglitch` project file is JSON and embeds the exact original
+JPEG bytes as Base64, together with the operation stack, draft mask, random
+seeds, and scan-corruption stages. The source digest and byte length are
+verified when reopening. The file is portable and does not rely on a path or
+browser-local storage. The embedded source remains subject to the 50 MiB JPEG
+limit; Base64 makes the project file roughly one third larger than its source.
 
-A project should be reopenable with the same operations. If codec
-behavior changes between versions, the application should identify the
-version and warn that exact output may differ.
+Reopening replays the saved operations against the embedded original. The
+application and codec versions are stored; when they differ from the current
+versions, the editor warns that replayed output may differ. The project file
+does not store a preview or the editor's undo/redo timeline. Saving is
+user-initiated rather than automatic, so large source files are not silently
+duplicated in browser storage.
 
 ## 11. Performance and memory
 

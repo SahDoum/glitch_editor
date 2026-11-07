@@ -5,15 +5,89 @@ import {
 } from "../../src/document/masks";
 import {
   initialWorkspaceState,
+  getCanvasToolShortcut,
   getEffectMask,
   getHistoryDisplayEntries,
   getWorkspaceOverlayVisibility,
+  getWorkspaceShortcut,
   TOOL_GROUPS,
   workspaceReducer,
 } from "../../src/ui/workspace-state";
 import { getRectangleSelection } from "../../src/ui/selection-overlay";
 
 describe("workspace state", () => {
+  it("maps platform keyboard shortcuts to editor actions", () => {
+    expect(
+      getWorkspaceShortcut({
+        key: "z",
+        ctrlKey: true,
+        metaKey: false,
+        shiftKey: false,
+      }),
+    ).toBe("undo");
+    expect(
+      getWorkspaceShortcut({
+        key: "Z",
+        ctrlKey: false,
+        metaKey: true,
+        shiftKey: true,
+      }),
+    ).toBe("redo");
+    expect(
+      getWorkspaceShortcut({
+        key: "s",
+        ctrlKey: false,
+        metaKey: true,
+        shiftKey: false,
+      }),
+    ).toBe("save");
+    expect(
+      getWorkspaceShortcut({
+        key: "o",
+        ctrlKey: true,
+        metaKey: false,
+        shiftKey: false,
+      }),
+    ).toBe("open-file");
+    expect(
+      getWorkspaceShortcut({
+        key: "z",
+        ctrlKey: false,
+        metaKey: false,
+        shiftKey: false,
+      }),
+    ).toBeNull();
+    expect(
+      getWorkspaceShortcut({
+        key: "a",
+        ctrlKey: true,
+        metaKey: false,
+        shiftKey: false,
+      }),
+    ).toBe("select-all");
+    expect(
+      getWorkspaceShortcut({
+        key: "s",
+        ctrlKey: true,
+        metaKey: false,
+        shiftKey: false,
+        altKey: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("maps classic single-key shortcuts to editor tools", () => {
+    expect(getCanvasToolShortcut("v")).toBe("hand");
+    expect(getCanvasToolShortcut("I")).toBe("inspector");
+    expect(getCanvasToolShortcut("b")).toBe("brush");
+    expect(getCanvasToolShortcut("m")).toBe("select");
+    expect(getCanvasToolShortcut("g")).toBe("coefficient-glitch");
+    expect(getCanvasToolShortcut("t")).toBe("block-transform");
+    expect(getCanvasToolShortcut("q")).toBe("quantization");
+    expect(getCanvasToolShortcut("c")).toBe("scan-corrupt");
+    expect(getCanvasToolShortcut("x")).toBeNull();
+  });
+
   it("displays the newest operation first without changing replay order", () => {
     const operations = ["first", "second", "third"];
     expect(getHistoryDisplayEntries(operations)).toEqual([
@@ -29,15 +103,27 @@ describe("workspace state", () => {
     expect(
       TOOL_GROUPS.map((group) => [
         group.label,
-        group.tools.map((tool) => tool.id),
+        group.tools.map((tool) => [tool.id, tool.shortcut]),
       ]),
     ).toEqual([
-      ["Manipulation", ["hand", "inspector"]],
-      ["Masks", ["brush", "select"]],
-      ["JPEG effects", ["coefficient-glitch"]],
-      ["Blocks", ["block-transform"]],
-      ["Quantization", ["quantization"]],
-      ["Entropy experiments", ["scan-corrupt"]],
+      [
+        "Manipulation",
+        [
+          ["hand", "V"],
+          ["inspector", "I"],
+        ],
+      ],
+      [
+        "Masks",
+        [
+          ["brush", "B"],
+          ["select", "M"],
+        ],
+      ],
+      ["JPEG effects", [["coefficient-glitch", "G"]]],
+      ["Blocks", [["block-transform", "T"]]],
+      ["Quantization", [["quantization", "Q"]]],
+      ["Entropy experiments", [["scan-corrupt", "C"]]],
     ]);
   });
 

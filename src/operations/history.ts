@@ -46,6 +46,94 @@ export class OperationHistory<State> {
     return this.future.length > 0;
   }
 
+  restoreOperations(
+    operations: readonly OperationRecord[],
+  ): Result<ProjectDocument<State>> {
+    if (!Array.isArray(operations) || operations.length > 10_000) {
+      return failure({
+        code: "INVALID_INPUT",
+        message: "The saved operation stack exceeds the supported size.",
+      });
+    }
+
+    const seenIds = new Set<string>();
+    for (const operation of operations) {
+      if (
+        typeof operation !== "object" ||
+        operation === null ||
+        typeof operation.id !== "string" ||
+        operation.id.trim().length === 0 ||
+        seenIds.has(operation.id) ||
+        typeof operation.type !== "string" ||
+        operation.type.trim().length === 0 ||
+        !Number.isSafeInteger(operation.version) ||
+        operation.version < 1 ||
+        typeof operation.enabled !== "boolean" ||
+        !Number.isSafeInteger(operation.inputRevision) ||
+        operation.inputRevision < 0 ||
+        !["queued", "previewing", "applied", "failed"].includes(
+          operation.status,
+        ) ||
+        !isJsonValue(operation.parameters)
+      ) {
+        return failure({
+          code: "INVALID_INPUT",
+          message: "The saved operation stack contains an invalid operation.",
+        });
+      }
+      if (
+        (operation.seed !== undefined &&
+          (!Number.isInteger(operation.seed) ||
+            operation.seed < 0 ||
+            operation.seed > 0xffff_ffff)) ||
+        (operation.maskId !== undefined &&
+          (typeof operation.maskId !== "string" ||
+            operation.maskId.length === 0)) ||
+        (operation.targetComponents !== undefined &&
+          (!Array.isArray(operation.targetComponents) ||
+            !operation.targetComponents.every(
+              (component: unknown) =>
+                typeof component === "number" &&
+                Number.isSafeInteger(component) &&
+                component >= 0,
+            ))) ||
+        (operation.diagnostics !== undefined &&
+          (!Array.isArray(operation.diagnostics) ||
+            !operation.diagnostics.every(
+              (diagnostic: unknown) => typeof diagnostic === "string",
+            )))
+      ) {
+        return failure({
+          code: "INVALID_INPUT",
+          message: "The saved operation stack contains invalid metadata.",
+        });
+      }
+      seenIds.add(operation.id);
+      const definition = this.registry.resolve(
+        operation.type,
+        operation.version,
+      );
+      if (!definition.ok) return definition;
+      if (!definition.value.validateParameters(operation.parameters)) {
+        return failure({
+          code: "INVALID_INPUT",
+          message: `Parameters for operation ${operation.type} are invalid.`,
+        });
+      }
+    }
+
+    const restored = this.replay(
+      operations.map((operation) => ({
+        ...operation,
+        parameters: cloneAndFreezeJson(operation.parameters),
+      })),
+    );
+    if (!restored.ok) return restored;
+    this.past.length = 0;
+    this.future.length = 0;
+    return restored;
+  }
+
   setSelection(
     selection: SpatialSelection | null,
   ): Result<ProjectDocument<State>> {

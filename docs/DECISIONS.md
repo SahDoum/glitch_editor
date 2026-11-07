@@ -28,7 +28,7 @@
 - **Native reference check:** The bridge compiled against local libjpeg-turbo 3.0.4 and matched `jpegio` 0.2.8 on all 37 coefficient blocks across five synthetic fixtures (4:2:0, odd-dimension 4:2:0, 4:2:2, 4:4:4, and grayscale). This validates coefficient ordering and block reads against an independent reader, but does not replace building and testing the selected 3.2.0 WebAssembly archive.
 - **Alternatives considered:** `@crossbind/port-jpegturbo-wasm` 2.0.0-beta.67 exposes `jpeg_read_coefficients()` through generated bindings but returns an opaque coefficient-array handle; inspecting a block still needs an additional binding. Its package is 1,267,770 bytes compressed and 5,338,713 bytes unpacked. `@cornerstonejs/codec-libjpeg-turbo-8bit` 1.2.8 is a ready-made browser module but its demonstrated API only decodes pixels, not quantized coefficients (637,114 bytes compressed; 2,686,773 bytes unpacked). The smaller static-library package plus a narrow bridge is the more direct coefficient path and adds no production JavaScript codec dependency.
 - **Browser verification:** The generated WebAssembly module loaded in the production preview and read/displayed one selected 8×8 block from the synthetic baseline 4:2:0 fixture in a Web Worker. No browser console errors or user-facing errors remained after exporting `HEAPU8` for the worker bridge.
-- **Consequences and limits:** This is a prototype, not a production codec or encoder choice. Coefficient access temporarily retains libjpeg's coefficient arrays in WASM memory and rejects images requiring more than 128 MiB of coefficient storage. It does not write coefficients, encode JPEGs, support progressive/arithmetic/multi-scan/non-8-bit JPEGs, or replace the browser pixel preview. The imported source bytes are copied before transfer and remain immutable. Broader browser/process compatibility and independent-reference validation of the generated WASM artifact remain future work.
+- **Consequences and limits:** This is a prototype, not a production codec or encoder choice. Coefficient access temporarily retains libjpeg's coefficient arrays in WASM memory and initially rejected images requiring more than 128 MiB of coefficient storage. ADR-005 raises the current editing limit to 256 MiB to support common high-resolution 4:4:4 JPEGs within the 512 MiB WASM heap cap. It does not support progressive/arithmetic/multi-scan/non-8-bit JPEGs or replace the browser pixel preview. The imported source bytes are copied before transfer and remain immutable. Broader browser/process compatibility and independent-reference validation of the generated WASM artifact remain future work.
 
 ## ADR-004: Milestone 3 document and operation model
 
@@ -46,9 +46,10 @@
 - **Decision:** Extend the existing C bridge and dedicated worker to edit the coefficient arrays returned by `jpeg_read_coefficients()` and write a new JPEG with `jpeg_write_coefficients()`. Use a versioned operation that zeros selected AC coefficients for one component and a selected natural-order frequency band (`u + v`); preserve DC. Replay enabled operations from the immutable original for every encoding request. The spatial mask remains in image-pixel coordinates and is mapped to visible component DCT blocks using image dimensions and sampling factors.
 - **Codec and build:** Continue using the pinned `@ai-ecoverse/wasm-libjpeg-turbo@3.2.0-2` static library at build time; add no dependency. Keep the existing `npm run build:jpeg-codec` Emscripten 4.0.23 build flow and lazy-load the generated browser module. The choice reuses verified coefficient access and supports coefficient-preserving transcoding without introducing a second JPEG implementation. A pixel-only filter is not an alternative for this operation.
 - **Encoding and metadata:** The output is a newly encoded JPEG, not the original entropy stream. Critical JPEG parameters and coefficient arrays are passed through libjpeg-turbo. Saved APP/COM markers are copied except APP0 and APP14; the codec may generate its own JFIF APP0. Arbitrary metadata preservation is not guaranteed. The UI explicitly labels the preview as re-encoded, retains the original byte asset, and exports a separate edited JPEG.
-- **Supported subset and limits:** Continue to accept only 8-bit baseline sequential Huffman JPEGs with one interleaved scan and one grayscale or three-component frame. Progressive, arithmetic-coded, multi-scan, and other unsupported inputs remain rejected. Input and output are limited to 50 MiB, coefficient storage to 128 MiB, and worker DCT work is bounded. The operation targets quantized DCT coefficients, not pixels, MCUs, or entropy-coded bytes.
+- **Supported subset and limits:** Continue to accept only 8-bit baseline sequential Huffman JPEGs with one interleaved scan and one grayscale or three-component frame. Progressive, arithmetic-coded, multi-scan, and other unsupported inputs remain rejected. Input and output are limited to 50 MiB, coefficient storage to 256 MiB, and worker DCT work is bounded. The 256 MiB bound covers the maximum supported 40 MP frame with 4:4:4 sampling while retaining the 512 MiB WebAssembly heap ceiling; devices with less available memory may still reject an operation explicitly. The operation targets quantized DCT coefficients, not pixels, MCUs, or entropy-coded bytes.
 - **Validation:** Unit tests cover frequency bands, masks, sampling-aware block coverage, operation replay, and undo/redo. Native bridge outputs for the synthetic grayscale, 4:2:0 (including odd dimensions), 4:2:2, and 4:4:4 fixtures were opened by ImageMagick and macOS `sips`; source bytes were checked unchanged. The WebAssembly bridge was built with Emscripten 4.0.23 and exercised in a browser for import, mask, coefficient edit, re-encoded preview, and undo/redo.
-- **Consequences and limits:** Re-encoding can change file bytes and may discard or regenerate metadata even when pixel dimensions and critical coding parameters are retained. The initial operation zeros AC frequency bands; other coefficient operations are added in Milestone 5. Progressive JPEG and entropy-stream manipulation remain out of scope.
+- **High-resolution regression:** Rebuilt the checked-in WebAssembly module with Emscripten 4.0.23 after raising the coefficient-array cap to 256 MiB. In the production preview, a 6,000 × 4,000 RGB 4:4:4 JPEG (24 MP; approximately 144 MiB coefficient arrays) successfully opened selected quantized coefficients, applied a masked AC-zero edit, and produced an enabled JPEG export with no errors. The pre-rebuild module rejected coefficient inspection of the same image at the previous 128 MiB limit. This validates the regression case, not every browser/device memory configuration or the 40 MP upper dimension limit.
+- **Consequences and limits:** Re-encoding can change file bytes and may discard or regenerate metadata even when pixel dimensions and critical coding parameters are retained. The initial operation zeros AC frequency bands; other coefficient operations are added in Milestone 5. Progressive JPEG and entropy-stream manipulation remain out of scope. The coefficient allocation ceiling was raised from 128 MiB to 256 MiB to support high-resolution 4:4:4 photographs; the generated WebAssembly codec must be rebuilt from the bridge source for this limit to take effect.
 
 ## ADR-006: First Glitch Lab and experiment-first acceptance
 
@@ -173,3 +174,48 @@
 - **Validation:** Exercise valid and entropy-damaged fixtures, including a
   result where all rows are returned with a decoder warning. Rebuild and
   browser-test the checked-in WebAssembly module.
+
+## ADR-013: Embed source bytes in versioned project files
+
+- **Status:** Accepted and implemented.
+- **Date:** 2026-11-07
+- **Context:** Milestone 9 requires projects to preserve the original JPEG and
+  reopen the same editable operation stack. `PRODUCT.md` left embedded bytes
+  versus relinking unresolved; a relink would make a project dependent on an
+  external file.
+- **Decision:** Save a portable `.jpglitch` JSON file with schema version 1.
+  Embed the exact original JPEG bytes as Base64, plus the filename, byte
+  length, SHA-256, application/codec versions, enabled operation records,
+  draft mask, and terminal Scan Corrupt stages. Enforce the existing 50 MiB
+  source limit and validate schema, metadata, Base64, source length, digest,
+  and operation parameters before use. Reopen through the regular JPEG import
+  pipeline and replay operations from the immutable embedded source.
+- **Recovery and UX:** Project save/open is explicit and uses ordinary file
+  downloads/pickers. Do not autosave embedded images to browser storage; this
+  would create potentially large hidden copies. Store no preview or undo/redo
+  timeline. Warn when the recorded application or codec version differs.
+  Provide Ctrl/⌘+O, Ctrl/⌘+S, Ctrl/⌘+Z, Ctrl/⌘+Shift+Z, and Ctrl/⌘+Y while
+  leaving text-entry controls unaffected.
+- **Consequences and limits:** Base64 increases project size by roughly one
+  third. Project loading validates and decodes in a worker; project saving
+  yields every 16 bounded Base64 chunks. Reopening re-encodes JPEG-domain
+  operations, so exact output may differ across codec versions. No project
+  compatibility migration beyond schema version 1 is claimed. Projects use
+  the `.jpglitch` filename extension.
+- **Validation:** Unit tests cover exact source-byte round-trip, operation
+  stack restoration/replay, digest rejection, unsupported schemas, unsafe
+  filenames, and shortcut mapping. Browser download events and supported
+  browser compatibility remain separate manual checks. A local Node.js
+  20.20.0 maximum-size (50 MiB source) round-trip benchmark found that the old
+  Base64 regex raised `RangeError` for inputs above 8 MiB and that the 64-chunk
+  save yield interval caused a 61 ms maximum timer gap. Character-wise
+  validation and bounded decoding now avoid the regex failure; yielding every
+  16 chunks reduced the measured maximum work batch to 15 ms (1.38 s total
+  encode time versus 1.27 s at 64 chunks). The benchmark is not a substitute
+  for browser/device profiling. Production-preview browser profiling with
+  generated grayscale JPEGs completed import and preview in 105 ms at 10 MP
+  (4,000 × 2,500) and 194 ms at 40 MP (8,000 × 5,000), with maximum sampled
+  timer gaps of 18 ms and 11 ms respectively. Both runs reported one 56 ms
+  Long Task entry, likely including the harness-driven file selection; this
+  was not attributed to an application call stack. These measurements cover
+  import/preview only, not coefficient editing or re-encoding.

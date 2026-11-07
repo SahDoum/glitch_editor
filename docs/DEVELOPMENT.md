@@ -165,8 +165,9 @@ runtime exports inside the WASM binary.
 
 The current re-encoder accepts only 8-bit baseline sequential Huffman JPEGs
 with one interleaved scan and grayscale or three components. Input/output
-JPEGs are limited to 50 MiB, coefficient storage to 128 MiB, and worker glitch
-processing is bounded. The edited export is a new JPEG; saved APP/COM markers
+JPEGs are limited to 50 MiB, coefficient storage to 256 MiB, and worker glitch
+processing is bounded. The WASM heap is capped at 512 MiB, so browsers/devices
+with less available memory may still report allocation failure. The edited export is a new JPEG; saved APP/COM markers
 are copied except APP0 and APP14, and metadata preservation is not guaranteed.
 The browser preview may fail even when encoded bytes are retained for export.
 See ADR-005 and ADR-006 for codec limits, experiment semantics, and DQT modes.

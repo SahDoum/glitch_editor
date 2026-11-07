@@ -249,6 +249,7 @@ describe("operation history", () => {
         },
       ],
     });
+
     expect(
       parseOperationStack(
         JSON.stringify({ schemaVersion: 2, operations: [] }),
@@ -273,6 +274,56 @@ describe("operation history", () => {
       ok: false,
       error: { code: "INVALID_INPUT" },
     });
+  });
+
+  it("restores a saved stack in order without adding undo history", async () => {
+    const original = await createHistory();
+    const first = original.history.add("test/transform", 1, {
+      multiply: 2,
+      add: 0,
+    });
+    if (!first.ok) throw new Error(first.error.message);
+    const second = original.history.add(
+      "test/transform",
+      1,
+      { multiply: 1, add: 3 },
+      { seed: 7 },
+    );
+    if (!second.ok) throw new Error(second.error.message);
+    const third = original.history.add("test/transform", 1, {
+      multiply: 1,
+      add: 99,
+    });
+    if (!third.ok) throw new Error(third.error.message);
+    const disabled = original.history.setEnabled(
+      third.value.operations[2]!.id,
+      false,
+    );
+    if (!disabled.ok) throw new Error(disabled.error.message);
+    const savedOperations = disabled.value.operations;
+
+    const reopened = await createHistory();
+    const restored = reopened.history.restoreOperations(savedOperations);
+
+    expect(restored).toMatchObject({
+      ok: true,
+      value: {
+        currentState: { value: 5, trace: ["2x+0", "1x+3"] },
+        operations: [
+          { id: savedOperations[0]?.id, status: "applied" },
+          { id: savedOperations[1]?.id, status: "applied", seed: 7 },
+          { id: savedOperations[2]?.id, enabled: false, status: "queued" },
+        ],
+      },
+    });
+    expect(reopened.history.canUndo).toBe(false);
+    expect(reopened.history.canRedo).toBe(false);
+    expect(
+      reopened.history.restoreOperations([
+        ...savedOperations,
+        savedOperations[0]!,
+      ]),
+    ).toMatchObject({ ok: false, error: { code: "INVALID_INPUT" } });
   });
 
   it("replays seeded random operations deterministically", async () => {

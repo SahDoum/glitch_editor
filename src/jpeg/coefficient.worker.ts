@@ -24,7 +24,7 @@ import type { JpegBlockGeometry } from "./block-geometry";
 const CODEC_ERRORS: Record<number, string> = {
   [-1]: "libjpeg-turbo could not decode coefficient data from this JPEG.",
   [-2]: "The coefficient reader does not support this JPEG coding process.",
-  [-3]: "This JPEG requires more coefficient memory than the 128 MiB limit.",
+  [-3]: "This JPEG requires more coefficient memory than the 256 MiB limit.",
   [-4]: "The selected component or DCT block is outside the decoded image.",
   [-5]: "The encoded JPEG exceeds the 50 MiB output limit.",
   [-6]: "The DCT edit parameters do not match the decoded JPEG.",
