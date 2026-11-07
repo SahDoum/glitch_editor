@@ -74,19 +74,42 @@ Every control should have:
 - a clear indication of the selected value;
 - a concise explanation or tooltip where the meaning is not obvious.
 
+### 4.1.1 Button-like choices and multi-selection
+
+Small mutually exclusive option sets should look like selectable buttons:
+give the selected option a filled background, accent border, and check mark;
+keep focus clearly visible; and allow the options to wrap or stack on narrow
+screens. Use native radio-group keyboard behavior and semantics even when the
+radio indicator itself is visually hidden. Do not rely on color alone for the
+selected state.
+
+Use the same visual language for multi-select choices only when the operation
+actually accepts multiple values; those controls must use checkbox semantics
+and allow more than one selected option. Do not convert an operation's
+single-target behavior into multiple targeting just to make its selector look
+consistent.
+
+The current coefficient, block, and inspector controls select one JPEG
+component because their operations take one component index. Multi-component
+editing is a future operation-model change requiring explicit validation,
+mask mapping, history, and project serialization support. Y/Cb/Cr labels are
+conventional hints only; component IDs and sampling factors remain visible.
+
 ### 4.2 Random seed
 
 Randomized tools should expose the seed in a consistent way.
 
 Suggested interaction:
 
-- show the current seed;
+- show the current unsigned 32-bit seed;
 - provide a **Randomize** button to generate a new seed;
 - allow manual editing or copying of the seed where appropriate;
 - changing the seed should produce a reproducible result;
 - reusing the same seed and parameters should reproduce the same operation.
 
 The randomize button must not silently change the seed during unrelated parameter changes.
+The implemented randomize button changes only the seed field and ensures the
+new value differs from the current value.
 
 ## 5. Frequency selection
 
@@ -94,18 +117,26 @@ The randomize button must not silently change the seed during unrelated paramete
 
 DC and AC frequency selection should use a common control model across tools wherever the underlying operation supports it.
 
-Provide a compact set of choices:
+For coefficient operations, show Operation first, followed by one combined
+radio group whose choices depend on that operation:
 
-- **DC**
-- **Low**
-- **Mid**
-- **High**
+- **DC** — available to Zero, Scale, and Randomize;
+- **AC Low**, **AC Mid**, **AC High**, **AC All** — available to Zero,
+  Scale, Randomize, and Invert AC;
+- **Isolate band** exposes AC Low/Mid/High only: DC is not an AC band, and
+  AC All would leave no coefficients outside the selected range to clear;
+- **DC offset** has no range selector because it always targets DC.
 
 The exact mapping of AC bands to coefficient coordinates must be defined consistently in the implementation and documented. Do not let different tools silently use different definitions for the same labels.
 
 Where an operation supports selecting several bands simultaneously, allow multiple selections rather than forcing the user to configure them one at a time.
 
 The selector should be reusable across coefficient-oriented tools.
+
+Brush and Select author a component-independent spatial mask and must not
+have their own Color component selector. The JPEG effect target selector
+remains in the effect settings; DCT snapping follows that target. An applied
+JPEG operation still records its component target.
 
 ### 5.2 Horizontal and vertical frequencies
 

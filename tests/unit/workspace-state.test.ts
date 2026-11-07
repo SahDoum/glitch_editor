@@ -10,6 +10,7 @@ import {
   getHistoryDisplayEntries,
   getWorkspaceOverlayVisibility,
   getWorkspaceShortcut,
+  isCanvasToolEnabled,
   TOOL_GROUPS,
   workspaceReducer,
 } from "../../src/ui/workspace-state";
@@ -79,6 +80,7 @@ describe("workspace state", () => {
   it("maps classic single-key shortcuts to editor tools", () => {
     expect(getCanvasToolShortcut("v")).toBe("hand");
     expect(getCanvasToolShortcut("I")).toBe("inspector");
+    expect(getCanvasToolShortcut("f")).toBe("info");
     expect(getCanvasToolShortcut("b")).toBe("brush");
     expect(getCanvasToolShortcut("m")).toBe("select");
     expect(getCanvasToolShortcut("g")).toBe("coefficient-glitch");
@@ -86,6 +88,14 @@ describe("workspace state", () => {
     expect(getCanvasToolShortcut("q")).toBe("quantization");
     expect(getCanvasToolShortcut("c")).toBe("scan-corrupt");
     expect(getCanvasToolShortcut("x")).toBeNull();
+  });
+
+  it("enables mask tools only while Coefficient Glitch is selected", () => {
+    expect(isCanvasToolEnabled("brush", "coefficient-glitch")).toBe(true);
+    expect(isCanvasToolEnabled("select", "coefficient-glitch")).toBe(true);
+    expect(isCanvasToolEnabled("brush", "block-transform")).toBe(false);
+    expect(isCanvasToolEnabled("select", "info")).toBe(false);
+    expect(isCanvasToolEnabled("hand", "info")).toBe(true);
   });
 
   it("displays the newest operation first without changing replay order", () => {
@@ -113,14 +123,15 @@ describe("workspace state", () => {
           ["inspector", "I"],
         ],
       ],
+      ["Information", [["info", "F"]]],
       [
-        "Masks",
+        "Effects and masks",
         [
+          ["coefficient-glitch", "G"],
           ["brush", "B"],
           ["select", "M"],
         ],
       ],
-      ["JPEG effects", [["coefficient-glitch", "G"]]],
       ["Blocks", [["block-transform", "T"]]],
       ["Quantization", [["quantization", "Q"]]],
       ["Entropy experiments", [["scan-corrupt", "C"]]],

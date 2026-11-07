@@ -4,6 +4,11 @@
 **Date:** November 8, 2024  
 **Phase:** Phase 2 — Interface Refinement & Glitch Research
 
+**Snapshot note:** This is the Milestone 0 baseline, not a description of the
+post-Milestone-1 controls. For the current interface, use
+[INTERFACE.md](./INTERFACE.md) and
+[INTERFACE_INVENTORY_QUICK_REFERENCE.md](./INTERFACE_INVENTORY_QUICK_REFERENCE.md).
+
 **Quick reference:** For faster lookup during development, see [INTERFACE_INVENTORY_QUICK_REFERENCE.md](./INTERFACE_INVENTORY_QUICK_REFERENCE.md). This document contains the full detailed analysis.
 
 ---

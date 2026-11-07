@@ -13,8 +13,8 @@
 | **Manipulation** | Hand | V | Pan canvas | – | Gesture-based | ✓ Good |
 | | Inspector | I | Inspect blocks | – | Arrow keys + Enter | ✓ Good |
 | **Masks** | Brush | B | Draw region | Yes | Size, Opacity, Hardness | No additive mode |
-| | Select | M | Rectangle region | Yes | Snap option (dropdown) | Only rectangular |
-| **JPEG Effects** | Coefficient Glitch | G | Edit DCT coefficients | Yes | Band, Mode, Component, Strength, Seed | 7 dropdowns |
+| | Select | M | Rectangle region | Yes | Snap option (button-like radio group) | Only rectangular |
+| **JPEG Effects** | Coefficient Glitch | G | Edit DCT coefficients | Yes | Band, Mode, Component, Strength, Seed | Button-like choice groups |
 | **Blocks** | Block Transform | T | Copy/swap/repeat blocks | Optional | Mode dropdown + gesture | Gesture precision |
 | **Quantization** | Quantization Matrix | Q | Edit DQT tables | – | Table cells + pattern | No validation |
 | **Entropy** | Scan Corrupt | C | Raw byte manipulation | – | Offset + operation | No visual feedback |
@@ -23,37 +23,45 @@
 
 ## Coefficient Glitch Parameters
 
-### Frequency Bands (4 options)
-| Band | Contains | Typical Effect |
-|------|----------|----------------|
-| Low | DC + zero AC | Block boundaries |
-| Mid | Middle-range AC | Subtle texture |
-| High | High-frequency AC | Ringing, detail loss |
-| All | Every coefficient | Strongest effect |
+### Coefficient Ranges
+| Choice | Contains | Available for |
+|--------|----------|---------------|
+| DC | Block-average coefficient | Zero, Scale, Randomize |
+| AC Low | AC coefficients with u+v 1–2 | All except DC offset |
+| AC Mid | AC coefficients with u+v 3–5 | All except DC offset |
+| AC High | AC coefficients with u+v 6–14 | All except DC offset |
+| AC All | AC coefficients with u+v 1–14 | Zero, Scale, Randomize, Invert AC |
 
-→ **Milestone 1 task:** Replace dropdown with 4 radio buttons
+→ **Milestone 1 complete:** Choose Operation first, then select an allowed DC/AC range from one button-like radio group. DC offset has no range selector; Isolate band excludes AC All.
 
-### Glitch Modes (7 options)
+### Coefficient Operations (6 implemented options)
 | Mode | Effect | Deterministic |
 |------|--------|--------------|
-| Add | Add value to coefficients | ✓ Yes |
-| Multiply | Scale coefficients | ✓ Yes |
-| Set | Replace with constant | ✓ Yes |
-| Shuffle | Random swap (needs seed) | With seed |
-| Invert | Negate coefficients | ✓ Yes |
-| Substitute | Random values (needs seed) | With seed |
-| Shuffle blocks | Permute across blocks | With seed |
+| Zero | Set selected coefficients to 0 | ✓ Yes |
+| Scale | Multiply selected coefficients | ✓ Yes |
+| Randomize | Replace selected values in a bounded range | With seed |
+| DC offset | Add to DC coefficients | ✓ Yes |
+| Invert AC | Negate selected AC coefficients | ✓ Yes |
+| Isolate band | Clear AC values outside the selected band | ✓ Yes |
 
-→ **Milestone 1 task:** Replace dropdown with segmented/tabbed control
+→ **Milestone 1 complete:** Existing operations are presented as button-like radio choices. The earlier inventory's seven-mode list did not match the implementation.
 
 ### Component Selection
-| Component | Y/Cb/Cr | Notes |
-|-----------|---------|-------|
-| Y | Luma (brightness) | Always present |
-| Cb | Chroma (blue-yellow) | May be subsampled |
-| Cr | Chroma (red-cyan) | May be subsampled |
+| Component | Label | Notes |
+|-----------|-------|-------|
+| Y | Brightness / contours | Conventional component-ID hint |
+| Cb | Blue–yellow color information | Blue–yellow visual tint |
+| Cr | Red–green color information | Red–green visual tint |
 
-→ **Milestone 1 task:** Replace dropdown with Y/Cb/Cr buttons
+→ **Milestone 1 complete:** Single-select component choices show the label, JPEG component ID, and sampling factors. Brush/Select have no component selector; DCT snapping follows the effect's selected component.
+
+Component selection remains single-select: current coefficient and block
+operations accept one component index. Multi-component editing is a future
+operation-model change, not a visual-only selector change.
+Coefficient brushes no longer store a component target; it is selected for
+each effect operation. Brush/Select masks have no component picker, and DCT
+snapping follows the active effect target. Existing saved brushes migrate from
+v1 to v2 without their old componentIndex.
 
 ---
 
@@ -73,17 +81,17 @@
 
 | Control Type | Current Usage | Simplification (M1) |
 |--------------|---------------|-------------------|
-| **Dropdown** | 9+ instances | → Radio buttons (≤4 options) |
+| **Dropdown** | Longer or data-driven option lists | → Radio buttons (≤4 options) |
 | | | → Segmented control (≤7 options) |
 | | | → Buttons with icons |
-| **Slider** | Brush size, opacity, hardness, strength | ✓ Add text labels |
+| **Slider** | Brush size and coefficient scale | ✓ Show values, range endpoints, and exact numeric entry |
 | | | Add range indicators |
 | **Number input** | Seed, offsets, byte values | ✓ Add validation |
 | | | → Add "Randomize" button next to seed |
 | **Checkbox** | Operation enabled/disabled | ✓ Keep (rare use) |
 | **Button** | Apply, Reset, Save, Export | ✓ Consistent labels |
 | **Table** | Quantization cells, coefficients | ✓ Small on mobile |
-| **Radio/Segmented** | Snap option, band selection | ✓ Expand usage |
+| **Radio/Segmented** | Snap, band, mode, component and other small choices | ✓ Selected choices use highlighted button-like cards |
 
 ---
 
@@ -253,18 +261,18 @@ Ctrl/⌘+A → Select all
 
 ---
 
-## Milestone 1 Quick Tasks (Ready to Start)
+## Milestone 1 Quick Tasks (Complete)
 
 | Task | Effort | Blocking |
 |------|--------|----------|
-| Frequency band → 4 radio buttons | Low | No |
-| Component selector → Y/Cb/Cr buttons | Low | No |
-| Snap option → 2 radio buttons | Low | No |
-| Slider labels + range indicators | Low | No |
-| Randomize buttons (seed inputs) | Medium | No |
-| Glitch mode → segmented/tabbed | High | No |
-| Test keyboard & screen sizes | Medium | Blocks acceptance |
-| Update INTERFACE.md | Low | Documentation |
+| Frequency band → 4 highlighted choices | Done | — |
+| Component selector → shared highlighted choices | Done | Single-select while operations are single-component |
+| Snap option → 2 highlighted choices | Done | — |
+| Slider endpoints + numeric entry | Done | — |
+| Randomize buttons (seed inputs) | Done | — |
+| Coefficient operation choices | Done | Six implemented modes |
+| Keyboard & narrow-screen check | Done | Radio keyboard behavior and 390 px viewport |
+| Update INTERFACE.md | Done | — |
 
 ---
 

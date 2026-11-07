@@ -7,7 +7,6 @@ import { failure, success, type Result } from "../shared/result";
 export interface CoefficientBrush {
   readonly id: string;
   readonly name: string;
-  readonly componentIndex: number;
   readonly step: CoefficientRecipeStep;
 }
 
@@ -15,7 +14,6 @@ export const BUILT_IN_COEFFICIENT_BRUSHES: readonly CoefficientBrush[] = [
   {
     id: "pixelate",
     name: "Pixelate",
-    componentIndex: 0,
     step: {
       domain: "ac",
       mode: "zero",
@@ -26,8 +24,7 @@ export const BUILT_IN_COEFFICIENT_BRUSHES: readonly CoefficientBrush[] = [
   },
   {
     id: "chroma-scale",
-    name: "Chroma scale",
-    componentIndex: 2,
+    name: "AC scale",
     step: {
       domain: "ac",
       mode: "scale",
@@ -38,12 +35,13 @@ export const BUILT_IN_COEFFICIENT_BRUSHES: readonly CoefficientBrush[] = [
   },
 ];
 
-export const COEFFICIENT_BRUSH_STORAGE_KEY = "jpeg-glitch-editor.brushes.v1";
+export const COEFFICIENT_BRUSH_STORAGE_KEY = "jpeg-glitch-editor.brushes.v2";
+export const LEGACY_COEFFICIENT_BRUSH_STORAGE_KEY =
+  "jpeg-glitch-editor.brushes.v1";
 export const BRUSH_AUTO_APPLY_STORAGE_KEY = "jpeg-glitch-editor.brush-auto.v1";
 export const DEFAULT_USER_BRUSH: CoefficientBrush = {
   id: "user-default",
   name: "User brush",
-  componentIndex: 0,
   step: {
     domain: "ac",
     mode: "zero",
@@ -56,6 +54,28 @@ const MAX_BRUSHES = 50;
 const MAX_STORAGE_SIZE = 256_000;
 
 function isCoefficientBrush(value: unknown): value is CoefficientBrush {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return false;
+  if ("componentIndex" in value) return false;
+  const { id, name, step } = value as Record<string, unknown>;
+  return (
+    typeof id === "string" &&
+    id.length > 0 &&
+    id.length <= 128 &&
+    typeof name === "string" &&
+    name.trim().length > 0 &&
+    name.length <= 48 &&
+    isCoefficientRecipeStep(step)
+  );
+}
+
+type LegacyCoefficientBrush = CoefficientBrush & {
+  readonly componentIndex: number;
+};
+
+function isLegacyCoefficientBrush(
+  value: unknown,
+): value is LegacyCoefficientBrush {
   if (typeof value !== "object" || value === null || Array.isArray(value))
     return false;
   const { id, name, componentIndex, step } = value as Record<string, unknown>;
@@ -74,19 +94,7 @@ function isCoefficientBrush(value: unknown): value is CoefficientBrush {
   );
 }
 
-export function readCoefficientBrushes(
-  storage: Pick<Storage, "getItem">,
-): Result<readonly CoefficientBrush[]> {
-  let serialized: string | null;
-  try {
-    serialized = storage.getItem(COEFFICIENT_BRUSH_STORAGE_KEY);
-  } catch {
-    return failure({
-      code: "PROCESSING_FAILED",
-      message: "Saved brushes could not be read from local storage.",
-    });
-  }
-  if (serialized === null) return success([]);
+function parseBrushes(serialized: string): Result<unknown[]> {
   if (serialized.length > MAX_STORAGE_SIZE)
     return failure({
       code: "INVALID_INPUT",
@@ -101,25 +109,76 @@ export function readCoefficientBrushes(
       message: "Saved brushes contain invalid JSON.",
     });
   }
-  if (
-    !Array.isArray(parsed) ||
-    parsed.length > MAX_BRUSHES ||
-    !parsed.every(isCoefficientBrush)
-  ) {
+  if (!Array.isArray(parsed) || parsed.length > MAX_BRUSHES)
     return failure({
       code: "INVALID_INPUT",
       message: "Saved brushes do not match the supported schema.",
     });
-  }
-  const ids = [...BUILT_IN_COEFFICIENT_BRUSHES, ...parsed].map(
+  return success(parsed);
+}
+
+function validateBrushIds(brushes: readonly CoefficientBrush[]): Result<void> {
+  const ids = [...BUILT_IN_COEFFICIENT_BRUSHES, ...brushes].map(
     (brush) => brush.id,
   );
-  if (new Set(ids).size !== ids.length)
+  return new Set(ids).size === ids.length
+    ? success(undefined)
+    : failure({
+        code: "INVALID_INPUT",
+        message: "Saved brushes contain duplicate identifiers.",
+      });
+}
+
+export function readCoefficientBrushes(
+  storage: Pick<Storage, "getItem" | "setItem">,
+): Result<readonly CoefficientBrush[]> {
+  let serialized: string | null;
+  let isLegacy = false;
+  try {
+    serialized = storage.getItem(COEFFICIENT_BRUSH_STORAGE_KEY);
+    if (serialized === null) {
+      serialized = storage.getItem(LEGACY_COEFFICIENT_BRUSH_STORAGE_KEY);
+      isLegacy = serialized !== null;
+    }
+  } catch {
+    return failure({
+      code: "PROCESSING_FAILED",
+      message: "Saved brushes could not be read from local storage.",
+    });
+  }
+  if (serialized === null) return success([]);
+  const parsed = parseBrushes(serialized);
+  if (!parsed.ok) return parsed;
+  if (isLegacy) {
+    if (!parsed.value.every(isLegacyCoefficientBrush))
+      return failure({
+        code: "INVALID_INPUT",
+        message: "Saved brushes do not match the supported schema.",
+      });
+    const migrated = parsed.value.map(({ id, name, step }) => ({
+      id,
+      name,
+      step,
+    }));
+    const ids = validateBrushIds(migrated);
+    if (!ids.ok) return ids;
+    try {
+      storage.setItem(COEFFICIENT_BRUSH_STORAGE_KEY, JSON.stringify(migrated));
+    } catch {
+      return failure({
+        code: "PROCESSING_FAILED",
+        message: "Saved brushes could not be migrated to the current format.",
+      });
+    }
+    return success(migrated);
+  }
+  if (!parsed.value.every(isCoefficientBrush))
     return failure({
       code: "INVALID_INPUT",
-      message: "Saved brushes contain duplicate identifiers.",
+      message: "Saved brushes do not match the supported schema.",
     });
-  return success(parsed);
+  const ids = validateBrushIds(parsed.value);
+  return ids.ok ? success(parsed.value) : ids;
 }
 
 export function saveCoefficientBrush(

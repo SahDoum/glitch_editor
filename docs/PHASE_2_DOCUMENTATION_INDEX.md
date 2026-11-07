@@ -87,13 +87,13 @@ ROADMAP.md (Phase 2 sequence)
 4. **For implementation:** [ARCHITECTURE.md](./ARCHITECTURE.md) (understand code structure)
 5. **For testing:** [JPEG_TEST_STRATEGY.md](./JPEG_TEST_STRATEGY.md) (how to test changes)
 
-### For Implementing Milestone 1
+### For Reviewing Milestone 1
 
 1. Review [ROADMAP.md](./ROADMAP.md) § Milestone 1 (acceptance criteria)
 2. Check [INTERFACE_INVENTORY_QUICK_REFERENCE.md](./INTERFACE_INVENTORY_QUICK_REFERENCE.md) § Milestone 1 Quick Tasks (what to rebuild)
-3. Consult [INTERFACE.md](./INTERFACE.md) for current behavior
-4. Update [INTERFACE_DIRECTION.md](./INTERFACE_DIRECTION.md) with planned changes
-5. After implementation, update [INTERFACE.md](./INTERFACE.md)
+3. Consult [INTERFACE.md](./INTERFACE.md) for implemented behavior
+4. Review the button-like selection and component-scope decisions in [INTERFACE_DIRECTION.md](./INTERFACE_DIRECTION.md)
+5. Update [INTERFACE.md](./INTERFACE.md) when control behavior changes
 6. Record decisions in [DECISIONS.md](./DECISIONS.md) if scope changed
 
 ### For Glitch Research (Milestone 4)
@@ -120,10 +120,10 @@ ROADMAP.md (Phase 2 sequence)
 - ✅ [INTERFACE_INVENTORY_QUICK_REFERENCE.md](./INTERFACE_INVENTORY_QUICK_REFERENCE.md) — Quick reference
 - ✅ [ROADMAP.md](./ROADMAP.md) — Restructured with task breakdowns
 
-### Milestone 1 (📋 Planned)
-- → [INTERFACE_INVENTORY_QUICK_REFERENCE.md](./INTERFACE_INVENTORY_QUICK_REFERENCE.md) § Milestone 1 Quick Tasks
-- → [INTERFACE_DIRECTION.md](./INTERFACE_DIRECTION.md) — To be updated with M1 design decisions
-- → [INTERFACE.md](./INTERFACE.md) — To be updated after M1 implementation
+### Milestone 1 (✅ Complete)
+- ✅ [INTERFACE_INVENTORY_QUICK_REFERENCE.md](./INTERFACE_INVENTORY_QUICK_REFERENCE.md) § Milestone 1 Quick Tasks
+- ✅ [INTERFACE_DIRECTION.md](./INTERFACE_DIRECTION.md) — button-like choices and multi-selection boundaries
+- ✅ [INTERFACE.md](./INTERFACE.md) — current controls and single-component behavior
 
 ### Milestone 2–6 (📋 Planned)
 - → [ROADMAP.md](./ROADMAP.md) — Detailed acceptance criteria per milestone

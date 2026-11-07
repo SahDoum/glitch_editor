@@ -10,6 +10,7 @@ export function getHistoryDisplayEntries<T>(
 export type CanvasTool =
   | "hand"
   | "inspector"
+  | "info"
   | "brush"
   | "select"
   | "coefficient-glitch"
@@ -33,16 +34,15 @@ export const TOOL_GROUPS: readonly {
     ],
   },
   {
-    label: "Masks",
-    tools: [
-      { id: "brush", label: "Brush", shortcut: "B" },
-      { id: "select", label: "Select", shortcut: "M" },
-    ],
+    label: "Information",
+    tools: [{ id: "info", label: "Info", shortcut: "F" }],
   },
   {
-    label: "JPEG effects",
+    label: "Effects and masks",
     tools: [
       { id: "coefficient-glitch", label: "Coefficient Glitch", shortcut: "G" },
+      { id: "brush", label: "Brush", shortcut: "B" },
+      { id: "select", label: "Select", shortcut: "M" },
     ],
   },
   {
@@ -111,6 +111,16 @@ export function getCanvasToolShortcut(key: string): CanvasTool | null {
     if (tool) return tool.id;
   }
   return null;
+}
+
+export function isCanvasToolEnabled(
+  tool: CanvasTool,
+  panelTool: CanvasTool,
+): boolean {
+  return (
+    (tool !== "brush" && tool !== "select") ||
+    panelTool === "coefficient-glitch"
+  );
 }
 
 export function getWorkspaceOverlayVisibility(

@@ -2,6 +2,11 @@ import { failure, success, type Result } from "./result";
 
 export type SeededRandom = () => number;
 
+export function createRandomSeed(previousSeed?: number): number {
+  const seed = Math.floor(Math.random() * 0x1_0000_0000);
+  return seed === previousSeed ? (seed + 1) >>> 0 : seed;
+}
+
 export function createSeededRandom(seed: number): Result<SeededRandom> {
   if (!Number.isInteger(seed) || seed < 0 || seed > 0xffff_ffff) {
     return failure({

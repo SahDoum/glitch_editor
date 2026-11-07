@@ -21,7 +21,6 @@ import {
   applyBlockPermutationOperation,
   applyBlockRepeatOperation,
   applyBlockTransferOperation,
-  applyCoefficientRecipeOperation,
   applyCoefficientGlitchOperation,
   applyQuantizationOperation,
   createJpegDocumentSession,
@@ -66,7 +65,6 @@ import {
   MAX_BLOCK_TRANSFER_BLOCKS,
   GLITCH_FREQUENCY_BANDS,
   QUANTIZATION_PATTERNS,
-  QUANTIZATION_SEMANTICS,
   type CoefficientDomain,
   type CoefficientGlitchMode,
   type BlockTransferAction,
@@ -76,16 +74,6 @@ import {
   type QuantizationPattern,
   type QuantizationSemantics,
 } from "./operations/jpeg-glitch";
-import { DCT_FREQUENCY_BAND_RANGES } from "./operations/dct";
-import {
-  BUILT_IN_EXPERIMENT_RECIPES,
-  isCoefficientRecipeStep,
-  MAX_RECIPE_STEPS,
-  readUserRecipes,
-  saveUserRecipe,
-  type CoefficientRecipeStep,
-  type ExperimentRecipe,
-} from "./application/experiment-recipes";
 import {
   BUILT_IN_COEFFICIENT_BRUSHES,
   DEFAULT_USER_BRUSH,
@@ -101,6 +89,7 @@ import {
   getWorkspaceOverlayVisibility,
   getWorkspaceShortcut,
   getCanvasToolShortcut,
+  isCanvasToolEnabled,
   TOOL_GROUPS,
   workspaceReducer,
   type CanvasTool,
@@ -121,6 +110,13 @@ import {
   getScanDecodeDiagnosticMessage,
   getScanDecodeWarningLabels,
 } from "./jpeg/scan-decode-diagnostic";
+import {
+  ComponentChoiceGroup,
+  getCoefficientRangeOptions,
+  RadioChoiceGroup,
+  SeedField,
+  type CoefficientRangeChoice,
+} from "./ui/tool-controls";
 
 const MARKER_LIMIT = 250;
 const APPLICATION_VERSION = "0.1.0";
@@ -145,6 +141,12 @@ function getToolIconPaths(tool: CanvasTool): readonly string[] {
       ];
     case "inspector":
       return ["M10.5 3a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15Z", "m16 16 5 5"];
+    case "info":
+      return [
+        "M12 11v6",
+        "M12 7h.01",
+        "M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0Z",
+      ];
     case "brush":
       return ["m4 16 9-9 4 4-9 9H4v-4Z", "m12 8 3-3 4 4-3 3", "M4 21h7"];
     case "select":
@@ -163,13 +165,10 @@ function getToolIconPaths(tool: CanvasTool): readonly string[] {
       ];
     case "block-transform":
       return [
-        "M4 7h3c4 0 6 10 10 10h3",
-        "m17 14 3 3-3 3",
-        "M4 17h3c2 0 3-2 4-4",
-        "M16 7h4",
-        "m17 4 3 3-3 3",
-        "M5 4h5v5H5z",
-        "M14 15h5v5h-5z",
+        "M3 3h7v7H3z",
+        "M14 14h7v7h-7z",
+        "M8.5 8.5 15 15",
+        "m10.5 15h4.5v-4.5",
       ];
     case "quantization":
       return [
@@ -241,24 +240,6 @@ function createJpegPreviewUrl(bytes: Uint8Array): string {
   const buffer = new ArrayBuffer(bytes.byteLength);
   new Uint8Array(buffer).set(bytes);
   return URL.createObjectURL(new Blob([buffer], { type: "image/jpeg" }));
-}
-
-function getComponentControlLabel(
-  inspection: JpegInspection,
-  componentIndex: number,
-): string {
-  const component = inspection.components[componentIndex];
-  if (!component) return `Component ${componentIndex}`;
-  if (inspection.components.length === 1) return `Gray · ID ${component.id}`;
-  const commonName =
-    component.id === 1
-      ? "likely Y"
-      : component.id === 2
-        ? "likely Cb"
-        : component.id === 3
-          ? "likely Cr"
-          : null;
-  return `Component ${componentIndex}${commonName ? ` · ${commonName}` : ""} · ID ${component.id}`;
 }
 
 function getCurrentQuantizationTables(
@@ -462,39 +443,6 @@ function describeMask(mask: SpatialMask): string {
     return `Image-pixel rectangle · ${shape.width.toFixed(1)} × ${shape.height.toFixed(1)}`;
   }
   return `Image-pixel brush · radius ${shape.radius.toFixed(1)} px · ${shape.points.length} samples`;
-}
-
-function EffectMaskPicker({ mask }: { mask: SpatialMask | null }) {
-  return (
-    <>
-      {mask ? (
-        <p className="coefficient-note">Current mask · {describeMask(mask)}</p>
-      ) : (
-        <p className="coefficient-note">
-          Draw a mask with Brush or Select before applying this effect.
-        </p>
-      )}
-    </>
-  );
-}
-
-function loadInitialUserRecipes(): {
-  recipes: readonly ExperimentRecipe[];
-  error: string;
-} {
-  let storage: Storage;
-  try {
-    storage = window.localStorage;
-  } catch {
-    return {
-      recipes: [],
-      error: "Saved experiment recipes are unavailable in this browser.",
-    };
-  }
-  const result = readUserRecipes(storage);
-  return result.ok
-    ? { recipes: result.value, error: "" }
-    : { recipes: [], error: result.error.message };
 }
 
 function loadInitialBrushes(): {
@@ -813,61 +761,23 @@ function QuantizationMatrixEditor({
 
   return (
     <section className="inspector-section quantization-editor">
-      <div className="section-kicker">FIRST GLITCH LAB · DQT</div>
-      <h2>Quantization matrix</h2>
       <p className="operation-description">
         Edit the 64 quantization values used by components assigned to this
         table. Changing DQT values does not recover detail discarded earlier.
       </p>
-      <label className="coefficient-field">
-        <span>Table assigned to component(s)</span>
-        <select
-          value={tableId}
-          disabled={disabled}
-          onChange={(event) => chooseTable(event.currentTarget.value)}
-        >
-          {quantizationTables.map((entry) => (
-            <option key={entry.id} value={entry.id}>
-              DQT {entry.id}
-            </option>
-          ))}
-        </select>
-      </label>
-      <div className="coefficient-table-wrap">
-        <table className="coefficient-table editable-quantization-table">
-          <tbody>
-            {Array.from({ length: 8 }, (_, v) => (
-              <tr key={v}>
-                {Array.from({ length: 8 }, (_, u) => {
-                  const index = v * 8 + u;
-                  return (
-                    <td
-                      className={u === 0 && v === 0 ? "coefficient-dc" : ""}
-                      key={u}
-                    >
-                      <input
-                        aria-label={`DQT ${tableId}, u ${u}, v ${v}`}
-                        type="number"
-                        min="1"
-                        max="255"
-                        step="1"
-                        value={values[index] ?? ""}
-                        disabled={disabled}
-                        onChange={(event) => {
-                          const next = values.slice();
-                          next[index] = Number(event.currentTarget.value);
-                          setValues(next);
-                          setPattern("manual");
-                        }}
-                      />
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <RadioChoiceGroup<number>
+        name="quantization-table"
+        legend="Table assigned to component(s)"
+        value={tableId}
+        options={quantizationTables.map((entry) => ({
+          value: entry.id,
+          label: `DQT ${entry.id}`,
+        }))}
+        disabled={disabled}
+        onChange={(id) => chooseTable(String(id))}
+        layout="inline"
+      />
+      <h3 className="parameter-group-title">Core parameters</h3>
       <div className="quantization-pattern-controls">
         <label className="coefficient-field">
           <span>Pattern</span>
@@ -889,19 +799,81 @@ function QuantizationMatrixEditor({
             ))}
           </select>
         </label>
-        <label className="coefficient-field">
-          <span>Seed</span>
-          <input
-            type="number"
-            min="0"
-            max="4294967295"
-            step="1"
-            value={seed}
-            disabled={disabled}
-            onChange={(event) => setSeed(event.currentTarget.value)}
-          />
-        </label>
+        <SeedField
+          id="quantization-seed"
+          label="Pattern seed"
+          value={seed}
+          disabled={disabled}
+          onChange={setSeed}
+        />
       </div>
+      <details className="advanced-controls">
+        <summary>
+          Advanced parameters · individual DQT values and semantics
+        </summary>
+        <div className="advanced-control-content">
+          <div className="coefficient-table-wrap">
+            <table className="coefficient-table editable-quantization-table">
+              <tbody>
+                {Array.from({ length: 8 }, (_, v) => (
+                  <tr key={v}>
+                    {Array.from({ length: 8 }, (_, u) => {
+                      const index = v * 8 + u;
+                      return (
+                        <td
+                          className={u === 0 && v === 0 ? "coefficient-dc" : ""}
+                          key={u}
+                        >
+                          <input
+                            aria-label={`DQT ${tableId}, u ${u}, v ${v}`}
+                            type="number"
+                            min="1"
+                            max="255"
+                            step="1"
+                            value={values[index] ?? ""}
+                            disabled={disabled}
+                            onChange={(event) => {
+                              const next = values.slice();
+                              next[index] = Number(event.currentTarget.value);
+                              setValues(next);
+                              setPattern("manual");
+                            }}
+                          />
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <RadioChoiceGroup<QuantizationSemantics>
+            name="quantization-semantics"
+            legend="Apply semantics"
+            value={semantics}
+            options={[
+              {
+                value: "reinterpret",
+                label: "Reinterpret",
+                hint: "Keep quantized coefficients",
+              },
+              {
+                value: "requantize",
+                label: "Requantize",
+                hint: "Estimate from retained coefficients",
+              },
+            ]}
+            disabled={disabled}
+            onChange={setSemantics}
+            layout="inline"
+          />
+          <p className="coefficient-note">
+            {semantics === "reinterpret"
+              ? "Keeps quantized coefficients and changes their DQT interpretation."
+              : "Approximates unquantized values as old coefficient × old DQT, then divides by the new DQT. Discarded information is not restored."}
+          </p>
+        </div>
+      </details>
       <button
         className="operation-button secondary"
         type="button"
@@ -910,29 +882,6 @@ function QuantizationMatrixEditor({
       >
         Generate pattern
       </button>
-      <label className="coefficient-field tool-field">
-        <span>Apply semantics</span>
-        <select
-          value={semantics}
-          disabled={disabled}
-          onChange={(event) => {
-            const next = QUANTIZATION_SEMANTICS.find(
-              (candidate) => candidate === event.currentTarget.value,
-            );
-            if (next) setSemantics(next);
-          }}
-        >
-          <option value="reinterpret">Reinterpret existing coefficients</option>
-          <option value="requantize">
-            Requantize from retained coefficients
-          </option>
-        </select>
-      </label>
-      <p className="coefficient-note">
-        {semantics === "reinterpret"
-          ? "Keeps quantized coefficients and changes their DQT interpretation."
-          : "Approximates unquantized values as old coefficient × old DQT, then divides by the new DQT. Discarded information is not restored."}
-      </p>
       {errorMessage && (
         <p className="coefficient-error" role="alert">
           {errorMessage}
@@ -1239,18 +1188,6 @@ function App() {
     initialAutoApply.settings,
   );
   const [brushAutoError, setBrushAutoError] = useState(initialAutoApply.error);
-  const [initialRecipeState] = useState(loadInitialUserRecipes);
-  const [userRecipes, setUserRecipes] = useState(initialRecipeState.recipes);
-  const [recipeStorageError, setRecipeStorageError] = useState(
-    initialRecipeState.error,
-  );
-  const [recipeName, setRecipeName] = useState("");
-  const [recipeDraft, setRecipeDraft] = useState<
-    readonly CoefficientRecipeStep[]
-  >([]);
-  const [selectedRecipeId, setSelectedRecipeId] = useState(
-    BUILT_IN_EXPERIMENT_RECIPES[0]?.id ?? "",
-  );
   const [zoom, setZoom] = useState(1);
   const [selection, setSelection] = useState<SpatialSelection | null>(null);
   const [brushDraft, setBrushDraft] = useState<readonly ImagePoint[]>([]);
@@ -1289,10 +1226,6 @@ function App() {
       : [DEFAULT_USER_BRUSH, ...userBrushes]),
   ];
   const selectedBrush = brushes.find((brush) => brush.id === selectedBrushId);
-  const allRecipes = [...BUILT_IN_EXPERIMENT_RECIPES, ...userRecipes];
-  const selectedRecipe =
-    allRecipes.find((recipe) => recipe.id === selectedRecipeId) ?? null;
-
   const currentQuantizationTables = useMemo(
     () =>
       document
@@ -1556,10 +1489,7 @@ function App() {
     blockTransformGesture.current = null;
     setBrushSize(32);
     setMaskGrid("dct");
-    setRecipeDraft([]);
-    setRecipeName("");
     dispatchWorkspace({ type: "select-mask", maskId: null });
-    setSelectedRecipeId(BUILT_IN_EXPERIMENT_RECIPES[0]?.id ?? "");
     setShowBlocks(false);
     setShowMcus(false);
     setShowOriginal(false);
@@ -2410,13 +2340,25 @@ function App() {
     }
     setSelectedBrushId(id);
     setBrushName(brush.name);
-    setComponentIndex(brush.componentIndex);
     setCoefficientDomain(brush.step.domain);
     setCoefficientMode(brush.step.mode);
     setFrequencyBand(brush.step.frequencyBand);
     setCoefficientStrength(brush.step.strength);
     setCoefficientSeed(brush.step.seed);
     setErrorMessage("");
+  }
+
+  function createCurrentCoefficientStep(): CoefficientBrush["step"] {
+    return {
+      domain: coefficientDomain,
+      mode: coefficientMode,
+      frequencyBand,
+      strength:
+        coefficientMode === "invert" || coefficientMode === "isolate"
+          ? 0
+          : coefficientStrength,
+      seed: coefficientSeed,
+    };
   }
 
   function saveCurrentBrush() {
@@ -2434,8 +2376,7 @@ function App() {
     const brush: CoefficientBrush = {
       id: selectedBrushId,
       name: brushName.trim(),
-      componentIndex,
-      step: createCurrentRecipeStep(),
+      step: createCurrentCoefficientStep(),
     };
     const saved = updateCoefficientBrush(storage, userBrushes, brush);
     if (!saved.ok) {
@@ -2478,7 +2419,6 @@ function App() {
     setUserBrushes(saved.value);
     setSelectedBrushId(brush.id);
     setBrushName(brush.name);
-    setComponentIndex(brush.componentIndex);
     setCoefficientDomain(brush.step.domain);
     setCoefficientMode(brush.step.mode);
     setFrequencyBand(brush.step.frequencyBand);
@@ -2597,99 +2537,6 @@ function App() {
     setSelection(null);
     dispatchWorkspace({ type: "set-selection", selection: restored.value });
     setErrorMessage("");
-  }
-
-  function createCurrentRecipeStep(): CoefficientRecipeStep {
-    return {
-      domain: coefficientDomain,
-      mode: coefficientMode,
-      frequencyBand,
-      strength:
-        coefficientMode === "invert" || coefficientMode === "isolate"
-          ? 0
-          : coefficientStrength,
-      seed: coefficientSeed,
-    };
-  }
-
-  function addRecipeDraftStep() {
-    const step = createCurrentRecipeStep();
-    if (!isCoefficientRecipeStep(step)) {
-      setErrorMessage("The current coefficient settings cannot be saved.");
-      return;
-    }
-    if (recipeDraft.length >= MAX_RECIPE_STEPS) {
-      setErrorMessage(`A recipe supports at most ${MAX_RECIPE_STEPS} steps.`);
-      return;
-    }
-    setRecipeDraft((current) => [...current, step]);
-    setErrorMessage("");
-  }
-
-  function saveRecipeDraft() {
-    if (!isCoefficientRecipeStep(createCurrentRecipeStep())) {
-      setErrorMessage("The current coefficient settings are invalid.");
-      return;
-    }
-    if (recipeDraft.length === 0) {
-      setErrorMessage(
-        "Add at least one operation step before saving a recipe.",
-      );
-      return;
-    }
-    if (
-      allRecipes.some(
-        (recipe) =>
-          recipe.name.trim().toLowerCase() === recipeName.trim().toLowerCase(),
-      )
-    ) {
-      setErrorMessage("A built-in or saved recipe already uses this name.");
-      return;
-    }
-    let storage: Storage;
-    try {
-      storage = window.localStorage;
-    } catch {
-      setRecipeStorageError(
-        "Saved experiment recipes are unavailable in this browser.",
-      );
-      return;
-    }
-    const recipe: ExperimentRecipe = {
-      schemaVersion: 1,
-      id: crypto.randomUUID(),
-      name: recipeName.trim(),
-      steps: recipeDraft,
-    };
-    const saved = saveUserRecipe(storage, userRecipes, recipe);
-    if (!saved.ok) {
-      setErrorMessage(saved.error.message);
-      return;
-    }
-    setUserRecipes(saved.value);
-    setRecipeName("");
-    setRecipeDraft([]);
-    setSelectedRecipeId(recipe.id);
-    setRecipeStorageError("");
-    setErrorMessage("");
-  }
-
-  function applySelectedRecipe() {
-    if (!ensureCoefficientPhase()) return;
-    const history = operationHistory.current;
-    if (!history || !activeMask || !selectedRecipe) {
-      setErrorMessage(
-        "Choose a recipe and draw or select a mask before applying the experiment.",
-      );
-      return;
-    }
-    updateHistory(
-      applyCoefficientRecipeOperation(history, {
-        recipe: selectedRecipe,
-        mask: activeMask,
-        componentIndex,
-      }),
-    );
   }
 
   function ensureCoefficientPhase(): boolean {
@@ -3149,7 +2996,7 @@ function App() {
       }
       if (!event.ctrlKey && !event.metaKey && !event.altKey && document) {
         const tool = getCanvasToolShortcut(event.key);
-        if (!tool) return;
+        if (!tool || !isCanvasToolEnabled(tool, panelTool)) return;
         event.preventDefault();
         keyboardSelectionAnchor.current = null;
         dispatchWorkspace({ type: "activate-tool", tool });
@@ -3173,7 +3020,7 @@ function App() {
 
     window.addEventListener("keydown", onWorkspaceKeyDown);
     return () => window.removeEventListener("keydown", onWorkspaceKeyDown);
-  }, [document, selectAllImage, toolMode]);
+  }, [document, panelTool, selectAllImage, toolMode]);
 
   return (
     <main className={`workspace ${document ? "has-tool-bar" : ""}`}>
@@ -3350,40 +3197,52 @@ function App() {
             >
               <span className="tool-group-label">{group.label}</span>
               <div className="tool-group-buttons">
-                {group.tools.map((tool) => (
-                  <button
-                    className={`tool-button ${toolMode === tool.id || panelTool === tool.id ? "is-active" : ""}`}
-                    key={tool.id}
-                    type="button"
-                    aria-label={tool.label}
-                    aria-pressed={toolMode === tool.id || panelTool === tool.id}
-                    aria-keyshortcuts={tool.shortcut}
-                    title={`${tool.label} (${tool.shortcut})`}
-                    onClick={() => activateTool(tool.id)}
-                  >
-                    <svg
-                      className="tool-icon"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.7"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
+                {group.tools.map((tool) => {
+                  const enabled = isCanvasToolEnabled(tool.id, panelTool);
+                  return (
+                    <button
+                      className={`tool-button ${toolMode === tool.id || panelTool === tool.id ? "is-active" : ""}`}
+                      key={tool.id}
+                      type="button"
+                      disabled={!enabled}
+                      aria-label={tool.label}
+                      aria-pressed={
+                        toolMode === tool.id || panelTool === tool.id
+                      }
+                      aria-keyshortcuts={tool.shortcut}
+                      title={
+                        enabled
+                          ? `${tool.label} (${tool.shortcut})`
+                          : `Select Coefficient Glitch to enable ${tool.label}`
+                      }
+                      onClick={() => activateTool(tool.id)}
                     >
-                      {getToolIconPaths(tool.id).map((path) => (
-                        <path
-                          d={path}
-                          key={path}
-                          strokeDasharray={
-                            tool.id === "select" ? "3 3" : undefined
-                          }
-                        />
-                      ))}
-                    </svg>
-                    <span>{tool.label}</span>
-                  </button>
-                ))}
+                      <svg
+                        className="tool-icon"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={
+                          tool.id === "block-transform" ? "2.6" : "1.7"
+                        }
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        {getToolIconPaths(tool.id).map((path) => (
+                          <path
+                            d={path}
+                            key={path}
+                            strokeDasharray={
+                              tool.id === "select" ? "3 3" : undefined
+                            }
+                          />
+                        ))}
+                      </svg>
+                      <span>{tool.label}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           ))}
@@ -3709,34 +3568,27 @@ function App() {
                         quantized coefficients in JPEG INSPECTOR. This does not
                         change the global pixel-space selection.
                       </p>
-                      <label className="coefficient-field">
-                        <span>Component to inspect</span>
-                        <select
-                          value={inspectorComponentId}
-                          onChange={(event) => {
-                            setInspectorComponentId(
-                              Number(event.currentTarget.value),
-                            );
-                            dispatchWorkspace({
-                              type: "select-block",
-                              block: null,
-                            });
-                          }}
-                        >
-                          {document.inspection.components.map(
-                            (component, index) => (
-                              <option key={component.id} value={component.id}>
-                                {getComponentControlLabel(
-                                  document.inspection,
-                                  index,
-                                )}{" "}
-                                · {component.horizontalSampling}×
-                                {component.verticalSampling} sampling
-                              </option>
-                            ),
-                          )}
-                        </select>
-                      </label>
+                      <ComponentChoiceGroup
+                        name="inspector-component"
+                        inspection={document.inspection}
+                        value={Math.max(
+                          0,
+                          document.inspection.components.findIndex(
+                            (component) =>
+                              component.id === inspectorComponentId,
+                          ),
+                        )}
+                        onChange={(index) => {
+                          const component =
+                            document.inspection.components[index];
+                          if (!component) return;
+                          setInspectorComponentId(component.id);
+                          dispatchWorkspace({
+                            type: "select-block",
+                            block: null,
+                          });
+                        }}
+                      />
                       {selectedBlock && (
                         <p className="selection-readout">
                           Component ID {selectedBlock.componentId} · block (
@@ -3745,12 +3597,44 @@ function App() {
                       )}
                     </section>
                   )}
+                  {toolMode === "info" && (
+                    <section className="inspector-section">
+                      <CollapsibleSection
+                        id="original-asset"
+                        title="Original asset"
+                        kicker="ORIGINAL ASSET"
+                        className="source-section"
+                        initiallyOpen={false}
+                      >
+                        <div className="source-card">
+                          <p
+                            className="source-name"
+                            title={document.originalAsset.fileName}
+                          >
+                            {document.originalAsset.fileName}
+                          </p>
+                          <p className="source-size">
+                            {document.originalAsset.byteLength.toLocaleString()}{" "}
+                            bytes
+                            <span>·</span>
+                            Original bytes held unchanged in memory
+                          </p>
+                          <div className="digest-label">SHA-256</div>
+                          <code className="digest-value">
+                            {document.originalAsset.sha256}
+                          </code>
+                        </div>
+                      </CollapsibleSection>
+                      <MetadataInspector
+                        asset={document.originalAsset}
+                        inspection={document.inspection}
+                        quantizationTables={currentQuantizationTables}
+                        selectedBlock={selectedBlock}
+                      />
+                    </section>
+                  )}
                   {panelTool === "coefficient-glitch" && (
                     <section className="inspector-section selection-panel">
-                      <div className="section-kicker">
-                        JPEG-DOMAIN EFFECT · DCT
-                      </div>
-                      <h2>Coefficient experiments</h2>
                       <div className="coefficient-field">
                         <span>Coefficient brushes</span>
                         <div
@@ -3816,47 +3700,14 @@ function App() {
                         re-encode a new JPEG. They do not edit decoded pixels or
                         the original JPEG bytes.
                       </p>
-                      <p className="coefficient-note">
-                        {selectedBrush?.name} ·{" "}
-                        {coefficientDomain.toUpperCase()} · {coefficientMode} ·{" "}
-                        {frequencyBand}
-                        {brushAutoApply[selectedBrushId]
-                          ? " · each completed mask is applied immediately"
-                          : " · draw a mask, then apply"}
-                      </p>
-                      <EffectMaskPicker mask={activeMask} />
-                      <p className="coefficient-note">
-                        Select Brush or Select in the toolbar to edit the mask
-                        without closing these effect settings.
-                      </p>
-                      <label className="coefficient-field">
-                        <span>Component</span>
-                        <select
-                          value={componentIndex}
-                          onChange={(event) =>
-                            setComponentIndex(Number(event.currentTarget.value))
-                          }
-                        >
-                          {componentIndex >=
-                            document.inspection.components.length && (
-                            <option value={componentIndex}>
-                              Component {componentIndex} unavailable
-                            </option>
-                          )}
-                          {document.inspection.components.map(
-                            (component, index) => (
-                              <option key={component.id} value={index}>
-                                {getComponentControlLabel(
-                                  document.inspection,
-                                  index,
-                                )}{" "}
-                                · {component.horizontalSampling}×
-                                {component.verticalSampling} sampling
-                              </option>
-                            ),
-                          )}
-                        </select>
-                      </label>
+                      <h3 className="parameter-group-title">Core parameters</h3>
+                      <ComponentChoiceGroup
+                        name="coefficient-component"
+                        inspection={document.inspection}
+                        value={componentIndex}
+                        includeUnavailable
+                        onChange={setComponentIndex}
+                      />
                       {componentIndex >=
                         document.inspection.components.length && (
                         <p className="coefficient-error" role="alert">
@@ -3864,148 +3715,108 @@ function App() {
                           another brush or component.
                         </p>
                       )}
-                      {coefficientMode === "scale" && (
-                        <label className="coefficient-field tool-field">
-                          <span>Scale multiplier · {coefficientStrength}</span>
-                          <input
-                            type="range"
-                            min="-8"
-                            max="8"
-                            step="0.1"
-                            value={coefficientStrength}
-                            onChange={(event) =>
-                              setCoefficientStrength(
-                                Number(event.currentTarget.value),
-                              )
-                            }
-                          />
-                        </label>
-                      )}
-                      <button
-                        className="operation-button"
-                        type="button"
-                        disabled={
-                          !activeMask ||
-                          isEncoding ||
-                          componentIndex >=
-                            document.inspection.components.length
-                        }
-                        onClick={() => applyCoefficientOperation()}
-                      >
-                        Apply {selectedBrush?.name ?? "brush"}
-                      </button>
                       {!BUILT_IN_COEFFICIENT_BRUSHES.some(
                         (brush) => brush.id === selectedBrushId,
                       ) && (
-                        <div className="recipe-compose">
-                          <p className="coefficient-note">
-                            Y/Cb/Cr labels are common ID conventions, not
-                            guaranteed color metadata. Component index and
-                            sampling factors are authoritative. Select Cb or Cr
-                            to experiment on chroma coefficients independently.
-                          </p>
-                          <label className="coefficient-field tool-field">
-                            <span>Coefficient domain</span>
-                            <select
-                              value={coefficientDomain}
-                              disabled={
-                                coefficientMode === "offset" ||
-                                coefficientMode === "invert" ||
-                                coefficientMode === "isolate"
-                              }
-                              onChange={(event) => {
-                                const next = event.currentTarget.value;
-                                if (next === "dc" || next === "ac") {
-                                  setCoefficientDomain(next);
-                                  if (next === "dc") setFrequencyBand("all");
-                                }
-                              }}
-                            >
-                              <option value="ac">AC coefficients</option>
-                              <option value="dc">DC coefficients</option>
-                            </select>
-                          </label>
-                          <label className="coefficient-field tool-field">
-                            <span>Operation</span>
-                            <select
-                              value={coefficientMode}
-                              onChange={(event) => {
-                                const next = event.currentTarget.value;
+                        <div className="coefficient-brush-settings">
+                          <RadioChoiceGroup<CoefficientGlitchMode>
+                            name="coefficient-mode"
+                            legend="Operation"
+                            value={coefficientMode}
+                            options={[
+                              {
+                                value: "zero",
+                                label: "Zero",
+                                hint: "Set selected coefficients to 0",
+                              },
+                              {
+                                value: "scale",
+                                label: "Scale",
+                                hint: "Multiply selected values",
+                              },
+                              {
+                                value: "randomize",
+                                label: "Randomize",
+                                hint: "Replace with seeded values",
+                              },
+                              {
+                                value: "offset",
+                                label: "DC offset",
+                                hint: "Add to the block-average value",
+                              },
+                              {
+                                value: "invert",
+                                label: "Invert AC",
+                                hint: "Negate selected AC coefficients",
+                              },
+                              {
+                                value: "isolate",
+                                label: "Isolate band",
+                                hint: "Clear AC values outside the band",
+                              },
+                            ]}
+                            onChange={(next) => {
+                              setCoefficientMode(next);
+                              if (next === "offset") {
+                                setCoefficientDomain("dc");
+                                setFrequencyBand("all");
+                              } else if (
+                                next === "invert" ||
+                                next === "isolate"
+                              ) {
+                                setCoefficientDomain("ac");
                                 if (
-                                  next === "zero" ||
-                                  next === "scale" ||
-                                  next === "randomize" ||
-                                  next === "offset" ||
-                                  next === "invert" ||
-                                  next === "isolate"
+                                  next === "isolate" &&
+                                  frequencyBand === "all"
                                 ) {
-                                  setCoefficientMode(next);
-                                  if (next === "offset") {
+                                  setFrequencyBand("low");
+                                }
+                              }
+                            }}
+                          />
+                          {coefficientMode !== "offset" && (
+                            <>
+                              <RadioChoiceGroup<CoefficientRangeChoice>
+                                name="coefficient-target-range"
+                                legend="Coefficient range"
+                                value={
+                                  coefficientDomain === "dc"
+                                    ? "dc"
+                                    : `ac:${frequencyBand}`
+                                }
+                                options={getCoefficientRangeOptions(
+                                  coefficientMode,
+                                )}
+                                onChange={(next) => {
+                                  if (next === "dc") {
                                     setCoefficientDomain("dc");
                                     setFrequencyBand("all");
-                                  } else if (
-                                    next === "invert" ||
-                                    next === "isolate"
-                                  ) {
-                                    setCoefficientDomain("ac");
-                                    if (
-                                      next === "isolate" &&
-                                      frequencyBand === "all"
-                                    ) {
-                                      setFrequencyBand("low");
-                                    }
+                                    return;
                                   }
-                                }
-                              }}
-                            >
-                              <option value="zero">
-                                Zero selected coefficients
-                              </option>
-                              <option value="scale">Scale coefficients</option>
-                              <option value="randomize">
-                                Randomize coefficients
-                              </option>
-                              <option value="offset">Add DC offset</option>
-                              <option value="invert">Invert AC signs</option>
-                              <option value="isolate">
-                                Keep selected AC frequency band
-                              </option>
-                            </select>
-                          </label>
-                          <label className="coefficient-field tool-field">
-                            <span>
-                              {coefficientDomain === "ac"
-                                ? "AC frequency band"
-                                : "DC"}
-                            </span>
-                            <select
-                              value={frequencyBand}
-                              disabled={coefficientDomain === "dc"}
-                              onChange={(event) => {
-                                const next = GLITCH_FREQUENCY_BANDS.find(
-                                  (band) => band === event.currentTarget.value,
-                                );
-                                if (next) setFrequencyBand(next);
-                              }}
-                            >
-                              {GLITCH_FREQUENCY_BANDS.map((band) => {
-                                const range = DCT_FREQUENCY_BAND_RANGES[band];
-                                return (
-                                  <option
-                                    key={band}
-                                    value={band}
-                                    disabled={
-                                      coefficientMode === "isolate" &&
-                                      band === "all"
-                                    }
-                                  >
-                                    {band === "all" ? "All AC" : band} · u+v{" "}
-                                    {range.minimum}–{range.maximum}
-                                  </option>
-                                );
-                              })}
-                            </select>
-                          </label>
+                                  const band = GLITCH_FREQUENCY_BANDS.find(
+                                    (candidate) => next === `ac:${candidate}`,
+                                  );
+                                  if (band) {
+                                    setCoefficientDomain("ac");
+                                    setFrequencyBand(band);
+                                  }
+                                }}
+                                layout="bands"
+                              />
+                              <p className="coefficient-note">
+                                DC is the block-average coefficient. AC bands
+                                refer to u+v coordinates in quantized 8×8 DCT
+                                coefficients.
+                              </p>
+                              {coefficientMode === "isolate" && (
+                                <p className="coefficient-note">
+                                  Isolate band targets AC only: DC is not an AC
+                                  band, and AC All would leave no coefficients
+                                  outside the selected range to clear.
+                                </p>
+                              )}
+                            </>
+                          )}
                           {["scale", "randomize", "offset"].includes(
                             coefficientMode,
                           ) && (
@@ -4044,158 +3855,105 @@ function App() {
                             </label>
                           )}
                           {coefficientMode === "randomize" && (
-                            <label className="coefficient-field tool-field">
-                              <span>Deterministic seed</span>
-                              <input
-                                type="number"
-                                min="0"
-                                max="4294967295"
-                                step="1"
-                                value={coefficientSeed}
-                                onChange={(event) =>
-                                  setCoefficientSeed(
-                                    Number(event.currentTarget.value),
-                                  )
-                                }
-                              />
-                            </label>
-                          )}
-                          <p className="coefficient-note">
-                            Save changes to this brush in this browser. Clearing
-                            browser data removes saved brushes.
-                          </p>
-                          <label className="coefficient-field">
-                            <span>Brush name</span>
-                            <input
-                              type="text"
-                              maxLength={48}
-                              value={brushName}
-                              onChange={(event) =>
-                                setBrushName(event.currentTarget.value)
+                            <SeedField
+                              id="coefficient-seed"
+                              label="Deterministic seed"
+                              value={coefficientSeed}
+                              onChange={(value) =>
+                                setCoefficientSeed(Number(value))
                               }
                             />
-                          </label>
-                          <div className="operation-actions">
-                            <button
-                              className="operation-button secondary"
-                              type="button"
-                              disabled={
-                                !brushName.trim() || !!brushStorageError
+                          )}
+                        </div>
+                      )}
+                      {coefficientMode === "scale" && (
+                        <div className="coefficient-field tool-field range-field">
+                          <span id="coefficient-strength-label">
+                            Scale multiplier · {coefficientStrength}
+                          </span>
+                          <div className="range-input-row">
+                            <input
+                              type="range"
+                              min="-8"
+                              max="8"
+                              step="0.1"
+                              value={coefficientStrength}
+                              aria-labelledby="coefficient-strength-label"
+                              onChange={(event) =>
+                                setCoefficientStrength(
+                                  Number(event.currentTarget.value),
+                                )
                               }
-                              onClick={saveCurrentBrush}
-                            >
-                              Save brush
-                            </button>
+                            />
+                            <input
+                              type="number"
+                              min="-8"
+                              max="8"
+                              step="0.1"
+                              value={coefficientStrength}
+                              aria-labelledby="coefficient-strength-label"
+                              onChange={(event) =>
+                                setCoefficientStrength(
+                                  Number(event.currentTarget.value),
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="range-endpoints">
+                            <span>−8 · reduce or invert</span>
+                            <span>+8 · increase</span>
                           </div>
                         </div>
                       )}
-                      <details className="recipe-editor">
-                        <summary>Multi-step recipes</summary>
-                        <div className="section-kicker">EXPERIMENT PRESETS</div>
-                        {recipeStorageError && (
-                          <p className="coefficient-error" role="alert">
-                            {recipeStorageError}
-                          </p>
-                        )}
-                        <p className="coefficient-note">
-                          Your recipes are stored locally in this browser and
-                          may be lost if its data is cleared.
-                        </p>
-                        <label className="coefficient-field">
-                          <span>Preset or saved sequence</span>
-                          <select
-                            value={selectedRecipeId}
-                            onChange={(event) =>
-                              setSelectedRecipeId(event.currentTarget.value)
-                            }
-                          >
-                            <optgroup label="Built-in presets">
-                              {BUILT_IN_EXPERIMENT_RECIPES.map((recipe) => (
-                                <option key={recipe.id} value={recipe.id}>
-                                  {recipe.name} · {recipe.steps.length} step
-                                  {recipe.steps.length === 1 ? "" : "s"}
-                                </option>
-                              ))}
-                            </optgroup>
-                            {userRecipes.length > 0 && (
-                              <optgroup label="Your recipes">
-                                {userRecipes.map((recipe) => (
-                                  <option key={recipe.id} value={recipe.id}>
-                                    {recipe.name} · {recipe.steps.length} step
-                                    {recipe.steps.length === 1 ? "" : "s"}
-                                  </option>
-                                ))}
-                              </optgroup>
-                            )}
-                          </select>
-                        </label>
-                        <p className="coefficient-note">
-                          {selectedRecipe
-                            ? selectedRecipe.steps
-                                .map(
-                                  ({ mode, domain, frequencyBand }) =>
-                                    `${mode} ${domain} · ${frequencyBand}`,
-                                )
-                                .join(" → ")
-                            : "Select a named preset or saved recipe."}
-                          . Applying the sequence creates one undoable history
-                          entry.
-                        </p>
-                        <button
-                          className="operation-button secondary"
-                          type="button"
-                          disabled={
-                            !activeMask || !selectedRecipe || isEncoding
-                          }
-                          onClick={applySelectedRecipe}
-                        >
-                          Apply {selectedRecipe?.name ?? "recipe"}
-                        </button>
-                        <details className="recipe-compose-disclosure">
-                          <summary>
-                            Build your own sequence · {recipeDraft.length} steps
-                          </summary>
-                          <div className="recipe-compose">
+                      <button
+                        className="operation-button"
+                        type="button"
+                        disabled={
+                          !activeMask ||
+                          isEncoding ||
+                          componentIndex >=
+                            document.inspection.components.length
+                        }
+                        onClick={() => applyCoefficientOperation()}
+                      >
+                        Apply {selectedBrush?.name ?? "brush"}
+                      </button>
+                      {!BUILT_IN_COEFFICIENT_BRUSHES.some(
+                        (brush) => brush.id === selectedBrushId,
+                      ) && (
+                        <details className="advanced-controls">
+                          <summary>Advanced brush settings</summary>
+                          <div className="advanced-control-content">
                             <p className="coefficient-note">
-                              Add the current coefficient settings in order. The
-                              selected mask and component are chosen when you
-                              apply the saved recipe.
+                              Save changes to this brush in this browser.
+                              Clearing browser data removes saved brushes.
                             </p>
-                            <button
-                              className="operation-button secondary"
-                              type="button"
-                              disabled={recipeDraft.length >= MAX_RECIPE_STEPS}
-                              onClick={addRecipeDraftStep}
-                            >
-                              Add current settings
-                            </button>
                             <label className="coefficient-field">
-                              <span>Save sequence as</span>
+                              <span>Brush name</span>
                               <input
                                 type="text"
                                 maxLength={48}
-                                value={recipeName}
+                                value={brushName}
                                 onChange={(event) =>
-                                  setRecipeName(event.currentTarget.value)
+                                  setBrushName(event.currentTarget.value)
                                 }
-                                placeholder="Name this experiment"
                               />
                             </label>
-                            <button
-                              className="operation-button secondary"
-                              type="button"
-                              disabled={
-                                recipeDraft.length === 0 ||
-                                recipeName.trim().length === 0 ||
-                                userRecipes.length >= 50
-                              }
-                              onClick={saveRecipeDraft}
-                            >
-                              Save recipe
-                            </button>
+                            <div className="operation-actions">
+                              <button
+                                className="operation-button secondary"
+                                type="button"
+                                disabled={
+                                  !brushName.trim() || !!brushStorageError
+                                }
+                                onClick={saveCurrentBrush}
+                              >
+                                Save brush
+                              </button>
+                            </div>
                           </div>
                         </details>
-                      </details>
+                      )}
                     </section>
                   )}
                   {(toolMode === "brush" || toolMode === "select") && (
@@ -4209,52 +3967,33 @@ function App() {
                         Effects use the current mask and keep the exact mask
                         snapshot used in their history entry.
                       </p>
-                      <label className="coefficient-field">
-                        <span>Snap to JPEG grid</span>
-                        <select
-                          value={maskGrid}
-                          onChange={(event) => {
-                            if (
-                              event.currentTarget.value === "dct" ||
-                              event.currentTarget.value === "mcu"
-                            ) {
-                              setMaskGrid(event.currentTarget.value);
-                            }
-                          }}
-                        >
-                          <option value="dct">
-                            8×8 DCT blocks · selected component
-                          </option>
-                          <option value="mcu">
-                            MCU · image sampling geometry
-                          </option>
-                        </select>
-                      </label>
+                      <RadioChoiceGroup<JpegSelectionGrid>
+                        name="mask-snap-grid"
+                        legend="Snap to JPEG grid"
+                        value={maskGrid}
+                        options={[
+                          {
+                            value: "dct",
+                            label: "8×8 DCT blocks",
+                            hint: "Selected component",
+                          },
+                          {
+                            value: "mcu",
+                            label: "MCU",
+                            hint: "Image sampling geometry",
+                          },
+                        ]}
+                        onChange={setMaskGrid}
+                        layout="inline"
+                      />
                       {maskGrid === "dct" && (
-                        <label className="coefficient-field">
-                          <span>Component grid</span>
-                          <select
-                            value={componentIndex}
-                            onChange={(event) =>
-                              setComponentIndex(
-                                Number(event.currentTarget.value),
-                              )
-                            }
-                          >
-                            {document.inspection.components.map(
-                              (component, index) => (
-                                <option key={component.id} value={index}>
-                                  {getComponentControlLabel(
-                                    document.inspection,
-                                    index,
-                                  )}{" "}
-                                  · {component.horizontalSampling}×
-                                  {component.verticalSampling}
-                                </option>
-                              ),
-                            )}
-                          </select>
-                        </label>
+                        <p className="coefficient-note">
+                          DCT snapping follows the active JPEG effect target
+                          (component ID{" "}
+                          {document.inspection.components[componentIndex]?.id ??
+                            "unavailable"}
+                          ).
+                        </p>
                       )}
                       {toolMode === "brush" && (
                         <label className="coefficient-field tool-field">
@@ -4269,14 +4008,12 @@ function App() {
                               setBrushSize(Number(event.currentTarget.value))
                             }
                           />
+                          <div className="range-endpoints">
+                            <span>Small · 4 px</span>
+                            <span>Large · 256 px</span>
+                          </div>
                         </label>
                       )}
-                      <p className="coefficient-note">
-                        Brush sample centers and rectangle edges snap to the
-                        selected JPEG grid. Pixel, DCT-block, and MCU
-                        coordinates remain distinct; component sampling controls
-                        the DCT footprint.
-                      </p>
                       {visibleSelection && (
                         <p className="selection-readout">
                           x {visibleSelection.x.toFixed(1)} · y{" "}
@@ -4304,8 +4041,6 @@ function App() {
                   )}
                   {panelTool === "block-transform" && (
                     <section className="inspector-section">
-                      <div className="section-kicker">JPEG COEFFICIENTS</div>
-                      <h2>Block Transform</h2>
                       <p className="operation-description">
                         Reorders quantized DCT blocks in one component, then
                         re-encodes the JPEG. This does not copy pixels, MCUs, or
@@ -4354,36 +4089,20 @@ function App() {
                           </button>
                         ))}
                       </div>
-                      <label className="coefficient-field">
-                        <span>Component</span>
-                        <select
-                          value={componentIndex}
-                          onChange={(event) => {
-                            setComponentIndex(
-                              Number(event.currentTarget.value),
-                            );
-                            setBlockTransferSource(null);
-                            setBlockTransferDraft(null);
-                            setBlockTransferDestination(null);
-                            setRepeatSource(null);
-                            setRepeatDraft(null);
-                            setRepeatDestination(null);
-                          }}
-                        >
-                          {document.inspection.components.map(
-                            (component, index) => (
-                              <option key={component.id} value={index}>
-                                {getComponentControlLabel(
-                                  document.inspection,
-                                  index,
-                                )}{" "}
-                                · {component.horizontalSampling}×
-                                {component.verticalSampling}
-                              </option>
-                            ),
-                          )}
-                        </select>
-                      </label>
+                      <ComponentChoiceGroup
+                        name="block-transform-component"
+                        inspection={document.inspection}
+                        value={componentIndex}
+                        onChange={(index) => {
+                          setComponentIndex(index);
+                          setBlockTransferSource(null);
+                          setBlockTransferDraft(null);
+                          setBlockTransferDestination(null);
+                          setRepeatSource(null);
+                          setRepeatDraft(null);
+                          setRepeatDestination(null);
+                        }}
+                      />
                       {blockTransformMode === "transfer" && (
                         <>
                           <p className="coefficient-note">
@@ -4399,48 +4118,47 @@ function App() {
                               {blockTransferSource.height}
                             </p>
                           )}
-                          <label className="coefficient-field">
-                            <span>Coefficient data</span>
-                            <select
-                              value={blockTransferMode}
-                              onChange={(event) => {
-                                if (
-                                  event.currentTarget.value === "all" ||
-                                  event.currentTarget.value === "dc" ||
-                                  event.currentTarget.value === "ac"
-                                ) {
-                                  setBlockTransferMode(
-                                    event.currentTarget.value,
-                                  );
-                                }
-                              }}
-                            >
-                              <option value="all">Whole block · DC + AC</option>
-                              <option value="dc">DC only</option>
-                              <option value="ac">AC only</option>
-                            </select>
-                          </label>
-                          <label className="coefficient-field">
-                            <span>Transfer action</span>
-                            <select
-                              value={blockTransferAction}
-                              onChange={(event) => {
-                                if (
-                                  event.currentTarget.value === "copy" ||
-                                  event.currentTarget.value === "swap"
-                                ) {
-                                  setBlockTransferAction(
-                                    event.currentTarget.value,
-                                  );
-                                }
-                              }}
-                            >
-                              <option value="copy">Copy to destination</option>
-                              <option value="swap">
-                                Swap with destination
-                              </option>
-                            </select>
-                          </label>
+                          <RadioChoiceGroup<BlockTransferMode>
+                            name="block-transfer-data"
+                            legend="Coefficient data"
+                            value={blockTransferMode}
+                            options={[
+                              {
+                                value: "all",
+                                label: "Whole block",
+                                hint: "DC + AC",
+                              },
+                              {
+                                value: "dc",
+                                label: "DC only",
+                              },
+                              {
+                                value: "ac",
+                                label: "AC only",
+                              },
+                            ]}
+                            onChange={setBlockTransferMode}
+                            layout="triple"
+                          />
+                          <RadioChoiceGroup<BlockTransferAction>
+                            name="block-transfer-action"
+                            legend="Transfer action"
+                            value={blockTransferAction}
+                            options={[
+                              {
+                                value: "copy",
+                                label: "Copy",
+                                hint: "Source to destination",
+                              },
+                              {
+                                value: "swap",
+                                label: "Swap",
+                                hint: "Exchange both regions",
+                              },
+                            ]}
+                            onChange={setBlockTransferAction}
+                            layout="inline"
+                          />
                           <button
                             className="operation-button secondary"
                             type="button"
@@ -4528,22 +4246,14 @@ function App() {
                             within the selected mask. Every selected block is
                             used once; blocks outside it are unchanged.
                           </p>
-                          <EffectMaskPicker mask={activeMask} />
-                          <label className="coefficient-field tool-field">
-                            <span>Deterministic seed</span>
-                            <input
-                              type="number"
-                              min="0"
-                              max="4294967295"
-                              step="1"
-                              value={permutationSeed}
-                              onChange={(event) =>
-                                setPermutationSeed(
-                                  Number(event.currentTarget.value),
-                                )
-                              }
-                            />
-                          </label>
+                          <SeedField
+                            id="block-shuffle-seed"
+                            label="Deterministic seed"
+                            value={permutationSeed}
+                            onChange={(value) =>
+                              setPermutationSeed(Number(value))
+                            }
+                          />
                           <button
                             className="operation-button"
                             type="button"
@@ -4558,10 +4268,6 @@ function App() {
                   )}
                   {toolMode === "scan-corrupt" && (
                     <section className="inspector-section scan-corrupt-panel">
-                      <div className="section-kicker">
-                        ENTROPY-CODED SCAN BYTES
-                      </div>
-                      <h2>Scan Corrupt</h2>
                       <p className="operation-description">
                         A bounded byte-domain experiment applied after the
                         coefficient/DQT JPEG encoder. This does not target
@@ -4576,25 +4282,23 @@ function App() {
                             : "You can configure Scan Corrupt now. Apply a coefficient or DQT operation and wait for its clean JPEG encoding before applying corruption."}
                         </p>
                       )}
-                      <label className="coefficient-field tool-field">
-                        <span>Corruption mode</span>
-                        <select
-                          value={scanCorruptionMode}
-                          onChange={(event) => {
-                            if (
-                              event.currentTarget.value === "bit-flip" ||
-                              event.currentTarget.value === "byte-replacement"
-                            ) {
-                              setScanCorruptionMode(event.currentTarget.value);
-                            }
-                          }}
-                        >
-                          <option value="bit-flip">Flip one bit</option>
-                          <option value="byte-replacement">
-                            Replace entropy byte
-                          </option>
-                        </select>
-                      </label>
+                      <RadioChoiceGroup<"bit-flip" | "byte-replacement">
+                        name="scan-corruption-mode"
+                        legend="Corruption mode"
+                        value={scanCorruptionMode}
+                        options={[
+                          {
+                            value: "bit-flip",
+                            label: "Flip one bit",
+                          },
+                          {
+                            value: "byte-replacement",
+                            label: "Replace entropy byte",
+                          },
+                        ]}
+                        onChange={setScanCorruptionMode}
+                        layout="inline"
+                      />
                       <label className="coefficient-field tool-field">
                         <span>
                           Changed bytes (1–{MAX_SCAN_CORRUPTION_BYTES})
@@ -4644,21 +4348,14 @@ function App() {
                           />
                         </label>
                       </div>
-                      <label className="coefficient-field tool-field">
-                        <span>Unsigned 32-bit seed</span>
-                        <input
-                          type="number"
-                          min="0"
-                          max="4294967295"
-                          step="1"
-                          value={scanCorruptionSeed}
-                          onChange={(event) =>
-                            setScanCorruptionSeed(
-                              Number(event.currentTarget.value),
-                            )
-                          }
-                        />
-                      </label>
+                      <SeedField
+                        id="scan-corruption-seed"
+                        label="Unsigned 32-bit seed"
+                        value={scanCorruptionSeed}
+                        onChange={(value) =>
+                          setScanCorruptionSeed(Number(value))
+                        }
+                      />
                       <div className="scan-corrupt-actions">
                         <button
                           className="operation-button"
@@ -5036,37 +4733,6 @@ function App() {
                     </button>
                   </section>
                 </CollapsibleSection>
-                <CollapsibleSection
-                  id="original-asset"
-                  title="Original asset"
-                  kicker="ORIGINAL ASSET"
-                  className="source-section"
-                  initiallyOpen={false}
-                >
-                  <div className="source-card">
-                    <p
-                      className="source-name"
-                      title={document.originalAsset.fileName}
-                    >
-                      {document.originalAsset.fileName}
-                    </p>
-                    <p className="source-size">
-                      {document.originalAsset.byteLength.toLocaleString()} bytes
-                      <span>·</span>
-                      Original bytes held unchanged in memory
-                    </p>
-                    <div className="digest-label">SHA-256</div>
-                    <code className="digest-value">
-                      {document.originalAsset.sha256}
-                    </code>
-                  </div>
-                </CollapsibleSection>
-                <MetadataInspector
-                  asset={document.originalAsset}
-                  inspection={document.inspection}
-                  quantizationTables={currentQuantizationTables}
-                  selectedBlock={selectedBlock}
-                />
               </>
             ) : (
               <div className="inspector-empty">

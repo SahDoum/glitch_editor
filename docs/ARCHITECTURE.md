@@ -83,9 +83,11 @@ Shuffle show the exact mask they will use. The Inspector's selected 8×8 DCT
 block is visible only for Inspector. The block coordinate remains distinct
 from image-pixel coordinates.
 
-Mask input snaps to the selected component's visible 8×8 DCT-block
-footprints by default, accounting for sampling factors, or to the
-image-space MCU grid in MCU mode. The stored mask remains image-pixel
+Mask input snaps to the active Coefficient Glitch component's visible 8×8
+DCT-block footprints by default, accounting for sampling factors, or to the
+image-space MCU grid in MCU mode. Brush and Select do not own or store a
+component choice; the effect's target selector stays in the JPEG effect panel,
+and DCT snapping follows that target. The stored mask remains image-pixel
 geometry; worker operations map it to component blocks and do not treat
 snapped pixels as block or MCU coordinates. Brush overlays render each full
 visible component DCT block selected by the existing mask-coverage mapping,
@@ -95,19 +97,23 @@ change. This is a view of the existing image-pixel mask and does not change
 its stored shape or operation coverage.
 
 The toolbar is a vertical rail to the left of the canvas and presents
-contextual controls in the right column. Coefficient Glitch and block Shuffle retain an
-independently selected Brush or Select canvas tool, and both selections are
-shown in the toolbar. Block transfer and repeat use their own canvas gestures.
-The right column contains the tool panel followed by History and the collapsible document/JPEG
-information sections. History displays newer operations above older ones
-without changing their bottom-to-top replay order. UI collapse and panel
+contextual controls in the right column. Coefficient Glitch, Brush, and Select
+are grouped together so mask-authoring tools remain visible beside their
+primary effect. Brush and Select are enabled only while Coefficient Glitch is
+the selected panel; masks authored there remain available to operations that
+use a mask. Block transfer and repeat use their own canvas gestures.
+The right column contains the active tool panel followed by History. Original
+asset and JPEG structure details are rendered inside the Info tool panel rather
+than persistently below History. History displays newer operations above older
+ones without changing their bottom-to-top replay order. UI collapse and panel
 selection are presentation state, not document or operation data.
 
-Coefficient brush presets hold a component index and a single coefficient
-operation. The built-in presets select component 0 with AC zeroing and
-component 2 with AC scaling by two, respectively; a missing component is
-reported rather than substituted. Custom brushes are validated and saved
-locally under a separate storage key from multi-step recipes. Each brush's
+Coefficient brushes hold a single coefficient operation but no component
+index. The effect's current component selection is applied when the operation
+is committed, and the resulting JPEG operation records that component index.
+The built-in presets therefore do not force a component target. Custom
+brushes use the v2 local-storage schema, separate from multi-step recipes;
+v1 brushes are migrated by dropping their stored component index. Each brush's
 automatic-apply toggle is saved locally per brush: when enabled, a completed
 brush or rectangle mask immediately creates an ordinary undoable coefficient
 operation and clears the draft mask after the operation is accepted. If

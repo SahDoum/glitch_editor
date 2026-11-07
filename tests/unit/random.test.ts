@@ -1,7 +1,27 @@
-import { describe, expect, it } from "vitest";
-import { createSeededRandom } from "../../src/shared/random";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createRandomSeed, createSeededRandom } from "../../src/shared/random";
 
 describe("seeded random utility", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("creates an unsigned 32-bit seed", () => {
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    expect(createRandomSeed()).toBe(0x8000_0000);
+  });
+
+  it("includes the full unsigned 32-bit seed range", () => {
+    vi.spyOn(Math, "random").mockReturnValue(0.999999999);
+    expect(createRandomSeed()).toBeLessThanOrEqual(0xffff_ffff);
+  });
+
+  it("changes the seed when randomization repeats its current value", () => {
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    expect(createRandomSeed(0x8000_0000)).toBe(0x8000_0001);
+    expect(createRandomSeed(0xffff_ffff)).toBe(0x8000_0000);
+  });
+
   it("produces the same sequence for the same 32-bit seed", () => {
     const first = createSeededRandom(42);
     const second = createSeededRandom(42);

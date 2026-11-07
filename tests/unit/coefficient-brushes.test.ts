@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   BUILT_IN_COEFFICIENT_BRUSHES,
   COEFFICIENT_BRUSH_STORAGE_KEY,
+  LEGACY_COEFFICIENT_BRUSH_STORAGE_KEY,
   BRUSH_AUTO_APPLY_STORAGE_KEY,
   DEFAULT_USER_BRUSH,
   readCoefficientBrushes,
@@ -21,12 +22,11 @@ function memoryStorage() {
 }
 
 describe("coefficient brushes", () => {
-  it("defines the requested pixelate and component 2 scale settings", () => {
+  it("defines component-independent built-in brush settings", () => {
     expect(BUILT_IN_COEFFICIENT_BRUSHES).toEqual([
       {
         id: "pixelate",
         name: "Pixelate",
-        componentIndex: 0,
         step: {
           domain: "ac",
           mode: "zero",
@@ -37,8 +37,7 @@ describe("coefficient brushes", () => {
       },
       {
         id: "chroma-scale",
-        name: "Chroma scale",
-        componentIndex: 2,
+        name: "AC scale",
         step: {
           domain: "ac",
           mode: "scale",
@@ -50,12 +49,11 @@ describe("coefficient brushes", () => {
     ]);
   });
 
-  it("persists and restores a custom brush including component and seed", () => {
+  it("persists and restores a custom brush without a component target", () => {
     const storage = memoryStorage();
     const brush: CoefficientBrush = {
       id: "custom",
       name: "My brush",
-      componentIndex: 1,
       step: {
         domain: "ac",
         mode: "randomize",
@@ -72,6 +70,9 @@ describe("coefficient brushes", () => {
       ok: true,
       value: [brush],
     });
+    expect(storage.getItem(COEFFICIENT_BRUSH_STORAGE_KEY)).toBe(
+      JSON.stringify([brush]),
+    );
     expect(
       saveCoefficientBrush(storage, [brush], {
         ...brush,
@@ -79,6 +80,19 @@ describe("coefficient brushes", () => {
         name: "my BRUSH",
       }).ok,
     ).toBe(false);
+  });
+
+  it("rejects component targets in the current brush storage schema", () => {
+    const storage = memoryStorage();
+    storage.setItem(
+      COEFFICIENT_BRUSH_STORAGE_KEY,
+      JSON.stringify([{ ...DEFAULT_USER_BRUSH, componentIndex: 1 }]),
+    );
+
+    expect(readCoefficientBrushes(storage).ok).toBe(false);
+    expect(storage.getItem(COEFFICIENT_BRUSH_STORAGE_KEY)).toBe(
+      JSON.stringify([{ ...DEFAULT_USER_BRUSH, componentIndex: 1 }]),
+    );
   });
 
   it("rejects malformed or unavailable storage without overwriting it", () => {
@@ -91,6 +105,7 @@ describe("coefficient brushes", () => {
         getItem: () => {
           throw new Error("blocked");
         },
+        setItem: () => undefined,
       }).ok,
     ).toBe(false);
     expect(
@@ -113,7 +128,6 @@ describe("coefficient brushes", () => {
     const renamed = {
       ...DEFAULT_USER_BRUSH,
       name: "Custom name",
-      componentIndex: 2,
       step: { ...DEFAULT_USER_BRUSH.step, seed: 42 },
     };
     const changed = updateCoefficientBrush(storage, first.value, renamed);
@@ -132,6 +146,50 @@ describe("coefficient brushes", () => {
         name: "Pixelate",
       }).ok,
     ).toBe(false);
+  });
+
+  it("migrates saved v1 brushes by removing their component target", () => {
+    const storage = memoryStorage();
+    const legacy = {
+      ...DEFAULT_USER_BRUSH,
+      componentIndex: 2,
+    };
+    storage.setItem(
+      LEGACY_COEFFICIENT_BRUSH_STORAGE_KEY,
+      JSON.stringify([legacy]),
+    );
+
+    expect(readCoefficientBrushes(storage)).toEqual({
+      ok: true,
+      value: [DEFAULT_USER_BRUSH],
+    });
+    expect(storage.getItem(COEFFICIENT_BRUSH_STORAGE_KEY)).toBe(
+      JSON.stringify([DEFAULT_USER_BRUSH]),
+    );
+    expect(storage.getItem(LEGACY_COEFFICIENT_BRUSH_STORAGE_KEY)).toBe(
+      JSON.stringify([legacy]),
+    );
+  });
+
+  it("reports a failed v1 migration without discarding legacy brushes", () => {
+    const legacy = {
+      ...DEFAULT_USER_BRUSH,
+      componentIndex: 2,
+    };
+    const storage = {
+      getItem: (key: string) =>
+        key === LEGACY_COEFFICIENT_BRUSH_STORAGE_KEY
+          ? JSON.stringify([legacy])
+          : null,
+      setItem: () => {
+        throw new Error("blocked");
+      },
+    };
+
+    expect(readCoefficientBrushes(storage)).toMatchObject({
+      ok: false,
+      error: { code: "PROCESSING_FAILED" },
+    });
   });
 
   it("stores separate automatic-apply settings without overwriting invalid data", () => {

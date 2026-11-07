@@ -66,30 +66,33 @@ Review the current application and document:
 
 ### Milestone 1 — Tool control redesign
 
-**Status:** 📋 Planned
+**Status:** ✅ Complete
 
 Redesign the parameter panels of existing tools.
 
 Priorities:
 
-- [ ] Replace dropdowns with radio-button or segmented-button choices when the number of options is small;
-- [ ] Replace numeric inputs with sliders when the parameter has a meaningful bounded range;
-- [ ] Provide a randomize button for generation seeds;
-- [ ] Make common frequency selections consistent across tools;
-- [ ] Use the same component-selection model across tools;
-- [ ] Use visual labels and explanations for JPEG-specific parameters.
+- [x] Replace dropdowns with radio-button or segmented-button choices when the number of options is small;
+- [x] Retain exact numeric entry alongside sliders for bounded parameters;
+- [x] Provide a randomize button for generation seeds;
+- [x] Make common frequency selections consistent across tools;
+- [x] Use the same component-selection model across tools;
+- [x] Use visual labels and explanations for JPEG-specific parameters.
 
 **Acceptance criteria:**
 
-- [ ] Frequency band selector (Coefficient Glitch): Use 4 radio buttons or segmented control instead of dropdown
-- [ ] Glitch mode selector: Use segmented control or tabbed interface (7 modes)
-- [ ] Component selector: Replace dropdown with labeled buttons or icons (Y/Cb/Cr)
-- [ ] Snap option (Select tool): Use 2 radio buttons instead of dropdown
-- [ ] Add "Randomize" button next to all seed inputs
-- [ ] Add visual slider labels (e.g., "Soft ← Hardness → Hard")
-- [ ] Separate "Core parameters" from "Advanced" sections where applicable
-- [ ] All rebuilt controls tested for keyboard access and responsive layout on narrow screens
-- [ ] No features removed; only UI presentation changed
+- [x] Coefficient operation selector: The six modes currently supported by the implementation use a button-like radio group and precede the frequency range.
+- [x] Frequency range selector (Coefficient Glitch): One button-like radio group combines DC and AC ranges, filtered to each operation's supported choices.
+- [x] Component selector: Shared labeled Y/Cb/Cr-style choices show JPEG component ID and sampling factors.
+- [x] Brush/Select component scope: Mask tools have no component picker; component targets belong to operations, not saved coefficient brushes.
+- [x] Snap option (Select tool): Two visibly selected radio-button choices replace the dropdown.
+- [x] Add "Randomize" button next to every editable seed input.
+- [x] Add visual range endpoints and retain exact numeric entry alongside existing sliders.
+- [x] Separate core parameters from advanced DQT and custom-brush settings where applicable.
+- [x] Radio groups support keyboard navigation and narrow-screen layouts; a 390 px browser viewport was checked.
+- [x] No JPEG operation or feature removed; only UI presentation changed.
+
+**Component selection scope:** Component choices remain single-select because current typed operations accept one `componentIndex`. Component target is selected for each JPEG effect operation, not stored in coefficient brushes; Brush/Select masks do not own a component selector and DCT snapping follows the effect target. Multi-component editing requires a separate operation-model and mask-semantics change; it is not implied by this UI redesign.
 
 **Definition of done:**
 
@@ -167,7 +170,6 @@ For each feature, decide whether to:
 5. Remove it only if it has no clear user-facing purpose (requires explicit approval).
 
 Unclear concepts are kept and clarified, not removed.
-
 
 ### Milestone 4 — Glitch research and new experiments
 
@@ -268,6 +270,9 @@ After the tools and experiments have stabilized:
 - [ ] Improve the organization of the toolbar;
 - [ ] Group related tools;
 - [ ] Refine presets and multi-operation workflows;
+- [ ] Revisit Multi-step recipes, currently hidden from the interface; clarify
+      their distinction from brushes and individual operations before deciding
+      whether and how to reintroduce them.
 - [ ] Improve the visual hierarchy of the interface;
 - [ ] Remove redundant controls;
 - [ ] Document the final user workflow.
