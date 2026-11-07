@@ -6,6 +6,8 @@
 [ROADMAP.md](./ROADMAP.md); исходные идеи и чекпоинты —
 в [UX_SIMPLIFICATION_PROPOSAL.md](./UX_SIMPLIFICATION_PROPOSAL.md).
 
+**Быстрая справка:** Используйте [INTERFACE_INVENTORY_QUICK_REFERENCE.md](./INTERFACE_INVENTORY_QUICK_REFERENCE.md) для поиска инструментов и параметров. Полная инвентаризация: [MILESTONE_0_INVENTORY.md](./MILESTONE_0_INVENTORY.md).
+
 ## 1. Рабочее пространство
 
 - На стартовом экране показаны согласованные ссылки Instagram, Telegram и
