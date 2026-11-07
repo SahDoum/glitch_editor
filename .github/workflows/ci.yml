@@ -74,6 +74,8 @@ jobs:
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - name: Build repository site
         run: npm run build -- --base="/$REPOSITORY_NAME/"
