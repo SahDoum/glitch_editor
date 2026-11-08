@@ -593,8 +593,9 @@ output. Validate scan boundaries and preserve structural markers, restart
 markers, and byte-stuffing boundaries. If the implementation cannot prove
 the editable range or protect structural regions, reject that input before
 editing. These checks protect file structure; they do not guarantee that a
-decoder can recover a corrupted entropy stream. Do not claim progressive,
-arithmetic-coded, multi-scan, or general raw-byte editing support.
+decoder can recover a corrupted entropy stream. Scan Corrupt rejects
+Progressive JPEG; do not claim progressive, arithmetic-coded, multi-scan, or
+general raw-byte editing support for it.
 
 ## 9. Technical architecture
 
@@ -904,13 +905,30 @@ recorded in `docs/ROADMAP.md` and ADR-005.
 - structural boundary protection, preview-decode diagnostics, retained export
   for undecodable experiments, and undo to the clean encoded result.
 
+### Progressive JPEG support
+
+- Import accepts 8-bit baseline sequential and progressive (SOF2) Huffman JPEG,
+  grayscale or three-component. All progressive scans are consumed by
+  libjpeg-turbo, giving complete quantized coefficients to the existing
+  operations; damaged or truncated progressive data is rejected.
+- Export offers an output mode, baseline or progressive, chosen in the Save
+  dialog and independent of the source process. Progressive output uses the
+  libjpeg-turbo default progressive script (no custom scripts) and is a
+  coefficient re-encode, not an RGB round trip.
+- Scan Corrupt remains baseline-only; its results are always saved as baseline.
+- Progressive-specific glitches (scan-level corruption, dropping or
+  truncating refinement scans, spectral-band scan reordering) are not
+  implemented yet; the multi-scan structure is the basis for them.
+
 ### Milestone 9 --- Project persistence and polish
 
 - versioned local project persistence and remaining product polish.
 
 Two-image transplant, cross-component conversion, stream transplant,
 general-purpose raw-byte editing, and progressive/multi-scan support remain
-deferred. The block-transfer milestone edits quantized coefficients within a
+deferred. (Progressive JPEG import/export of coefficient edits is supported:
+see "Progressive JPEG" below; only progressive scan corruption and custom scan
+scripts are deferred.) The block-transfer milestone edits quantized coefficients within a
 single component; the scan-corruption milestone edits encoded scan bytes and
 may produce an undecodable JPEG. These are separate operation domains and
 must not be presented as one effect.

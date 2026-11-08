@@ -12,6 +12,7 @@ import {
   type Ref,
   type ReactNode,
 } from "react";
+import type { JpegOutputMode } from "./jpeg/encode-options";
 import {
   encodeJpegCoefficients,
   createJpegCoefficientReader,
@@ -767,8 +768,11 @@ function MetadataInspector({
         </div>
         {inspection.scans.map((scan, index) => (
           <p className="scan-range" key={`${scan.dataStartOffset}-${index}`}>
-            Scan {index + 1} entropy-coded data: [
-            {formatOffset(scan.dataStartOffset)},{" "}
+            Scan {index + 1}
+            {inspection.process === "Progressive DCT Huffman"
+              ? ` (Ss ${scan.spectralStart}–Se ${scan.spectralEnd}, Ah ${scan.approximationHigh}/Al ${scan.approximationLow})`
+              : ""}{" "}
+            entropy-coded data: [{formatOffset(scan.dataStartOffset)},{" "}
             {formatOffset(scan.dataEndOffset)})
           </p>
         ))}
@@ -1306,6 +1310,8 @@ function App() {
   const [loadingMessage, setLoadingMessage] = useState("Inspecting JPEG…");
   const [isSavingProject, setIsSavingProject] = useState(false);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
+  const [exportMode, setExportMode] = useState<JpegOutputMode>("baseline");
+  const [isExporting, setIsExporting] = useState(false);
   const [projectNotice, setProjectNotice] = useState("");
   const [isEncoding, setIsEncoding] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -3523,14 +3529,52 @@ function App() {
     if (history) updateHistory(history.redo());
   }
 
-  function downloadEditedJpeg() {
+  async function downloadEditedJpeg() {
     if (!editedBytes || !document) return;
-    const output = new ArrayBuffer(editedBytes.byteLength);
-    new Uint8Array(output).set(editedBytes);
+    let exportBytes = editedBytes;
+    // Scan Corrupt output is a baseline byte experiment, so progressive
+    // export re-encodes the same operations from the original coefficients.
+    const effectiveMode =
+      scanCorruptionReports.length > 0 ? "baseline" : exportMode;
+    if (effectiveMode === "progressive") {
+      setIsExporting(true);
+      setErrorMessage("");
+      const encoded = await encodeJpegCoefficients(
+        document.originalAsset.readBytes(),
+        {
+          width: document.inspection.width,
+          height: document.inspection.height,
+          components: document.inspection.components.map(
+            ({
+              id,
+              horizontalSampling,
+              verticalSampling,
+              quantizationTable,
+            }) => ({
+              id,
+              horizontalSampling,
+              verticalSampling,
+              quantizationTable,
+            }),
+          ),
+        },
+        jpegOperations,
+        undefined,
+        { mode: "progressive" },
+      );
+      setIsExporting(false);
+      if (!encoded.ok) {
+        setErrorMessage(encoded.error.message);
+        return;
+      }
+      exportBytes = encoded.value;
+    }
+    const output = new ArrayBuffer(exportBytes.byteLength);
+    new Uint8Array(output).set(exportBytes);
     const url = URL.createObjectURL(new Blob([output], { type: "image/jpeg" }));
     const link = window.document.createElement("a");
     link.href = url;
-    link.download = `${document.originalAsset.fileName.replace(/\.[^.]+$/, "")}.edited.jpg`;
+    link.download = `${document.originalAsset.fileName.replace(/\.[^.]+$/, "")}.edited${effectiveMode === "progressive" ? ".progressive" : ""}.jpg`;
     link.hidden = true;
     window.document.body.append(link);
     link.click();
@@ -3907,12 +3951,34 @@ function App() {
             the exact original JPEG and editable operations. The original file
             is never overwritten.
           </p>
+          <label className="save-dialog-mode">
+            JPEG output mode
+            <select
+              value={scanCorruptionReports.length > 0 ? "baseline" : exportMode}
+              disabled={scanCorruptionReports.length > 0}
+              onChange={(event) =>
+                setExportMode(
+                  event.target.value === "progressive"
+                    ? "progressive"
+                    : "baseline",
+                )
+              }
+            >
+              <option value="baseline">Baseline (sequential)</option>
+              <option value="progressive">Progressive</option>
+            </select>
+          </label>
+          <p className="save-dialog-note">
+            {scanCorruptionReports.length > 0
+              ? "Scan Corrupt results are baseline byte experiments and are always saved as baseline."
+              : "Coefficients are written as they are; only the scan layout changes, with no RGB round trip. Progressive output does not depend on the source JPEG type."}
+          </p>
           <div className="save-dialog-actions">
             <button
               className="open-button"
               type="button"
               autoFocus
-              disabled={!editedBytes || isEncoding}
+              disabled={!editedBytes || isEncoding || isExporting}
               title={
                 editedBytes
                   ? "Export the current JPEG experiment"
@@ -3920,7 +3986,7 @@ function App() {
               }
               onClick={() => {
                 setIsSaveDialogOpen(false);
-                downloadEditedJpeg();
+                void downloadEditedJpeg();
               }}
             >
               Save image (.jpg)
@@ -5607,8 +5673,8 @@ function App() {
                 {errorMessage && (
                   <p className="support-note">
                     Supported for coefficient inspection: 8-bit baseline
-                    sequential Huffman JPEG, grayscale or three-component,
-                    single interleaved scan.
+                    sequential (single interleaved scan) or progressive Huffman
+                    JPEG, grayscale or three-component.
                   </p>
                 )}
               </div>

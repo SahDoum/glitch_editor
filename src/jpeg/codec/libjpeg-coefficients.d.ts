@@ -57,7 +57,7 @@ interface LibjpegCoefficientsModule {
     values: number,
     valuesSize: number,
   ): number;
-  _coefficient_encode(): number;
+  _coefficient_encode(progressive: number): number;
   _coefficient_output_pointer(): number;
   _coefficient_output_size(): number;
   _coefficient_close(): void;

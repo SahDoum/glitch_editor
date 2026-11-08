@@ -20,6 +20,7 @@ import type {
   CoefficientWorkerResponse,
 } from "./coefficient-worker-protocol";
 import type { JpegBlockGeometry } from "./block-geometry";
+import { isJpegOutputMode } from "./encode-options";
 
 const CODEC_ERRORS: Record<number, string> = {
   [-1]: "libjpeg-turbo could not decode coefficient data from this JPEG.",
@@ -33,7 +34,7 @@ const CODEC_ERRORS: Record<number, string> = {
 };
 const MAX_JPEG_BYTES = 50 * 1024 * 1024;
 // Bump when the generated codec changes so older cached WASM cannot be reused.
-const CODEC_VERSION = "engraving-1";
+const CODEC_VERSION = "progressive-1";
 const MAX_EDITED_BLOCKS = 8 * 1024 * 1024;
 const MAX_EDIT_COUNT = MAX_GLITCH_OPERATIONS;
 const FREQUENCY_BAND_INDEX = {
@@ -136,8 +137,12 @@ function isRequest(value: unknown): value is CoefficientWorkerRequest {
   const geometry: unknown = Reflect.get(value, "geometry");
   const operations: unknown = Reflect.get(value, "operations");
   const bytes: unknown = Reflect.get(value, "bytes");
+  const options: unknown = Reflect.get(value, "options");
   if (
     value.type !== "encode" ||
+    typeof options !== "object" ||
+    options === null ||
+    !isJpegOutputMode(Reflect.get(options, "mode")) ||
     !(bytes instanceof ArrayBuffer) ||
     !isGeometry(geometry) ||
     !Array.isArray(operations) ||
@@ -716,7 +721,9 @@ async function handleRequest(
         }
       }
 
-      status = codec._coefficient_encode();
+      status = codec._coefficient_encode(
+        request.options.mode === "progressive" ? 1 : 0,
+      );
       if (status !== 0) {
         return {
           id: request.id,

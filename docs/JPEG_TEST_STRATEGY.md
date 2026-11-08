@@ -123,18 +123,34 @@ Each fixture should have a manifest entry containing:
 ### Milestone 1 capability
 
 The current inspector accepts 8-bit baseline sequential Huffman JPEGs with
-one interleaved scan and either one grayscale or three components. It parses
+one interleaved scan, and 8-bit progressive (SOF2) Huffman JPEGs with any
+number of scans (spectral selection and successive approximation parameters are
+validated and recorded per scan), each with either one grayscale or three
+components. It parses
 marker boundaries, byte-stuffed entropy data, and restart markers, but does
 not entropy-decode or expose quantized DCT coefficients. The pixel preview is
 decoded separately by the browser and must not be used as evidence of
-coefficient correctness. Progressive, arithmetic-coded, non-8-bit, and
-multiple-scan files are unsupported and must fail visibly. The import limits
+coefficient correctness. Arithmetic-coded, non-8-bit, other SOF processes, and
+multiple-scan sequential files are unsupported and must fail visibly. The import limits
 are 50 MiB per JPEG file, 40 megapixels per frame, and 10,000 marker entries.
 Parser tests cover the pixel and marker limits; import tests verify oversized
 files are rejected before reading.
 
-The libjpeg-turbo coefficient bridge accepts only 8-bit baseline sequential
-Huffman JPEGs with one interleaved scan and one or three components. It rejects
+The libjpeg-turbo coefficient bridge accepts 8-bit baseline sequential
+Huffman JPEGs with one interleaved scan and 8-bit progressive Huffman JPEGs,
+with one or three components. Progressive files that libjpeg had to repair are
+rejected. Output can be baseline or progressive
+(`jpeg_simple_progression()`), independent of the source process.
+`tests/unit/progressive-jpeg.test.ts` loads the shipped WASM bridge in Node
+(`tests/helpers/codec-harness.ts`) and covers all four input/output
+combinations (coefficient, geometry, sampling and quantization-table equality;
+SOF marker and scan count), operations on progressive inputs (DC, AC,
+frequency isolation, component-specific, DQT) compared against baseline
+replay, and pixel equality via the independent `djpeg` decoder when installed
+(skipped silently otherwise). Progressive fixtures are lossless `jpegtran
+-progressive` transcodes of the baseline fixtures. Browser preview of
+progressive output is exercised only manually; it is not part of the automated
+suite. It rejects
 coefficient arrays exceeding 256 MiB. Coefficients are read in natural 8×8
 block order; image-space masks map to visible component blocks, distinct from
 MCU padding. Coordinate mapping and mask coverage are tested for grayscale
@@ -154,8 +170,9 @@ quantized coefficients; requantization uses
 `round(oldCoefficient × oldQuantizer / newQuantizer)` with baseline coefficient
 range clamping. Neither recovers information lost before import. Every edit
 creates new encoded bytes without mutating the source. The UI can export those
-bytes when browser preview decoding fails. Progressive, arithmetic-coded,
-multi-scan, and other unsupported processes remain rejected. Saved APP/COM
+bytes when browser preview decoding fails. Arithmetic-coded,
+sequential multi-scan, and other unsupported processes remain rejected.
+Scan Corrupt additionally rejects Progressive JPEG input. Saved APP/COM
 markers are copied except APP0 and APP14, so metadata preservation is not
 guaranteed.
 

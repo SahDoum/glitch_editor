@@ -4,7 +4,7 @@
   "generator": {
     "name": "ImageMagick",
     "version": "7.1.1-38",
-    "jpegProcess": "baseline sequential DCT Huffman"
+    "jpegProcess": "baseline sequential DCT Huffman; *-progressive.jpg files are lossless `jpegtran -progressive -copy all` transcodes of the matching baseline fixtures"
   },
   "fixtures": [
     {
@@ -76,6 +76,90 @@
       "scanCount": 1,
       "supported": true,
       "description": "Tiny synthetic grayscale gradient."
+    },
+    {
+      "file": "synthetic-color-420-progressive.jpg",
+      "sha256": "1a7ec9d358d4d5a80d4ee217c54c1fa650794ad29f8f5415cd1299a479c77a7b",
+      "process": "progressive DCT Huffman",
+      "precision": 8,
+      "width": 16,
+      "height": 16,
+      "components": 3,
+      "samplingFactors": ["2x2", "1x1", "1x1"],
+      "restartInterval": 0,
+      "scanCount": 10,
+      "supported": true,
+      "description": "Small synthetic RGB color-block pattern with 4:2:0 sampling Lossless jpegtran -progressive transcode of the baseline fixture (identical coefficients)."
+    },
+    {
+      "file": "synthetic-color-444-progressive.jpg",
+      "sha256": "93c1689b738c9a0e5203ecf7208a2680ed9582627edfba4d3175e6e5e6d49208",
+      "process": "progressive DCT Huffman",
+      "precision": 8,
+      "width": 16,
+      "height": 16,
+      "components": 3,
+      "samplingFactors": ["1x1", "1x1", "1x1"],
+      "restartInterval": 0,
+      "scanCount": 10,
+      "supported": true,
+      "description": "Small synthetic RGB pattern with 4:4:4 sampling Lossless jpegtran -progressive transcode of the baseline fixture (identical coefficients)."
+    },
+    {
+      "file": "synthetic-grayscale-progressive.jpg",
+      "sha256": "f05885b5d9a8a6dc829586577ebb5a4fa5b51c70003982bf633120939239d4f2",
+      "process": "progressive DCT Huffman",
+      "precision": 8,
+      "width": 8,
+      "height": 8,
+      "components": 1,
+      "samplingFactors": ["1x1"],
+      "restartInterval": 0,
+      "scanCount": 6,
+      "supported": true,
+      "description": "Tiny synthetic grayscale gradient Lossless jpegtran -progressive transcode of the baseline fixture (identical coefficients)."
+    },
+    {
+      "file": "synthetic-color-odd-420-progressive.jpg",
+      "sha256": "6b9a3b8ed3b44d4f9fd38ef87f5f068d4394c4dad0a4cf68e13595b608aed13f",
+      "process": "progressive DCT Huffman",
+      "precision": 8,
+      "width": 17,
+      "height": 9,
+      "components": 3,
+      "samplingFactors": ["2x2", "1x1", "1x1"],
+      "restartInterval": 0,
+      "scanCount": 10,
+      "supported": true,
+      "description": "Small synthetic RGB pattern with odd dimensions and 4:2:0 sampling Lossless jpegtran -progressive transcode of the baseline fixture (identical coefficients)."
+    },
+    {
+      "file": "synthetic-texture-420.jpg",
+      "sha256": "ab210866ff2deadef36428cf17a72b0a97987f52d2d19093803c146097ad550a",
+      "process": "baseline sequential DCT Huffman",
+      "precision": 8,
+      "width": 45,
+      "height": 37,
+      "components": 3,
+      "samplingFactors": ["2x2", "1x1", "1x1"],
+      "restartInterval": 0,
+      "scanCount": 1,
+      "supported": true,
+      "description": "Synthetic ImageMagick plasma texture (45x37, 4:2:0, odd dimensions) with rich AC content, encoded with cjpeg quality 92."
+    },
+    {
+      "file": "synthetic-texture-420-progressive.jpg",
+      "sha256": "f78afb73614d42f5d95fc38ede1bfcf1ee2f15c1c5305d8ce22485830c3a2013",
+      "process": "progressive DCT Huffman",
+      "precision": 8,
+      "width": 45,
+      "height": 37,
+      "components": 3,
+      "samplingFactors": ["2x2", "1x1", "1x1"],
+      "restartInterval": 0,
+      "scanCount": 10,
+      "supported": true,
+      "description": "Synthetic ImageMagick plasma texture (45x37, 4:2:0, odd dimensions) with rich AC content, encoded with cjpeg quality 92; progressive variant is a lossless jpegtran -progressive transcode."
     }
   ]
 }

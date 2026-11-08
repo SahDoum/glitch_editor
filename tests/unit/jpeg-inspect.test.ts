@@ -342,20 +342,109 @@ describe("JPEG inspector", () => {
     expect(source).toEqual(original);
   });
 
-  it("reports progressive JPEGs as unsupported", async () => {
-    const bytes = await fixtureBytes("synthetic-color-420.jpg");
-    const frame = inspectJpeg(bytes);
-    expect(frame.ok).toBe(true);
-    if (!frame.ok) return;
+  it.each([0xc1, 0xc3, 0xca])(
+    "reports SOF marker 0x%s as an unsupported JPEG process",
+    async (sofCode) => {
+      const bytes = await fixtureBytes("synthetic-color-420.jpg");
+      const frame = inspectJpeg(bytes);
+      expect(frame.ok).toBe(true);
+      if (!frame.ok) return;
 
-    const frameStart = frame.value.markers.find(
-      (marker) => marker.name === "SOF0",
-    )!.startOffset;
-    bytes[frameStart + 1] = 0xc2;
+      const frameStart = frame.value.markers.find(
+        (marker) => marker.name === "SOF0",
+      )!.startOffset;
+      bytes[frameStart + 1] = sofCode;
+
+      expect(inspectJpeg(bytes)).toMatchObject({
+        ok: false,
+        error: { code: "UNSUPPORTED_FORMAT" },
+      });
+    },
+  );
+
+  it.each([
+    ["synthetic-color-420-progressive.jpg", 3, 10],
+    ["synthetic-color-444-progressive.jpg", 3, 10],
+    ["synthetic-grayscale-progressive.jpg", 1, 6],
+    ["synthetic-color-odd-420-progressive.jpg", 3, 10],
+  ])("inspects progressive fixture %s", async (file, components, scanCount) => {
+    const baselineFile = file.replace("-progressive", "");
+    const progressive = inspectJpeg(await fixtureBytes(file));
+    const baseline = inspectJpeg(await fixtureBytes(baselineFile));
+    expect(progressive.ok && baseline.ok).toBe(true);
+    if (!progressive.ok || !baseline.ok) return;
+
+    expect(progressive.value.process).toBe("Progressive DCT Huffman");
+    expect(progressive.value.markers.some(({ name }) => name === "SOF2")).toBe(
+      true,
+    );
+    expect(progressive.value.components).toHaveLength(components);
+    expect(progressive.value.scans).toHaveLength(scanCount);
+    expect(progressive.value.scans[0]).toMatchObject({
+      spectralStart: 0,
+      spectralEnd: 0,
+      approximationHigh: 0,
+    });
+    expect(
+      progressive.value.scans.some(
+        (scan) => scan.spectralStart > 0 && scan.approximationHigh > 0,
+      ),
+    ).toBe(true);
+    expect(progressive.value.quantizationTables).toEqual(
+      baseline.value.quantizationTables,
+    );
+    for (const key of [
+      "width",
+      "height",
+      "mcuWidth",
+      "mcuHeight",
+      "mcuColumns",
+      "mcuRows",
+      "blockWidth",
+      "blockHeight",
+    ] as const) {
+      expect(progressive.value[key]).toBe(baseline.value[key]);
+    }
+    expect(
+      progressive.value.components.map(
+        ({ id, horizontalSampling, verticalSampling, quantizationTable }) => ({
+          id,
+          horizontalSampling,
+          verticalSampling,
+          quantizationTable,
+        }),
+      ),
+    ).toEqual(
+      baseline.value.components.map(
+        ({ id, horizontalSampling, verticalSampling, quantizationTable }) => ({
+          id,
+          horizontalSampling,
+          verticalSampling,
+          quantizationTable,
+        }),
+      ),
+    );
+  });
+
+  it("rejects a progressive scan with invalid spectral parameters", async () => {
+    const bytes = await fixtureBytes("synthetic-color-420-progressive.jpg");
+    const parsed = inspectJpeg(bytes);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const firstScan = parsed.value.markers.find(({ name }) => name === "SOS")!;
+    // Ss/Se/Ah|Al are the last three bytes of the scan header.
+    bytes[firstScan.endOffset - 2] = 5;
 
     expect(inspectJpeg(bytes)).toMatchObject({
       ok: false,
-      error: { code: "UNSUPPORTED_FORMAT" },
+      error: { code: "MALFORMED_JPEG" },
+    });
+  });
+
+  it("rejects a truncated progressive JPEG", async () => {
+    const bytes = await fixtureBytes("synthetic-color-420-progressive.jpg");
+    expect(inspectJpeg(bytes.subarray(0, bytes.length - 30))).toMatchObject({
+      ok: false,
     });
   });
 

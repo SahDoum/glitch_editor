@@ -245,12 +245,18 @@ int coefficient_open(const unsigned char *input, unsigned int input_size) {
     coefficient_close();
     return CODEC_MALFORMED;
   }
-  if (state.cinfo.data_precision != 8 || state.cinfo.progressive_mode ||
-      state.cinfo.arith_code || jpeg_has_multiple_scans(&state.cinfo) ||
-      state.cinfo.comps_in_scan != state.cinfo.num_components ||
-      state.cinfo.Ss != 0 || state.cinfo.Se != DCTSIZE2 - 1 ||
-      state.cinfo.Ah != 0 || state.cinfo.Al != 0 ||
+  if (state.cinfo.data_precision != 8 || state.cinfo.arith_code ||
       (state.cinfo.num_components != 1 && state.cinfo.num_components != 3)) {
+    coefficient_close();
+    return CODEC_UNSUPPORTED;
+  }
+  /* Progressive input is accepted: jpeg_read_coefficients() below consumes
+     every scan and returns the fully assembled coefficient arrays. */
+  if (!state.cinfo.progressive_mode &&
+      (jpeg_has_multiple_scans(&state.cinfo) ||
+       state.cinfo.comps_in_scan != state.cinfo.num_components ||
+       state.cinfo.Ss != 0 || state.cinfo.Se != DCTSIZE2 - 1 ||
+       state.cinfo.Ah != 0 || state.cinfo.Al != 0)) {
     coefficient_close();
     return CODEC_UNSUPPORTED;
   }
@@ -283,6 +289,12 @@ int coefficient_open(const unsigned char *input, unsigned int input_size) {
 
   state.coefficients = jpeg_read_coefficients(&state.cinfo);
   if (state.coefficients == NULL) {
+    coefficient_close();
+    return CODEC_MALFORMED;
+  }
+  /* A progressive stream that libjpeg had to repair (truncated or corrupt
+     scan data) would yield partial coefficients; refuse it instead. */
+  if (state.cinfo.progressive_mode && state.error.pub.num_warnings > 0) {
     coefficient_close();
     return CODEC_MALFORMED;
   }
@@ -794,7 +806,7 @@ int coefficient_set_quantization(unsigned int table_id, int semantics,
   return CODEC_OK;
 }
 
-int coefficient_encode(void) {
+int coefficient_encode(int progressive) {
   struct jpeg_compress_struct compressor;
   struct bridge_error_mgr compressor_error;
   unsigned char *output = NULL;
@@ -830,6 +842,9 @@ int coefficient_encode(void) {
   compressor_created = 1;
   jpeg_mem_dest(&compressor, &output, &output_size);
   jpeg_copy_critical_parameters(&state.cinfo, &compressor);
+  if (progressive) {
+    jpeg_simple_progression(&compressor);
+  }
   for (int table = 0; table < NUM_QUANT_TBLS; table++) {
     if (!state.has_quantization_table[table] ||
         compressor.quant_tbl_ptrs[table] == NULL) {

@@ -1,6 +1,7 @@
 import type { Result } from "../shared/result";
 import type { JpegGlitchOperation } from "../operations/jpeg-glitch";
 import type { JpegBlockGeometry } from "./block-geometry";
+import type { EncodeOptions } from "./encode-options";
 
 export type CoefficientWorkerRequest =
   | {
@@ -21,6 +22,7 @@ export type CoefficientWorkerRequest =
       bytes: ArrayBuffer;
       geometry: JpegBlockGeometry;
       operations: readonly JpegGlitchOperation[];
+      options: EncodeOptions;
     };
 
 export type CoefficientWorkerValue =

@@ -5,6 +5,10 @@ import type {
 } from "../jpeg/coefficient-worker-protocol";
 import type { JpegGlitchOperation } from "../operations/jpeg-glitch";
 import type { JpegBlockGeometry } from "../jpeg/block-geometry";
+import {
+  DEFAULT_ENCODE_OPTIONS,
+  type EncodeOptions,
+} from "../jpeg/encode-options";
 
 type CoefficientWorkerRequestPayload =
   | { type: "open"; bytes: ArrayBuffer }
@@ -30,6 +34,7 @@ export async function encodeJpegCoefficients(
   geometry: JpegBlockGeometry,
   operations: readonly JpegGlitchOperation[],
   signal?: AbortSignal,
+  options: EncodeOptions = DEFAULT_ENCODE_OPTIONS,
 ): Promise<Result<Uint8Array>> {
   if (typeof Worker === "undefined") {
     return failure({
@@ -130,6 +135,7 @@ export async function encodeJpegCoefficients(
           bytes: inputBuffer,
           geometry,
           operations,
+          options,
         },
         [inputBuffer],
       );

@@ -36,7 +36,14 @@ export interface JpegScan {
     dcHuffmanTable: number;
     acHuffmanTable: number;
   }>;
+  spectralStart: number;
+  spectralEnd: number;
+  approximationHigh: number;
+  approximationLow: number;
 }
+
+export type JpegProcess =
+  "Baseline sequential DCT Huffman" | "Progressive DCT Huffman";
 
 export interface JpegQuantizationTable {
   id: number;
@@ -44,7 +51,7 @@ export interface JpegQuantizationTable {
 }
 
 export interface JpegInspection {
-  process: "Baseline sequential DCT Huffman";
+  process: JpegProcess;
   width: number;
   height: number;
   precision: number;
@@ -338,7 +345,17 @@ function parseScanHeader(
   frame: Frame,
   quantizationTables: ReadonlyMap<number, number[]>,
   huffmanTables: Set<string>,
-): Result<JpegScan["components"]> {
+  progressive: boolean,
+): Result<
+  Pick<
+    JpegScan,
+    | "components"
+    | "spectralStart"
+    | "spectralEnd"
+    | "approximationHigh"
+    | "approximationLow"
+  >
+> {
   const payloadLength = segmentEnd - payloadStart;
   if (payloadLength < 4) {
     return malformed("The JPEG scan header is truncated.");
@@ -372,11 +389,13 @@ function parseScanHeader(
         "A JPEG component refers to a missing quantization table.",
       );
     }
-    if (
-      !huffmanTables.has(`0:${dcTable}`) ||
-      !huffmanTables.has(`1:${acTable}`)
-    ) {
-      return malformed("The JPEG scan refers to a missing Huffman table.");
+    if (!progressive) {
+      if (
+        !huffmanTables.has(`0:${dcTable}`) ||
+        !huffmanTables.has(`1:${acTable}`)
+      ) {
+        return malformed("The JPEG scan refers to a missing Huffman table.");
+      }
     }
 
     seenIds.add(id);
@@ -390,6 +409,44 @@ function parseScanHeader(
   const spectralStart = bytes[payloadStart + 1 + componentCount * 2]!;
   const spectralEnd = bytes[payloadStart + 2 + componentCount * 2]!;
   const approximation = bytes[payloadStart + 3 + componentCount * 2]!;
+  const approximationHigh = approximation >> 4;
+  const approximationLow = approximation & 0x0f;
+  const scanParameters = {
+    components: scanComponents,
+    spectralStart,
+    spectralEnd,
+    approximationHigh,
+    approximationLow,
+  };
+
+  if (progressive) {
+    const isDcScan = spectralStart === 0;
+    const hasValidBands = isDcScan
+      ? spectralEnd === 0
+      : spectralEnd >= spectralStart &&
+        spectralEnd <= 63 &&
+        scanComponents.length === 1;
+    const hasValidApproximation =
+      approximationLow <= 13 &&
+      (approximationHigh === 0 || approximationHigh === approximationLow + 1);
+    if (!hasValidBands || !hasValidApproximation) {
+      return malformed("The progressive JPEG scan parameters are invalid.");
+    }
+    // Huffman tables are only used for first scans; refinement DC scans are
+    // raw bits and refinement AC scans reuse the AC table.
+    for (const component of scanComponents) {
+      const needsDc = isDcScan && approximationHigh === 0;
+      const needsAc = !isDcScan;
+      if (
+        (needsDc && !huffmanTables.has(`0:${component.dcHuffmanTable}`)) ||
+        (needsAc && !huffmanTables.has(`1:${component.acHuffmanTable}`))
+      ) {
+        return malformed("The JPEG scan refers to a missing Huffman table.");
+      }
+    }
+    return success(scanParameters);
+  }
+
   if (
     componentCount !== frame.components.length ||
     scanComponents.length !== frame.components.length ||
@@ -402,7 +459,7 @@ function parseScanHeader(
     );
   }
 
-  return success(scanComponents);
+  return success(scanParameters);
 }
 
 export function inspectJpeg(bytes: Uint8Array): Result<JpegInspection> {
@@ -427,6 +484,7 @@ export function inspectJpeg(bytes: Uint8Array): Result<JpegInspection> {
   const quantizationTables = new Map<number, number[]>();
   const huffmanTables = new Set<string>();
   let frame: Frame | null = null;
+  let progressive = false;
   let restartInterval = 0;
   let offset = 2;
   let sawEnd = false;
@@ -517,11 +575,12 @@ export function inspectJpeg(bytes: Uint8Array): Result<JpegInspection> {
     });
 
     if (isStartOfFrame(code)) {
-      if (code !== 0xc0) {
+      if (code !== 0xc0 && code !== 0xc2) {
         return unsupported(
-          "Only baseline sequential DCT Huffman JPEG images are supported; progressive and other JPEG processes are not supported.",
+          "Only baseline sequential and progressive DCT Huffman JPEG images are supported; other JPEG processes are not supported.",
         );
       }
+      progressive = code === 0xc2;
       if (frame) {
         return malformed("The JPEG contains more than one frame header.");
       }
@@ -566,6 +625,7 @@ export function inspectJpeg(bytes: Uint8Array): Result<JpegInspection> {
       frame,
       quantizationTables,
       huffmanTables,
+      progressive,
     );
     if (!scanHeader.ok) return scanHeader;
 
@@ -636,7 +696,7 @@ export function inspectJpeg(bytes: Uint8Array): Result<JpegInspection> {
         dataEndOffset: restartStart,
         entropyRanges,
         endMarkerOffset: restartStart,
-        components: scanHeader.value,
+        ...scanHeader.value,
       });
       offset = restartStart;
       foundMarker = true;
@@ -654,7 +714,7 @@ export function inspectJpeg(bytes: Uint8Array): Result<JpegInspection> {
   if (!frame || scans.length === 0) {
     return malformed("The JPEG is missing a frame or entropy-coded scan.");
   }
-  if (scans.length !== 1) {
+  if (!progressive && scans.length !== 1) {
     return unsupported("JPEG images with multiple scans are not supported.");
   }
 
@@ -669,20 +729,34 @@ export function inspectJpeg(bytes: Uint8Array): Result<JpegInspection> {
   const mcuColumns = Math.ceil(frame.width / mcuWidth);
   const mcuRows = Math.ceil(frame.height / mcuHeight);
   const blockGridComponent = frame.components[0]!;
-  const scanTables = new Map(
-    scans[0]!.components.map((component) => [component.id, component]),
-  );
+  const tableSelectors = (id: number, band: "dc" | "ac") => {
+    const scan = scans.find(
+      (candidate) =>
+        (band === "dc"
+          ? candidate.spectralStart === 0
+          : candidate.spectralStart > 0) &&
+        candidate.components.some((component) => component.id === id),
+    );
+    const selectors = (scan ?? scans[0]!).components.find(
+      (component) => component.id === id,
+    );
+    return band === "dc"
+      ? (selectors?.dcHuffmanTable ?? 0)
+      : (selectors?.acHuffmanTable ?? 0);
+  };
   const components: JpegComponent[] = frame.components.map((component) => ({
     ...component,
-    dcHuffmanTable: scanTables.get(component.id)!.dcHuffmanTable,
-    acHuffmanTable: scanTables.get(component.id)!.acHuffmanTable,
+    dcHuffmanTable: tableSelectors(component.id, "dc"),
+    acHuffmanTable: tableSelectors(component.id, "ac"),
     blockColumns: mcuColumns * component.horizontalSampling,
     blockRows: mcuRows * component.verticalSampling,
   }));
   const gridComponent = components[0]!;
 
   return success({
-    process: "Baseline sequential DCT Huffman",
+    process: progressive
+      ? "Progressive DCT Huffman"
+      : "Baseline sequential DCT Huffman",
     width: frame.width,
     height: frame.height,
     precision: frame.precision,

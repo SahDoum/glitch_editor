@@ -43,6 +43,21 @@ const baseParameters: ScanCorruptionParameters = {
 };
 
 describe("entropy-coded scan corruption", () => {
+  it("rejects Progressive JPEG input with an explanatory error", async () => {
+    const source = await fixtureBytes("synthetic-color-420-progressive.jpg");
+    const before = source.slice();
+    const result = corruptEntropyScan(source, [baseParameters]);
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "UNSUPPORTED_FORMAT",
+        message: expect.stringContaining("does not support Progressive JPEG"),
+      },
+    });
+    expect(source).toEqual(before);
+  });
+
   it.skipIf(!process.env.JPEG_INDEPENDENT_DECODER)(
     "keeps a clean JPEG independently decodable and retains a seeded corruption that fails decoding",
     async () => {

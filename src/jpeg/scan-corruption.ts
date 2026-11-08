@@ -66,6 +66,9 @@ function scanBoundaryError(
   if (bytes.byteLength > MAX_JPEG_BYTES) {
     return "JPEG outputs larger than 50 MiB cannot be scan-corrupted.";
   }
+  if (inspection.process === "Progressive DCT Huffman") {
+    return "Scan Corrupt does not support Progressive JPEG yet: its entropy data is split across multiple scans. Use a baseline output.";
+  }
   if (inspection.scans.length !== 1) {
     return "Scan Corrupt requires one verified baseline entropy-coded scan.";
   }
