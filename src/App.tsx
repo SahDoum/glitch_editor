@@ -782,14 +782,12 @@ function MetadataInspector({
 }
 
 const PREVIEW_TOOL_BUTTONS: readonly {
-  readonly id: "hand" | "brush" | "select" | "inspector";
+  readonly id: "brush" | "select";
   readonly label: string;
   readonly shortcut: string;
 }[] = [
-  { id: "hand", label: "Hand", shortcut: "V" },
   { id: "brush", label: "Brush", shortcut: "B" },
   { id: "select", label: "Select", shortcut: "M" },
-  { id: "inspector", label: "Inspector", shortcut: "I" },
 ];
 
 function getEffectIconPaths(effectId: EffectId): readonly string[] {
@@ -4142,16 +4140,13 @@ function App() {
                     aria-label="Canvas tools"
                   >
                     {PREVIEW_TOOL_BUTTONS.map((tool) => {
-                      const enabled =
-                        tool.id === "hand" ||
-                        tool.id === "inspector" ||
-                        isCanvasToolEnabled(
-                          tool.id,
-                          panelTool,
-                          panelTool === "block-transform" &&
-                            (blockTransformMode === "shuffle" ||
-                              blockTransformMode === "shift"),
-                        );
+                      const enabled = isCanvasToolEnabled(
+                        tool.id,
+                        panelTool,
+                        panelTool === "block-transform" &&
+                          (blockTransformMode === "shuffle" ||
+                            blockTransformMode === "shift"),
+                      );
                       const needsMask =
                         !activeMask &&
                         (panelTool === "coefficient-glitch" ||
