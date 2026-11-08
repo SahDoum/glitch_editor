@@ -402,6 +402,39 @@ export function mapJpegImageRectangleToBlockRegion(
   });
 }
 
+export function mapJpegImageRectangleToBlockRegionClipped(
+  inspection: JpegInspection,
+  componentId: number,
+  start: ImagePoint,
+  end: ImagePoint,
+): Result<JpegBlockRegion> {
+  const clampPoint = (point: ImagePoint): ImagePoint => ({
+    x: Math.max(0, Math.min(point.x, inspection.width - 0.000001)),
+    y: Math.max(0, Math.min(point.y, inspection.height - 0.000001)),
+  });
+  return mapJpegImageRectangleToBlockRegion(
+    inspection,
+    componentId,
+    clampPoint(start),
+    clampPoint(end),
+  );
+}
+
+export function clipJpegBlockRegionToGrid(
+  inspection: JpegInspection,
+  componentId: number,
+  region: JpegBlockRegion,
+): JpegBlockRegion | null {
+  const grid = getJpegComponentBlockGrid(inspection, componentId);
+  if (!grid) return null;
+  const x = Math.max(0, region.x);
+  const y = Math.max(0, region.y);
+  const right = Math.min(grid.columns, region.x + region.width);
+  const bottom = Math.min(grid.rows, region.y + region.height);
+  if (right <= x || bottom <= y) return null;
+  return { x, y, width: right - x, height: bottom - y };
+}
+
 export function mapJpegBlockDragToDestination(
   inspection: JpegInspection,
   componentId: number,

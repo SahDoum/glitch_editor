@@ -66,6 +66,7 @@ export function RadioChoiceGroup<T extends ChoiceValue>({
   onChange,
   layout = "grid",
   disabled = false,
+  showCheckmark = true,
 }: {
   name: string;
   legend: string;
@@ -74,10 +75,11 @@ export function RadioChoiceGroup<T extends ChoiceValue>({
   onChange(value: T): void;
   layout?: "grid" | "inline" | "triple" | "components" | "bands";
   disabled?: boolean;
+  showCheckmark?: boolean;
 }) {
   return (
     <fieldset
-      className={`radio-choice-group radio-choice-group--${layout}`}
+      className={`radio-choice-group radio-choice-group--${layout} ${showCheckmark ? "" : "radio-choice-group--no-checkmark"}`}
       disabled={disabled}
     >
       <legend>{legend}</legend>
@@ -119,33 +121,28 @@ export function getComponentChoiceOptions(
     (componentIds === "0,1,2" || componentIds === "1,2,3");
   const roles = [
     {
-      label: "Y — Brightness / contours",
+      label: "Y: Brightness / Contour",
     },
     {
-      label: "Cb — Blue–yellow color information",
+      label: "Cb: blue-yellow",
       tone: "blue-yellow" as const,
     },
     {
-      label: "Cr — Red–green color information",
+      label: "Cr: red-green",
       tone: "red-green" as const,
     },
   ];
 
   return components.map((component, index) => {
+    const componentHint = `ID ${component.id} · ${component.horizontalSampling}×${component.verticalSampling}`;
     const role =
       components.length === 1
-        ? {
-            label: "Gray",
-            hint: `Single JPEG component · ID ${component.id} · ${component.horizontalSampling}×${component.verticalSampling}`,
-          }
+        ? { label: "Gray", hint: componentHint }
         : hasCommonYcbcrOrder
-          ? {
-              ...roles[index]!,
-              hint: `ID ${component.id} · ${component.horizontalSampling}×${component.verticalSampling}`,
-            }
+          ? { ...roles[index]!, hint: componentHint }
           : {
               label: `Component ${index + 1}`,
-              hint: `JPEG component · ID ${component.id} · ${component.horizontalSampling}×${component.verticalSampling}`,
+              hint: componentHint,
             };
 
     return {
@@ -155,6 +152,29 @@ export function getComponentChoiceOptions(
       tone: "tone" in role ? role.tone : undefined,
     };
   });
+}
+
+export function getQuantizationTableLabel(
+  tableId: number,
+  components: readonly JpegComponent[],
+): string {
+  const componentIds = components.map(({ id }) => id).join(",");
+  const hasCommonYcbcrOrder =
+    components.length === 3 &&
+    (componentIds === "0,1,2" || componentIds === "1,2,3");
+  if (!hasCommonYcbcrOrder) return `DQT ${tableId}`;
+
+  const assignedIndices = components.flatMap((component, index) =>
+    component.quantizationTable === tableId ? [index] : [],
+  );
+  if (assignedIndices.length === 0) return `DQT ${tableId}`;
+  if (tableId === 0 && assignedIndices.every((index) => index === 0)) {
+    return `DQT ${tableId} — Brightness (Y)`;
+  }
+  if (tableId === 1 && assignedIndices.every((index) => index > 0)) {
+    return `DQT ${tableId} — Color (Cb/Cr)`;
+  }
+  return `DQT ${tableId}`;
 }
 
 export function ComponentChoiceGroup({
@@ -182,21 +202,14 @@ export function ComponentChoiceGroup({
   }
 
   return (
-    <>
-      <RadioChoiceGroup
-        name={name}
-        legend="Color component"
-        value={value}
-        options={options}
-        onChange={onChange}
-        layout="components"
-      />
-      <p className="coefficient-note component-choice-note">
-        Y/Cb/Cr labels follow the common frame order for sequential component
-        IDs 0–2 or 1–3. Other arrangements stay neutral; IDs and sampling
-        factors are the JPEG frame metadata.
-      </p>
-    </>
+    <RadioChoiceGroup
+      name={name}
+      legend="Color component"
+      value={value}
+      options={options}
+      onChange={onChange}
+      layout="components"
+    />
   );
 }
 

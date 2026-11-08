@@ -35,7 +35,7 @@ export const BUILT_IN_COEFFICIENT_BRUSHES: readonly CoefficientBrush[] = [
   },
   {
     id: "dc-steps",
-    name: "DC steps",
+    name: "Poster",
     step: {
       domain: "dc",
       mode: "dc-steps",

@@ -5,11 +5,14 @@ import {
   getMaskBlockCoverageAtLeastHalf,
   getMaskBlockCoveragePath,
   getJpegSelectionGridCellSize,
+  getJpegComponentBlockGrid,
+  clipJpegBlockRegionToGrid,
   mapJpegBlockDragToDestination,
   mapJpegBlockRegionToImageSelection,
   mapJpegBlockCoordinate,
   mapJpegImagePointToBlock,
   mapJpegImageRectangleToBlockRegion,
+  mapJpegImageRectangleToBlockRegionClipped,
   snapImagePointToGrid,
   snapSelectionToComponentBlocks,
   snapSelectionToMcus,
@@ -30,6 +33,65 @@ async function fixtureBytes(fileName: string): Promise<Uint8Array> {
 }
 
 describe("JPEG block coordinates", () => {
+  it("clips a DCT block rectangle to the selected component grid", async () => {
+    const inspection = inspectJpeg(
+      await fixtureBytes("synthetic-color-420.jpg"),
+    );
+    expect(inspection.ok).toBe(true);
+    if (!inspection.ok) return;
+    const grid = getJpegComponentBlockGrid(inspection.value, 1);
+    expect(grid).not.toBeNull();
+    if (!grid) return;
+
+    expect(
+      clipJpegBlockRegionToGrid(inspection.value, 1, {
+        x: grid.columns - 1,
+        y: grid.rows - 1,
+        width: 3,
+        height: 2,
+      }),
+    ).toEqual({
+      x: grid.columns - 1,
+      y: grid.rows - 1,
+      width: 1,
+      height: 1,
+    });
+    expect(
+      clipJpegBlockRegionToGrid(inspection.value, 1, {
+        x: -1,
+        y: -1,
+        width: 2,
+        height: 2,
+      }),
+    ).toEqual({ x: 0, y: 0, width: 1, height: 1 });
+  });
+
+  it("maps a drag ending outside the image to its clipped DCT rectangle", async () => {
+    const inspection = inspectJpeg(
+      await fixtureBytes("synthetic-color-420.jpg"),
+    );
+    expect(inspection.ok).toBe(true);
+    if (!inspection.ok) return;
+    const grid = getJpegComponentBlockGrid(inspection.value, 1);
+    expect(grid).not.toBeNull();
+    if (!grid) return;
+
+    expect(
+      mapJpegImageRectangleToBlockRegionClipped(
+        inspection.value,
+        1,
+        { x: 0, y: 0 },
+        {
+          x: inspection.value.width + 20,
+          y: inspection.value.height + 20,
+        },
+      ),
+    ).toEqual({
+      ok: true,
+      value: { x: 0, y: 0, width: grid.columns, height: grid.rows },
+    });
+  });
+
   it("maps a luma block in 4:2:0 sampling to image and MCU coordinates", async () => {
     const inspection = inspectJpeg(
       await fixtureBytes("synthetic-color-420.jpg"),

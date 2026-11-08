@@ -36,10 +36,12 @@ import {
 import {
   getJpegComponentBlockGrid,
   getMaskBlockCoveragePath,
+  clipJpegBlockRegionToGrid,
   mapJpegBlockDragToDestination,
   mapJpegBlockCoordinate,
   mapJpegBlockRegionToImageSelection,
   mapJpegImageRectangleToBlockRegion,
+  mapJpegImageRectangleToBlockRegionClipped,
   mapJpegImagePointToBlock,
   snapImagePointToGrid,
   snapSelectionToComponentBlocks,
@@ -51,7 +53,7 @@ import {
 } from "./jpeg/block-geometry";
 import type { JpegInspection } from "./jpeg/inspect";
 import {
-  createBrushMask,
+  createBrushMaskFromStrokes,
   copySpatialMask,
   createRectangleSelection,
   createSpatialMask,
@@ -63,6 +65,7 @@ import type { ProjectDocument } from "./document/model";
 import { OperationHistory } from "./operations/history";
 import {
   createQuantizationPattern,
+  isBlockTransferParameters,
   MAX_BLOCK_TRANSFER_BLOCKS,
   GLITCH_FREQUENCY_BANDS,
   QUANTIZATION_PATTERNS,
@@ -113,6 +116,7 @@ import {
 } from "./jpeg/scan-decode-diagnostic";
 import {
   ComponentChoiceGroup,
+  getQuantizationTableLabel,
   getCoefficientRangeOptions,
   RadioChoiceGroup,
   SeedField,
@@ -285,20 +289,24 @@ function ImageOverlays({
   selectedBlock,
   keyboardCursor,
   blockTransferSource,
+  blockTransferSourceInvalid,
   blockTransferDestination,
+  blockTransferDestinationInvalid,
 }: {
   inspection: JpegInspection;
   showBlocks: boolean;
   showMcus: boolean;
   selection: SpatialSelection | null;
   mask: SpatialMask | null;
-  brushDraft: readonly ImagePoint[];
+  brushDraft: readonly (readonly ImagePoint[])[];
   brushRadius: number;
   componentId: number;
   selectedBlock: JpegBlockCoordinate | null;
   keyboardCursor: JpegBlockCoordinate | null;
   blockTransferSource: SpatialSelection | null;
+  blockTransferSourceInvalid: boolean;
   blockTransferDestination: SpatialSelection | null;
+  blockTransferDestinationInvalid: boolean;
 }) {
   const blockPatternWidth = inspection.blockWidth;
   const blockPatternHeight = inspection.blockHeight;
@@ -310,23 +318,28 @@ function ImageOverlays({
     mask && hasActiveBrush
       ? getMaskBlockCoveragePath(mask, inspection, componentId)
       : null;
-  const draftBrushMask: SpatialMask | null =
-    brushDraft.length > 0
-      ? {
-          schemaVersion: 1,
-          id: "brush-draft",
-          width: inspection.width,
-          height: inspection.height,
-          shapes: [
-            {
-              kind: "brush",
-              mode: "add",
-              radius: brushRadius,
-              points: brushDraft,
-            },
-          ],
-        }
-      : null;
+  const draftBrushMask: SpatialMask | null = brushDraft.some(
+    (stroke) => stroke.length > 0,
+  )
+    ? {
+        schemaVersion: 1,
+        id: "brush-draft",
+        width: inspection.width,
+        height: inspection.height,
+        shapes: brushDraft.flatMap((points) =>
+          points.length > 0
+            ? [
+                {
+                  kind: "brush",
+                  mode: "add",
+                  radius: brushRadius,
+                  points,
+                },
+              ]
+            : [],
+        ),
+      }
+    : null;
   const draftBrushCoverage = draftBrushMask
     ? getMaskBlockCoveragePath(draftBrushMask, inspection, componentId)
     : null;
@@ -396,7 +409,7 @@ function ImageOverlays({
       )}
       {blockTransferSource && (
         <rect
-          className="block-transfer-source-overlay"
+          className={`block-transfer-source-overlay ${blockTransferSourceInvalid ? "is-invalid" : ""}`}
           x={blockTransferSource.x}
           y={blockTransferSource.y}
           width={blockTransferSource.width}
@@ -405,7 +418,7 @@ function ImageOverlays({
       )}
       {blockTransferDestination && (
         <rect
-          className="block-transfer-target-overlay"
+          className={`block-transfer-target-overlay ${blockTransferDestinationInvalid ? "is-invalid" : ""}`}
           x={blockTransferDestination.x}
           y={blockTransferDestination.y}
           width={blockTransferDestination.width}
@@ -489,6 +502,7 @@ function MetadataInspector({
   inspection,
   quantizationTables,
   selectedBlock,
+  onError,
 }: {
   asset: ImportedJpeg["originalAsset"];
   inspection: JpegInspection;
@@ -497,6 +511,7 @@ function MetadataInspector({
     values: readonly number[];
   }[];
   selectedBlock: JpegBlockCoordinate | null;
+  onError(message: string): void;
 }) {
   const visibleMarkers = inspection.markers.slice(0, MARKER_LIMIT);
   const jpegInspectorRef = useRef<HTMLDetailsElement>(null);
@@ -536,6 +551,7 @@ function MetadataInspector({
           asset={asset}
           inspection={inspection}
           selectedBlock={selectedBlock}
+          onError={onError}
         />
       </CollapsibleSection>
 
@@ -689,11 +705,15 @@ function MetadataInspector({
 
 function QuantizationMatrixEditor({
   quantizationTables,
+  components,
   disabled,
   onApply,
+  onError,
 }: {
   quantizationTables: readonly { id: number; values: readonly number[] }[];
+  components: JpegInspection["components"];
   disabled: boolean;
+  onError(message: string): void;
   onApply(
     tableId: number,
     values: readonly number[],
@@ -712,7 +732,6 @@ function QuantizationMatrixEditor({
   const [semantics, setSemantics] =
     useState<QuantizationSemantics>("reinterpret");
   const [seed, setSeed] = useState("1");
-  const [errorMessage, setErrorMessage] = useState("");
   const table = quantizationTables.find(
     (candidate) => candidate.id === tableId,
   );
@@ -725,7 +744,7 @@ function QuantizationMatrixEditor({
     if (!nextTable) return;
     setTableId(nextId);
     setValues(nextTable.values.slice());
-    setErrorMessage("");
+    onError("");
   }
 
   function applyPattern() {
@@ -735,20 +754,20 @@ function QuantizationMatrixEditor({
       seedValue < 0 ||
       seedValue > 0xffff_ffff
     ) {
-      setErrorMessage("Pattern seed must be an unsigned 32-bit integer.");
+      onError("Pattern seed must be an unsigned 32-bit integer.");
       return;
     }
     if (pattern === "manual") {
-      setErrorMessage("Choose a generated pattern before applying it.");
+      onError("Choose a generated pattern before applying it.");
       return;
     }
     const result = createQuantizationPattern(pattern, values, seedValue);
     if (!result.ok) {
-      setErrorMessage(result.error.message);
+      onError(result.error.message);
       return;
     }
     setValues([...result.value]);
-    setErrorMessage("");
+    onError("");
   }
 
   const validValues =
@@ -772,7 +791,7 @@ function QuantizationMatrixEditor({
         value={tableId}
         options={quantizationTables.map((entry) => ({
           value: entry.id,
-          label: `DQT ${entry.id}`,
+          label: getQuantizationTableLabel(entry.id, components),
         }))}
         disabled={disabled}
         onChange={(id) => chooseTable(String(id))}
@@ -808,46 +827,44 @@ function QuantizationMatrixEditor({
           onChange={setSeed}
         />
       </div>
+      <div className="coefficient-table-wrap">
+        <table className="coefficient-table editable-quantization-table">
+          <tbody>
+            {Array.from({ length: 8 }, (_, v) => (
+              <tr key={v}>
+                {Array.from({ length: 8 }, (_, u) => {
+                  const index = v * 8 + u;
+                  return (
+                    <td
+                      className={u === 0 && v === 0 ? "coefficient-dc" : ""}
+                      key={u}
+                    >
+                      <input
+                        aria-label={`DQT ${tableId}, u ${u}, v ${v}`}
+                        type="number"
+                        min="1"
+                        max="255"
+                        step="1"
+                        value={values[index] ?? ""}
+                        disabled={disabled}
+                        onChange={(event) => {
+                          const next = values.slice();
+                          next[index] = Number(event.currentTarget.value);
+                          setValues(next);
+                          setPattern("manual");
+                        }}
+                      />
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
       <details className="advanced-controls">
-        <summary>
-          Advanced parameters · individual DQT values and semantics
-        </summary>
+        <summary>Advanced parameters · quantization semantics</summary>
         <div className="advanced-control-content">
-          <div className="coefficient-table-wrap">
-            <table className="coefficient-table editable-quantization-table">
-              <tbody>
-                {Array.from({ length: 8 }, (_, v) => (
-                  <tr key={v}>
-                    {Array.from({ length: 8 }, (_, u) => {
-                      const index = v * 8 + u;
-                      return (
-                        <td
-                          className={u === 0 && v === 0 ? "coefficient-dc" : ""}
-                          key={u}
-                        >
-                          <input
-                            aria-label={`DQT ${tableId}, u ${u}, v ${v}`}
-                            type="number"
-                            min="1"
-                            max="255"
-                            step="1"
-                            value={values[index] ?? ""}
-                            disabled={disabled}
-                            onChange={(event) => {
-                              const next = values.slice();
-                              next[index] = Number(event.currentTarget.value);
-                              setValues(next);
-                              setPattern("manual");
-                            }}
-                          />
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
           <RadioChoiceGroup<QuantizationSemantics>
             name="quantization-semantics"
             legend="Apply semantics"
@@ -883,11 +900,6 @@ function QuantizationMatrixEditor({
       >
         Generate pattern
       </button>
-      {errorMessage && (
-        <p className="coefficient-error" role="alert">
-          {errorMessage}
-        </p>
-      )}
       <button
         className="operation-button"
         type="button"
@@ -906,15 +918,16 @@ function CoefficientInspector({
   asset,
   inspection,
   selectedBlock,
+  onError,
 }: {
   asset: ImportedJpeg["originalAsset"];
   inspection: JpegInspection;
   selectedBlock: JpegBlockCoordinate | null;
+  onError(message: string): void;
 }) {
   const bytes = useMemo(() => asset.readBytes(), [asset]);
   const componentOptions = inspection.components;
   const [values, setValues] = useState<number[] | null>(null);
-  const [errorMessage, setErrorMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const reader = useRef<JpegCoefficientReader | null>(null);
   const requestId = useRef(0);
@@ -932,7 +945,7 @@ function CoefficientInspector({
     const currentRequest = ++requestId.current;
     void (async () => {
       setValues(null);
-      setErrorMessage("");
+      onError("");
       if (!selectedBlock) {
         setIsLoading(false);
         return;
@@ -945,7 +958,7 @@ function CoefficientInspector({
         selectedBlock.blockY,
       );
       if (!coordinate.ok) {
-        setErrorMessage(coordinate.error.message);
+        onError(coordinate.error.message);
         setIsLoading(false);
         return;
       }
@@ -954,7 +967,7 @@ function CoefficientInspector({
       if (!reader.current) {
         const created = createJpegCoefficientReader();
         if (!created.ok) {
-          setErrorMessage(created.error.message);
+          onError(created.error.message);
           setIsLoading(false);
           return;
         }
@@ -967,7 +980,7 @@ function CoefficientInspector({
         if (!opened.ok) {
           reader.current.close();
           reader.current = null;
-          setErrorMessage(opened.error.message);
+          onError(opened.error.message);
           return;
         }
 
@@ -975,7 +988,7 @@ function CoefficientInspector({
           (component) => component.id === selectedBlock.componentId,
         );
         if (componentIndex < 0) {
-          setErrorMessage("The selected JPEG component is invalid.");
+          onError("The selected JPEG component is invalid.");
           return;
         }
         const result = await reader.current.readBlock(
@@ -985,13 +998,13 @@ function CoefficientInspector({
         );
         if (currentRequest !== requestId.current) return;
         if (!result.ok) {
-          setErrorMessage(result.error.message);
+          onError(result.error.message);
           return;
         }
         setValues(result.value);
       } catch {
         if (currentRequest === requestId.current) {
-          setErrorMessage(
+          onError(
             "Coefficient inspection stopped unexpectedly. The original JPEG remains unchanged.",
           );
         }
@@ -1003,7 +1016,7 @@ function CoefficientInspector({
     return () => {
       if (requestId.current === currentRequest) requestId.current += 1;
     };
-  }, [bytes, componentOptions, inspection, selectedBlock]);
+  }, [bytes, componentOptions, inspection, onError, selectedBlock]);
 
   return (
     <div className="coefficient-inspector-content">
@@ -1025,11 +1038,6 @@ function CoefficientInspector({
       {isLoading && (
         <p className="coefficient-note" role="status">
           Reading quantized coefficients…
-        </p>
-      )}
-      {errorMessage && (
-        <p className="coefficient-error" role="alert">
-          {errorMessage}
         </p>
       )}
       {values ? (
@@ -1069,12 +1077,11 @@ function CoefficientInspector({
           </p>
         </>
       ) : (
-        !errorMessage &&
+        !selectedBlock &&
         !isLoading && (
           <p className="coefficient-note">
-            {selectedBlock
-              ? "The selected block has no coefficient data to display."
-              : "Activate Inspector and click an 8×8 DCT block to read its 64 quantized coefficients."}
+            Activate Inspector and click an 8×8 DCT block to read its 64
+            quantized coefficients.
           </p>
         )
       )}
@@ -1111,6 +1118,7 @@ function App() {
     canRedo: false,
   });
   const [errorMessage, setErrorMessage] = useState("");
+  const [dismissedToastMessage, setDismissedToastMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState("Inspecting JPEG…");
   const [isSavingProject, setIsSavingProject] = useState(false);
@@ -1174,6 +1182,8 @@ function App() {
     useState<JpegBlockRegion | null>(null);
   const [blockTransferDraft, setBlockTransferDraft] =
     useState<JpegBlockRegion | null>(null);
+  const [blockTransferDraftOutOfBounds, setBlockTransferDraftOutOfBounds] =
+    useState(false);
   const [blockTransferDestination, setBlockTransferDestination] = useState<{
     readonly x: number;
     readonly y: number;
@@ -1193,7 +1203,9 @@ function App() {
   const [brushAutoError, setBrushAutoError] = useState(initialAutoApply.error);
   const [zoom, setZoom] = useState(1);
   const [selection, setSelection] = useState<SpatialSelection | null>(null);
-  const [brushDraft, setBrushDraft] = useState<readonly ImagePoint[]>([]);
+  const [brushDraft, setBrushDraft] = useState<
+    readonly (readonly ImagePoint[])[]
+  >([]);
   const fileInput = useRef<HTMLInputElement>(null);
   const requestId = useRef(0);
   const dragDepth = useRef(0);
@@ -1211,7 +1223,7 @@ function App() {
   const selectionStart = useRef<{ x: number; y: number } | null>(null);
   const keyboardSelectionAnchor = useRef<JpegBlockCoordinate | null>(null);
   const blockTransformGesture = useRef<BlockTransformGesture | null>(null);
-  const brushPoints = useRef<ImagePoint[]>([]);
+  const brushPoints = useRef<ImagePoint[][]>([]);
   const panStart = useRef<{
     x: number;
     y: number;
@@ -1219,6 +1231,7 @@ function App() {
     scrollTop: number;
   } | null>(null);
   const imageStage = useRef<HTMLDivElement>(null);
+  const previewImageWrap = useRef<HTMLDivElement>(null);
   const jpegOperations =
     historyDocument?.currentState.jpegOperations ?? EMPTY_JPEG_OPERATIONS;
   const activeMask = globalSelectionMask;
@@ -1229,6 +1242,8 @@ function App() {
       : [DEFAULT_USER_BRUSH, ...userBrushes]),
   ];
   const selectedBrush = brushes.find((brush) => brush.id === selectedBrushId);
+  const componentCount = document?.inspection.components.length ?? 0;
+  const documentHash = document?.originalAsset.sha256;
   const currentQuantizationTables = useMemo(
     () =>
       document
@@ -1236,6 +1251,28 @@ function App() {
         : [],
     [document, jpegOperations],
   );
+  const contextualErrorMessage = [
+    brushStorageError
+      ? `${brushStorageError} Saving brushes is unavailable.`
+      : "",
+    brushAutoError,
+    documentHash && componentIndex >= componentCount
+      ? `This image has no component ${componentIndex}. Choose another brush or component.`
+      : "",
+    scanCorruptionReports.length > 0 ? editedPreviewError : "",
+    scanCorruptionReports.length > 0 &&
+    cleanEncodedPreviewError &&
+    !cleanEncodedPreviewUrl
+      ? `The clean encoded JPEG could not be previewed: ${cleanEncodedPreviewError}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const visibleErrorMessage =
+    errorMessage ||
+    (contextualErrorMessage !== dismissedToastMessage
+      ? contextualErrorMessage
+      : "");
 
   useEffect(() => {
     const dialog = saveDialogRef.current;
@@ -1488,6 +1525,7 @@ function App() {
     setBlockTransferAction("copy");
     setBlockTransferSource(null);
     setBlockTransferDraft(null);
+    setBlockTransferDraftOutOfBounds(false);
     setBlockTransferDestination(null);
     blockTransformGesture.current = null;
     setBrushSize(32);
@@ -1582,7 +1620,8 @@ function App() {
     event: PointerEvent<HTMLDivElement>,
   ): { x: number; y: number } | null {
     if (!document) return null;
-    const bounds = event.currentTarget.getBoundingClientRect();
+    const bounds = previewImageWrap.current?.getBoundingClientRect();
+    if (!bounds) return null;
     if (bounds.width <= 0 || bounds.height <= 0) return null;
     return {
       x:
@@ -1592,6 +1631,16 @@ function App() {
         ((event.clientY - bounds.top) / bounds.height) *
         document.inspection.height,
     };
+  }
+
+  function isImagePointInside(point: ImagePoint): boolean {
+    return (
+      document !== null &&
+      point.x >= 0 &&
+      point.y >= 0 &&
+      point.x <= document.inspection.width &&
+      point.y <= document.inspection.height
+    );
   }
 
   function updateSelection(
@@ -1879,6 +1928,8 @@ function App() {
   function getBlockRegionFromDrag(
     start: ImagePoint,
     end: ImagePoint,
+    allowOversized = false,
+    clipToImage = false,
   ): JpegBlockRegion | null {
     if (!document) return null;
     const component = document.inspection.components[componentIndex];
@@ -1886,18 +1937,28 @@ function App() {
       setErrorMessage("The selected JPEG component is invalid.");
       return null;
     }
-    const mapped = mapJpegImageRectangleToBlockRegion(
-      document.inspection,
-      component.id,
-      start,
-      end,
-    );
+    const mapped = clipToImage
+      ? mapJpegImageRectangleToBlockRegionClipped(
+          document.inspection,
+          component.id,
+          start,
+          end,
+        )
+      : mapJpegImageRectangleToBlockRegion(
+          document.inspection,
+          component.id,
+          start,
+          end,
+        );
     if (!mapped.ok) {
       setErrorMessage(mapped.error.message);
       return null;
     }
     const region = mapped.value;
-    if (region.width * region.height > MAX_BLOCK_TRANSFER_BLOCKS) {
+    if (
+      !allowOversized &&
+      region.width * region.height > MAX_BLOCK_TRANSFER_BLOCKS
+    ) {
       setErrorMessage(
         "The selected block region exceeds the bounded transfer size.",
       );
@@ -1940,20 +2001,44 @@ function App() {
     const history = operationHistory.current;
     const source = blockTransferSource;
     if (!history || !source) return;
-    updateHistory(
-      applyBlockTransferOperation(history, {
-        kind: "block-transfer",
-        componentIndex,
-        sourceX: source.x,
-        sourceY: source.y,
-        width: source.width,
-        height: source.height,
-        destinationX: destination.x,
-        destinationY: destination.y,
-        mode: blockTransferMode,
-        action: blockTransferAction,
-      }),
-    );
+    const operation = getBlockTransferOperation(source, destination);
+    if (
+      !operation ||
+      !document ||
+      !isBlockTransferParameters(operation, document.inspection)
+    ) {
+      return;
+    }
+    updateHistory(applyBlockTransferOperation(history, operation));
+  }
+
+  function getBlockTransferOperation(
+    source: JpegBlockRegion,
+    destination: { readonly x: number; readonly y: number },
+  ): Extract<JpegGlitchOperation, { kind: "block-transfer" }> | null {
+    if (!document) return null;
+    const component = document.inspection.components[componentIndex];
+    if (!component) return null;
+    let { width, height } = source;
+    if (blockTransferAction === "copy") {
+      const grid = getJpegComponentBlockGrid(document.inspection, component.id);
+      if (!grid) return null;
+      width = Math.min(width, grid.columns - destination.x);
+      height = Math.min(height, grid.rows - destination.y);
+    }
+    if (width <= 0 || height <= 0) return null;
+    return {
+      kind: "block-transfer",
+      componentIndex,
+      sourceX: source.x,
+      sourceY: source.y,
+      width,
+      height,
+      destinationX: destination.x,
+      destinationY: destination.y,
+      mode: blockTransferMode,
+      action: blockTransferAction,
+    };
   }
 
   function onImagePointerDown(event: PointerEvent<HTMLDivElement>) {
@@ -1973,6 +2058,7 @@ function App() {
     }
     const point = getImagePoint(event);
     if (!point) return;
+    if (!isImagePointInside(point) && toolMode !== "select") return;
     if (toolMode === "block-transform" && blockTransformMode === "transfer") {
       const blockPoint = getComponentBlockPoint(point);
       if (!blockPoint) return;
@@ -1990,6 +2076,7 @@ function App() {
           height: 1,
         });
         setBlockTransferDestination(null);
+        setBlockTransferDraftOutOfBounds(false);
       } else {
         blockTransformGesture.current = {
           kind: "transfer-destination",
@@ -2078,8 +2165,8 @@ function App() {
     if (toolMode === "brush") {
       const snappedPoint = snapBrushPoint(point);
       if (!snappedPoint) return;
-      brushPoints.current = [snappedPoint];
-      setBrushDraft([snappedPoint]);
+      brushPoints.current = [[snappedPoint]];
+      setBrushDraft([[snappedPoint]]);
     }
   }
 
@@ -2093,10 +2180,18 @@ function App() {
     const imagePoint = getImagePoint(event);
     const transformGesture = blockTransformGesture.current;
     if (toolMode === "block-transform" && transformGesture && imagePoint) {
+      const pointIsInside = isImagePointInside(imagePoint);
+      if (!pointIsInside && transformGesture.kind !== "transfer-source") return;
       switch (transformGesture.kind) {
         case "transfer-source":
+          setBlockTransferDraftOutOfBounds(!pointIsInside);
           setBlockTransferDraft(
-            getBlockRegionFromDrag(transformGesture.start, imagePoint),
+            getBlockRegionFromDrag(
+              transformGesture.start,
+              imagePoint,
+              true,
+              true,
+            ),
           );
           break;
         case "transfer-destination":
@@ -2116,14 +2211,32 @@ function App() {
       return;
     }
     if (toolMode === "brush" && brushPoints.current.length > 0 && imagePoint) {
+      const strokes = brushPoints.current;
+      const currentStroke = strokes[strokes.length - 1]!;
+      if (!isImagePointInside(imagePoint)) {
+        if (currentStroke.length > 0) {
+          strokes.push([]);
+          setBrushDraft(strokes.map((stroke) => [...stroke]));
+        }
+        return;
+      }
       const point = snapBrushPoint(imagePoint);
       if (!point) return;
-      const points = brushPoints.current;
+      const points = currentStroke;
+      if (points.length === 0) {
+        points.push(point);
+        setBrushDraft(strokes.map((stroke) => [...stroke]));
+        return;
+      }
       const previous = points[points.length - 1]!;
       const distance = Math.hypot(point.x - previous.x, point.y - previous.y);
       const spacing = Math.max(1, brushSize / 8);
       const steps = Math.ceil(distance / spacing);
-      if (points.length + steps > 10_000) {
+      const totalPoints = strokes.reduce(
+        (total, stroke) => total + stroke.length,
+        0,
+      );
+      if (totalPoints + steps > 10_000) {
         setErrorMessage(
           "This brush stroke is too long. Finish it in shorter strokes.",
         );
@@ -2138,7 +2251,7 @@ function App() {
           y: previous.y + (point.y - previous.y) * ratio,
         });
       }
-      setBrushDraft([...points]);
+      setBrushDraft(strokes.map((stroke) => [...stroke]));
       return;
     }
     const start = selectionStart.current;
@@ -2155,6 +2268,7 @@ function App() {
       if (!imagePoint) {
         if (transformGesture.kind === "transfer-source") {
           setBlockTransferDraft(null);
+          setBlockTransferDraftOutOfBounds(false);
         } else if (transformGesture.kind === "repeat-source") {
           setRepeatDraft(null);
         } else if (transformGesture.kind === "repeat-destination") {
@@ -2167,8 +2281,11 @@ function App() {
           const region = getBlockRegionFromDrag(
             transformGesture.start,
             imagePoint,
+            true,
+            true,
           );
           setBlockTransferDraft(null);
+          setBlockTransferDraftOutOfBounds(false);
           if (region) {
             setBlockTransferSource(region);
             setBlockTransferDestination(null);
@@ -2220,19 +2337,24 @@ function App() {
     }
     if (toolMode === "brush" && brushPoints.current.length > 0) {
       const imagePoint = getImagePoint(event);
-      const point = imagePoint ? snapBrushPoint(imagePoint) : null;
+      const point =
+        imagePoint && isImagePointInside(imagePoint)
+          ? snapBrushPoint(imagePoint)
+          : null;
       if (point) {
-        const previous = brushPoints.current[brushPoints.current.length - 1]!;
-        if (previous.x !== point.x || previous.y !== point.y) {
-          brushPoints.current.push(point);
+        const strokes = brushPoints.current;
+        const currentStroke = strokes[strokes.length - 1]!;
+        const previous = currentStroke[currentStroke.length - 1];
+        if (!previous || previous.x !== point.x || previous.y !== point.y) {
+          currentStroke.push(point);
         }
       }
-      const points = brushPoints.current;
+      const strokes = brushPoints.current;
       brushPoints.current = [];
       setBrushDraft([]);
       if (!document) return;
-      const mask = createBrushMask(
-        points,
+      const mask = createBrushMaskFromStrokes(
+        strokes,
         brushSize / 2,
         document.inspection.width,
         document.inspection.height,
@@ -2289,6 +2411,7 @@ function App() {
     panStart.current = null;
     setBrushDraft([]);
     setBlockTransferDraft(null);
+    setBlockTransferDraftOutOfBounds(false);
     setRepeatDraft(null);
     setSelection(null);
     const maskEffect =
@@ -2950,6 +3073,25 @@ function App() {
     : null;
   const activeComponentId =
     document?.inspection.components[componentIndex]?.id ?? -1;
+  const transferPreviewOperation =
+    blockTransferSource && blockTransferDestination
+      ? getBlockTransferOperation(blockTransferSource, blockTransferDestination)
+      : null;
+  const transferSourceForPreview = blockTransferDraft ?? blockTransferSource;
+  const blockTransferSourceInvalid =
+    blockTransferDraftOutOfBounds ||
+    (transferSourceForPreview !== null &&
+      transferSourceForPreview.width * transferSourceForPreview.height >
+        MAX_BLOCK_TRANSFER_BLOCKS);
+  const blockTransferDestinationInvalid =
+    blockTransferDestination !== null &&
+    (blockTransferSourceInvalid ||
+      !document ||
+      !transferPreviewOperation ||
+      !isBlockTransferParameters(
+        transferPreviewOperation,
+        document.inspection,
+      ));
   const blockTransferSourceSelection =
     document && toolMode === "block-transform"
       ? blockTransformMode === "transfer"
@@ -2972,11 +3114,26 @@ function App() {
     blockTransformMode === "transfer" &&
     blockTransferSource &&
     blockTransferDestination
-      ? getBlockRegionSelection(document.inspection, activeComponentId, {
-          ...blockTransferDestination,
-          width: blockTransferSource.width,
-          height: blockTransferSource.height,
-        })
+      ? getBlockRegionSelection(
+          document.inspection,
+          activeComponentId,
+          clipJpegBlockRegionToGrid(
+            document.inspection,
+            activeComponentId,
+            transferPreviewOperation
+              ? {
+                  x: transferPreviewOperation.destinationX,
+                  y: transferPreviewOperation.destinationY,
+                  width: transferPreviewOperation.width,
+                  height: transferPreviewOperation.height,
+                }
+              : {
+                  ...blockTransferDestination,
+                  width: blockTransferSource.width,
+                  height: blockTransferSource.height,
+                },
+          ),
+        )
       : document &&
           toolMode === "block-transform" &&
           blockTransformMode === "repeat" &&
@@ -3027,7 +3184,9 @@ function App() {
           !isCanvasToolEnabled(
             tool,
             panelTool,
-            blockTransformMode === "shuffle" || blockTransformMode === "shift",
+            panelTool === "block-transform" &&
+              (blockTransformMode === "shuffle" ||
+                blockTransformMode === "shift"),
           )
         )
           return;
@@ -3244,8 +3403,9 @@ function App() {
                   const enabled = isCanvasToolEnabled(
                     tool.id,
                     panelTool,
-                    blockTransformMode === "shuffle" ||
-                      blockTransformMode === "shift",
+                    panelTool === "block-transform" &&
+                      (blockTransformMode === "shuffle" ||
+                        blockTransformMode === "shift"),
                   );
                   return (
                     <button
@@ -3306,6 +3466,26 @@ function App() {
         onDrop={onDrop}
       >
         <div className="canvas">
+          {visibleErrorMessage && (
+            <div className="workspace-error-toast" role="alert">
+              <span className="error-icon" aria-hidden="true">
+                !
+              </span>
+              <span className="workspace-error-message">
+                {visibleErrorMessage}
+              </span>
+              <button
+                type="button"
+                aria-label="Dismiss error"
+                onClick={() => {
+                  setDismissedToastMessage(visibleErrorMessage);
+                  setErrorMessage("");
+                }}
+              >
+                ×
+              </button>
+            </div>
+          )}
           {!document ? (
             <div className="welcome">
               <div className="eyebrow">JPEG STRUCTURE · CREATIVE CONTROL</div>
@@ -3461,7 +3641,24 @@ function App() {
                   </label>
                 </div>
               </div>
-              <div className="image-stage" ref={imageStage}>
+              <div
+                className="image-stage"
+                ref={imageStage}
+                onPointerDown={onImagePointerDown}
+                onPointerMove={onImagePointerMove}
+                onPointerUp={onImagePointerUp}
+                onPointerCancel={() => {
+                  selectionStart.current = null;
+                  blockTransformGesture.current = null;
+                  setBlockTransferDraft(null);
+                  setBlockTransferDraftOutOfBounds(false);
+                  setRepeatDraft(null);
+                  setRepeatDestination(null);
+                  brushPoints.current = [];
+                  panStart.current = null;
+                  setBrushDraft([]);
+                }}
+              >
                 <div
                   className={`preview-image-wrap ${toolMode === "select" ? "is-selecting" : ""} ${toolMode === "brush" ? "is-brushing" : ""} ${toolMode === "inspector" ? "is-inspecting" : ""} ${toolMode === "hand" ? "is-panning" : ""} ${toolMode === "block-transform" && (blockTransformMode === "transfer" || blockTransformMode === "repeat") ? "is-block-transforming" : ""}`}
                   style={{ transform: `scale(${zoom})` }}
@@ -3482,19 +3679,7 @@ function App() {
                   }}
                   onBlur={() => setCanvasHasKeyboardFocus(false)}
                   onKeyDown={onCanvasKeyDown}
-                  onPointerDown={onImagePointerDown}
-                  onPointerMove={onImagePointerMove}
-                  onPointerUp={onImagePointerUp}
-                  onPointerCancel={() => {
-                    selectionStart.current = null;
-                    blockTransformGesture.current = null;
-                    setBlockTransferDraft(null);
-                    setRepeatDraft(null);
-                    setRepeatDestination(null);
-                    brushPoints.current = [];
-                    panStart.current = null;
-                    setBrushDraft([]);
-                  }}
+                  ref={previewImageWrap}
                 >
                   {previewUrlToDisplay ? (
                     <img
@@ -3527,7 +3712,11 @@ function App() {
                       canvasHasKeyboardFocus ? keyboardCursor : null
                     }
                     blockTransferSource={blockTransferSourceSelection}
+                    blockTransferSourceInvalid={blockTransferSourceInvalid}
                     blockTransferDestination={blockTransferDestinationSelection}
+                    blockTransferDestinationInvalid={
+                      blockTransferDestinationInvalid
+                    }
                   />
                 </div>
               </div>
@@ -3579,14 +3768,6 @@ function App() {
             id="side-panel-content"
             aria-hidden={isRightPanelCollapsed}
           >
-            {errorMessage && (
-              <div className="error-banner" role="alert">
-                <span className="error-icon" aria-hidden="true">
-                  !
-                </span>
-                <span>{errorMessage}</span>
-              </div>
-            )}
             {projectNotice && (
               <p className="project-notice" role="status">
                 {projectNotice}
@@ -3678,17 +3859,18 @@ function App() {
                         inspection={document.inspection}
                         quantizationTables={currentQuantizationTables}
                         selectedBlock={selectedBlock}
+                        onError={setErrorMessage}
                       />
                     </section>
                   )}
                   {panelTool === "coefficient-glitch" && (
                     <section className="inspector-section selection-panel">
                       <div className="coefficient-field">
-                        <span>Coefficient brushes</span>
+                        <span>Coefficient effects</span>
                         <div
                           className="brush-picker"
                           role="group"
-                          aria-label="Coefficient brushes"
+                          aria-label="Coefficient effects"
                         >
                           {brushes.map((brush) => (
                             <button
@@ -3728,47 +3910,45 @@ function App() {
                           </button>
                         </div>
                       </div>
-                      <label className="coefficient-note">
-                        <input
-                          type="checkbox"
-                          checked={!!brushAutoApply[selectedBrushId]}
-                          disabled={!!brushAutoError}
-                          onChange={(event) =>
-                            changeBrushAutoApply(event.currentTarget.checked)
+                      <div className="coefficient-effect-actions">
+                        <label className="coefficient-note">
+                          <input
+                            type="checkbox"
+                            checked={!!brushAutoApply[selectedBrushId]}
+                            disabled={!!brushAutoError}
+                            onChange={(event) =>
+                              changeBrushAutoApply(event.currentTarget.checked)
+                            }
+                          />{" "}
+                          Apply automatically after drawing
+                        </label>
+                        <button
+                          className="operation-button"
+                          type="button"
+                          disabled={
+                            !activeMask ||
+                            isEncoding ||
+                            hasScanCorruption ||
+                            !selectedBrush ||
+                            componentIndex >=
+                              document.inspection.components.length
                           }
-                        />{" "}
-                        Apply automatically after drawing
-                      </label>
-                      {brushStorageError && (
-                        <p className="coefficient-error" role="alert">
-                          {brushStorageError} Saving brushes is unavailable.
-                        </p>
-                      )}
-                      {brushAutoError && (
-                        <p className="coefficient-error" role="alert">
-                          {brushAutoError}
-                        </p>
-                      )}
-                      <p className="operation-description">
-                        These operations edit quantized DCT coefficients, then
-                        re-encode a new JPEG. They do not edit decoded pixels or
-                        the original JPEG bytes.
-                      </p>
+                          onClick={() => applyCoefficientOperation()}
+                        >
+                          Apply {selectedBrush?.name ?? "effect"}
+                        </button>
+                      </div>
                       <h3 className="parameter-group-title">Core parameters</h3>
                       <ComponentChoiceGroup
                         name="coefficient-component"
                         inspection={document.inspection}
                         value={componentIndex}
                         includeUnavailable
-                        onChange={setComponentIndex}
+                        onChange={(index) => {
+                          setComponentIndex(index);
+                          setErrorMessage("");
+                        }}
                       />
-                      {componentIndex >=
-                        document.inspection.components.length && (
-                        <p className="coefficient-error" role="alert">
-                          This image has no component {componentIndex}. Choose
-                          another brush or component.
-                        </p>
-                      )}
                       {!BUILT_IN_COEFFICIENT_BRUSHES.some(
                         (brush) => brush.id === selectedBrushId,
                       ) && (
@@ -3800,7 +3980,7 @@ function App() {
                               },
                               {
                                 value: "dc-steps",
-                                label: "DC steps",
+                                label: "Poster",
                                 hint: "Round block averages to steps",
                               },
                               {
@@ -3898,6 +4078,7 @@ function App() {
                                     }
                                   }}
                                   layout="bands"
+                                  showCheckmark={false}
                                 />
                                 <p className="coefficient-note">
                                   DC is the block-average coefficient. AC bands
@@ -4200,19 +4381,6 @@ function App() {
                           </p>
                         </div>
                       )}
-                      <button
-                        className="operation-button"
-                        type="button"
-                        disabled={
-                          !activeMask ||
-                          isEncoding ||
-                          componentIndex >=
-                            document.inspection.components.length
-                        }
-                        onClick={() => applyCoefficientOperation()}
-                      >
-                        Apply {selectedBrush?.name ?? "brush"}
-                      </button>
                       {!BUILT_IN_COEFFICIENT_BRUSHES.some(
                         (brush) => brush.id === selectedBrushId,
                       ) && (
@@ -4777,27 +4945,16 @@ function App() {
                           </p>
                         </div>
                       )}
-                      {editedPreviewError && hasScanCorruption && (
-                        <p className="scan-corruption-warning" role="alert">
-                          {editedPreviewError}
-                        </p>
-                      )}
-                      {hasScanCorruption &&
-                        cleanEncodedPreviewError &&
-                        !cleanEncodedPreviewUrl && (
-                          <p className="scan-corruption-warning" role="status">
-                            The clean encoded JPEG could not be previewed:{" "}
-                            {cleanEncodedPreviewError}
-                          </p>
-                        )}
                     </section>
                   )}
                   {toolMode === "quantization" && (
                     <QuantizationMatrixEditor
                       key={document.originalAsset.sha256}
                       quantizationTables={currentQuantizationTables}
+                      components={document.inspection.components}
                       disabled={isEncoding || hasScanCorruption}
                       onApply={applyQuantizationEdit}
+                      onError={setErrorMessage}
                     />
                   )}
                 </CollapsibleSection>

@@ -277,6 +277,42 @@ export function getMaskFromParameters(value: unknown): SpatialMask | null {
   return isSpatialMask(value.mask) ? value.mask : null;
 }
 
+export function createBrushMaskFromStrokes(
+  strokes: readonly (readonly { readonly x: number; readonly y: number }[])[],
+  radius: number,
+  imageWidth: number,
+  imageHeight: number,
+): Result<SpatialMask> {
+  const nonEmptyStrokes = strokes.filter((stroke) => stroke.length > 0);
+  if (
+    nonEmptyStrokes.length === 0 ||
+    nonEmptyStrokes.reduce((total, stroke) => total + stroke.length, 0) >
+      MAX_BRUSH_POINTS
+  ) {
+    return failure({
+      code: "INVALID_INPUT",
+      message: "The image-space brush mask is invalid.",
+    });
+  }
+
+  const shapes: SpatialMaskShape[] = [];
+  for (const stroke of nonEmptyStrokes) {
+    const mask = createBrushMask(stroke, radius, imageWidth, imageHeight);
+    if (!mask.ok) return mask;
+    shapes.push(...mask.value.shapes);
+  }
+
+  return success(
+    Object.freeze({
+      schemaVersion: 1,
+      id: crypto.randomUUID(),
+      width: imageWidth,
+      height: imageHeight,
+      shapes: Object.freeze(shapes),
+    }),
+  );
+}
+
 export function copySpatialMask(mask: SpatialMask): Result<SpatialMask> {
   if (!isSpatialMask(mask)) {
     return failure({

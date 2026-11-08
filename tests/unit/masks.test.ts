@@ -3,6 +3,7 @@ import {
   createRectangleSelection,
   createSpatialMask,
   createBrushMask,
+  createBrushMaskFromStrokes,
   copySpatialMask,
   getMaskFromParameters,
   isSpatialMask,
@@ -89,6 +90,7 @@ describe("spatial selections and masks", () => {
         ],
       },
     });
+
     if (mask.ok) expect(isSpatialMask(mask.value)).toBe(true);
 
     expect(createBrushMask([{ x: 21, y: 3 }], 2, 20, 16)).toMatchObject({
@@ -98,6 +100,45 @@ describe("spatial selections and masks", () => {
     expect(createBrushMask([{ x: 2, y: 3 }], 513, 20, 16)).toMatchObject({
       ok: false,
       error: { code: "INVALID_INPUT" },
+    });
+  });
+
+  it("keeps brush strokes separated when a pointer path leaves the image", () => {
+    const mask = createBrushMaskFromStrokes(
+      [
+        [
+          { x: 2, y: 3 },
+          { x: 5, y: 3 },
+        ],
+        [
+          { x: 15, y: 3 },
+          { x: 18, y: 3 },
+        ],
+      ],
+      2,
+      20,
+      16,
+    );
+    expect(mask).toMatchObject({
+      ok: true,
+      value: {
+        shapes: [
+          {
+            kind: "brush",
+            points: [
+              { x: 2, y: 3 },
+              { x: 5, y: 3 },
+            ],
+          },
+          {
+            kind: "brush",
+            points: [
+              { x: 15, y: 3 },
+              { x: 18, y: 3 },
+            ],
+          },
+        ],
+      },
     });
   });
 

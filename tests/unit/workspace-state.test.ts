@@ -90,12 +90,14 @@ describe("workspace state", () => {
     expect(getCanvasToolShortcut("x")).toBeNull();
   });
 
-  it("enables mask tools only while Coefficient Glitch is selected", () => {
+  it("enables mask tools for coefficient effects and block-mask modes only", () => {
     expect(isCanvasToolEnabled("brush", "coefficient-glitch")).toBe(true);
     expect(isCanvasToolEnabled("select", "coefficient-glitch")).toBe(true);
     expect(isCanvasToolEnabled("brush", "block-transform")).toBe(false);
     expect(isCanvasToolEnabled("brush", "block-transform", true)).toBe(true);
     expect(isCanvasToolEnabled("select", "block-transform", true)).toBe(true);
+    expect(isCanvasToolEnabled("brush", "quantization", true)).toBe(false);
+    expect(isCanvasToolEnabled("select", "info", true)).toBe(false);
     expect(isCanvasToolEnabled("select", "info")).toBe(false);
     expect(isCanvasToolEnabled("hand", "info")).toBe(true);
   });

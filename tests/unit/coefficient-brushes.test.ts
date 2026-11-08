@@ -48,7 +48,7 @@ describe("coefficient brushes", () => {
       },
       {
         id: "dc-steps",
-        name: "DC steps",
+        name: "Poster",
         step: {
           domain: "dc",
           mode: "dc-steps",
