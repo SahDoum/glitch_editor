@@ -211,6 +211,7 @@ describe("workspace state", () => {
   });
 
   it("defaults to the brush when entering a mask effect from a non-mask tool", () => {
+    expect(initialWorkspaceState.activeTool).toBe("hand");
     const hand = workspaceReducer(initialWorkspaceState, {
       type: "activate-tool",
       tool: "hand",
@@ -285,20 +286,9 @@ describe("workspace state", () => {
       type: "select-block",
       block,
     });
-    const collapsed = workspaceReducer(withBlock, {
-      type: "set-panel-collapsed",
-      collapsed: true,
-    });
-    const expanded = workspaceReducer(collapsed, {
-      type: "set-panel-collapsed",
-      collapsed: false,
-    });
 
     expect(withBlock.selectedBlock).toBe(block);
-    expect(collapsed.isRightPanelCollapsed).toBe(true);
-    expect(expanded.isRightPanelCollapsed).toBe(false);
-    expect(expanded.selectedBlock).toBe(block);
-    expect(expanded.selectionMask).toBe(mask.value);
+    expect(withBlock.selectionMask).toBe(mask.value);
   });
 
   it("selects named masks independently from the mask draft", () => {

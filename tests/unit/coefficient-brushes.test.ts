@@ -47,6 +47,28 @@ describe("coefficient brushes", () => {
         },
       },
       {
+        id: "coefficient-randomize",
+        name: "Randomize coefficients",
+        step: {
+          domain: "ac",
+          mode: "randomize",
+          frequencyBand: "all",
+          strength: 32,
+          seed: 1,
+        },
+      },
+      {
+        id: "dc-offset",
+        name: "DC offset",
+        step: {
+          domain: "dc",
+          mode: "offset",
+          frequencyBand: "all",
+          strength: 32,
+          seed: 1,
+        },
+      },
+      {
         id: "dc-steps",
         name: "Poster",
         step: {
@@ -54,6 +76,17 @@ describe("coefficient brushes", () => {
           mode: "dc-steps",
           frequencyBand: "all",
           strength: 32,
+          seed: 1,
+        },
+      },
+      {
+        id: "ac-low-pass",
+        name: "AC low-pass",
+        step: {
+          domain: "ac",
+          mode: "low-pass",
+          frequencyBand: "all",
+          strength: 4,
           seed: 1,
         },
       },
@@ -76,6 +109,39 @@ describe("coefficient brushes", () => {
           mode: "engrave-horizontal",
           frequencyBand: "all",
           strength: 4,
+          seed: 1,
+        },
+      },
+      {
+        id: "engraving-vertical",
+        name: "Engraving vertical",
+        step: {
+          domain: "ac",
+          mode: "engrave-vertical",
+          frequencyBand: "all",
+          strength: 4,
+          seed: 1,
+        },
+      },
+      {
+        id: "ac-invert",
+        name: "Invert AC",
+        step: {
+          domain: "ac",
+          mode: "invert",
+          frequencyBand: "all",
+          strength: 0,
+          seed: 1,
+        },
+      },
+      {
+        id: "ac-isolate",
+        name: "Isolate AC band",
+        step: {
+          domain: "ac",
+          mode: "isolate",
+          frequencyBand: "low",
+          strength: 0,
           seed: 1,
         },
       },

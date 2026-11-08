@@ -67,7 +67,6 @@ export interface WorkspaceState {
   readonly selectionMask: SpatialMask | null;
   readonly activeMaskId: string | null;
   readonly selectedBlock: JpegBlockCoordinate | null;
-  readonly isRightPanelCollapsed: boolean;
 }
 
 export interface WorkspaceOverlayVisibility {
@@ -164,19 +163,14 @@ export type WorkspaceAction =
       readonly type: "select-block";
       readonly block: JpegBlockCoordinate | null;
     }
-  | {
-      readonly type: "set-panel-collapsed";
-      readonly collapsed: boolean;
-    }
   | { readonly type: "reset-document" };
 
 export const initialWorkspaceState: WorkspaceState = Object.freeze({
-  activeTool: "select",
-  panelTool: "select",
+  activeTool: "hand",
+  panelTool: "hand",
   selectionMask: null,
   activeMaskId: null,
   selectedBlock: null,
-  isRightPanelCollapsed: false,
 });
 
 export function workspaceReducer(
@@ -189,7 +183,6 @@ export function workspaceReducer(
         ...state,
         activeTool: action.tool,
         panelTool: action.preservePanel ? state.panelTool : action.tool,
-        isRightPanelCollapsed: false,
       };
     case "activate-mask-effect":
       return {
@@ -199,7 +192,6 @@ export function workspaceReducer(
             ? state.activeTool
             : "brush",
         panelTool: action.tool,
-        isRightPanelCollapsed: false,
       };
     case "set-selection":
       return {
@@ -211,8 +203,6 @@ export function workspaceReducer(
       return { ...state, activeMaskId: action.maskId };
     case "select-block":
       return { ...state, selectedBlock: action.block };
-    case "set-panel-collapsed":
-      return { ...state, isRightPanelCollapsed: action.collapsed };
     case "reset-document":
       return initialWorkspaceState;
   }

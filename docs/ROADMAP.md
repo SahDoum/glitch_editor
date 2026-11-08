@@ -81,18 +81,18 @@ Priorities:
 
 **Acceptance criteria:**
 
-- [x] Coefficient operation selector: The six modes currently supported by the implementation use a button-like radio group and precede the frequency range.
-- [x] Frequency range selector (Coefficient Glitch): One button-like radio group combines DC and AC ranges, filtered to each operation's supported choices.
+- [x] Coefficient operations are selected from Effects; every supported coefficient mode has a catalog entry, including Posterization/Poster, Randomize, DC Offset, AC Low-pass, both Engraving directions, Invert AC, and Isolate AC Band.
+- [x] Frequency range selector (Coefficient Glitch): The interactive DCT matrix combines DC and AC ranges and disables zones unsupported by the selected operation.
 - [x] Component selector: Shared labeled Y/Cb/Cr-style choices show JPEG component ID and sampling factors.
-- [x] Brush/Select component scope: Mask tools have no component picker; component targets belong to operations, not saved coefficient brushes.
+- [x] Brush/Select component scope: Mask tools have no component picker; component targets belong to effect operations.
 - [x] Snap option (Select tool): Two visibly selected radio-button choices replace the dropdown.
 - [x] Add "Randomize" button next to every editable seed input.
 - [x] Add visual range endpoints and retain exact numeric entry alongside existing sliders.
-- [x] Separate core parameters from advanced DQT and custom-brush settings where applicable.
+- [x] Separate effect parameters from advanced DQT settings; custom User brush creation and selection are removed from the interface.
 - [x] Radio groups support keyboard navigation and narrow-screen layouts; a 390 px browser viewport was checked.
-- [x] No JPEG operation or feature removed; only UI presentation changed.
+- [x] No JPEG processing operation removed; only custom-brush authoring UI is removed.
 
-**Component selection scope:** Component choices remain single-select because current typed operations accept one `componentIndex`. Component target is selected for each JPEG effect operation, not stored in coefficient brushes; Brush/Select masks do not own a component selector and DCT snapping follows the effect target. Multi-component editing requires a separate operation-model and mask-semantics change; it is not implied by this UI redesign.
+**Component selection scope:** Component choices remain single-select because current typed operations accept one `componentIndex`. Component target is selected for each JPEG effect operation; Brush/Select masks do not own a component selector and DCT snapping follows the effect target. Multi-component editing requires a separate operation-model and mask-semantics change; it is not implied by this UI redesign.
 
 **Definition of done:**
 
@@ -100,18 +100,61 @@ Priorities:
 - Existing functionality preserved exactly; only UI components replaced.
 - All tests pass; acceptance checks verified on multiple screen sizes.
 
+### Workspace and preview foundation — delivered
+
+This implementation slice delivers the new workspace and interaction
+foundations. It does not complete the before/after comparison workflow in
+Milestone 2.
+
+- [x] Three-column Effects / canvas / settings-and-History workspace, with a
+  vertical layout on narrow screens.
+- [x] Categorized effect catalog with selection, full-image, and gesture
+  application modes, each effect with an icon; contextual settings remain
+  separate from the catalog.
+- [x] All supported coefficient modes are available in Effects; custom User
+  brush selection and authoring are absent from the interface.
+- [x] A single canvas toolbar contains Hand, Brush, Select, Inspector, and
+  contextual Brush/Select controls; mask tools are enabled only when relevant.
+- [x] History is collapsed at the bottom of the settings panel and expands into
+  the same scroll flow beneath the active effect.
+- [x] Auto Apply for completed masks in coefficient, Block Shuffle, and Local
+  Shift workflows.
+- [x] Per-effect coefficient settings saved in browser storage, separately
+  from project files and immutable History operation parameters.
+- [x] Interactive 8×8 DCT frequency-zone selector with unavailable zones
+  disabled, available zones neutral, and the selected zone highlighted.
+- [x] Component labels use identified JPEG color metadata where available,
+  label uncertain three-component color data as assumed, and explain other
+  color models.
+- [x] Coefficient and DQT previews update automatically without adding History
+  entries; mask-based block effects retain explicit Preview controls.
+- [x] Random seeds are displayed only for randomized operations; DQT table
+  selection identifies assigned components and pattern choices use radio
+  controls.
+- [ ] Full before/after split or wipe comparison.
+- [ ] Automatic lightweight previews and a draft-preview path for Scan Corrupt.
+- [ ] Persistence of other interface settings or project-level UI preferences.
+
 ### Milestone 2 — Preview and comparison workflow
 
-**Status:** 📋 Planned
+**Status:** 🟡 Partially implemented; comparison workflow remains planned
 
 Improve the relationship between parameter editing and the image preview.
+
+Coefficient and DQT edits now update temporary JPEG-encoded previews
+automatically as their relevant parameters change, without adding History
+entries. Mask-based block effects retain explicit Preview controls, and
+Scan Corrupt has no draft preview. Original JPEG bytes remain unchanged. The
+remaining requirements below focus on comparison and presentation of preview
+versus applied results.
 
 Requirements:
 
 - [ ] Show the original and processed image in a convenient comparison mode;
 - [ ] Support a before/after split or wipe comparison;
-- [ ] Allow switching between original and result;
-- [ ] Update the preview when parameters change;
+- [x] Allow switching between original and result;
+- [x] Update coefficient and DQT previews automatically when relevant
+  parameters or selection change;
 - [ ] Make it clear whether the current preview represents an uncommitted adjustment or an operation already added to history;
 - [ ] Preserve the ability to undo and redo committed operations.
 
@@ -119,8 +162,8 @@ Requirements:
 
 - [ ] Add before/after split-view comparison button (vertical or horizontal)
 - [ ] Add wipe/slider tool for before/after comparison
-- [ ] Add toggle button to show original vs result
-- [ ] Preview updates live as parameters change (without committing to history)
+- [x] Add toggle button to show original vs result
+- [x] Coefficient and DQT previews update automatically without committing to history
 - [ ] Visual indicator distinguishes "previewing" vs "applied" operations
 - [ ] Undo/Redo works on committed operations only
 - [ ] On narrow screens, split-view stacks vertically or offers alternative layout

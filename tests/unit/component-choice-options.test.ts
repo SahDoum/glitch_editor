@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   getComponentChoiceOptions,
-  getQuantizationTableLabel,
   type ChoiceOption,
 } from "../../src/ui/tool-controls";
 import type { JpegComponent } from "../../src/jpeg/inspect";
+import type { JpegComponentLabel } from "../../src/jpeg/color-model";
 
 function components(ids: readonly number[]): JpegComponent[] {
   return ids.map((id) => ({
@@ -24,19 +24,19 @@ function labels(options: readonly ChoiceOption<number>[]) {
 }
 
 describe("JPEG component choice labels", () => {
-  it("maps zero-based YCbCr frame IDs in frame order", () => {
+  it("does not infer color semantics from zero-based component IDs", () => {
     expect(labels(getComponentChoiceOptions(components([0, 1, 2])))).toEqual([
-      "Y: Brightness / Contour",
-      "Cb: blue-yellow",
-      "Cr: red-green",
+      "Component 1",
+      "Component 2",
+      "Component 3",
     ]);
   });
 
-  it("keeps the existing one-based YCbCr frame convention", () => {
+  it("does not infer color semantics from one-based component IDs", () => {
     expect(labels(getComponentChoiceOptions(components([1, 2, 3])))).toEqual([
-      "Y: Brightness / Contour",
-      "Cb: blue-yellow",
-      "Cr: red-green",
+      "Component 1",
+      "Component 2",
+      "Component 3",
     ]);
   });
 
@@ -60,22 +60,20 @@ describe("JPEG component choice labels", () => {
     ]);
   });
 
-  it("uses DQT roles only when the component assignments support them", () => {
-    const assigned = components([0, 1, 2]);
-    assigned[0]!.quantizationTable = 0;
-    assigned[1]!.quantizationTable = 1;
-    assigned[2]!.quantizationTable = 1;
-    expect(getQuantizationTableLabel(0, assigned)).toBe(
-      "DQT 0 — Brightness (Y)",
-    );
-    expect(getQuantizationTableLabel(1, assigned)).toBe(
-      "DQT 1 — Color (Cb/Cr)",
-    );
-
-    assigned[2]!.quantizationTable = 0;
-    expect(getQuantizationTableLabel(0, assigned)).toBe("DQT 0");
-    assigned[0]!.quantizationTable = 2;
-    expect(getQuantizationTableLabel(2, assigned)).toBe("DQT 2");
-    expect(getQuantizationTableLabel(1, components([4, 5, 6]))).toBe("DQT 1");
+  it("applies detected labels and component tones without inferring them from IDs", () => {
+    const detectedLabels: JpegComponentLabel[] = [
+      { label: "Luminance (Y)" },
+      { label: "Blue chroma (Cb)", tone: "blue-yellow" },
+      { label: "Red chroma (Cr)", tone: "red-green" },
+    ];
+    expect(
+      getComponentChoiceOptions(components([4, 5, 6]), detectedLabels).map(
+        ({ label, tone }) => ({ label, tone }),
+      ),
+    ).toEqual([
+      { label: "Luminance (Y)", tone: undefined },
+      { label: "Blue chroma (Cb)", tone: "blue-yellow" },
+      { label: "Red chroma (Cr)", tone: "red-green" },
+    ]);
   });
 });

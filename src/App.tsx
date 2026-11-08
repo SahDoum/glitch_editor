@@ -65,9 +65,12 @@ import type { ProjectDocument } from "./document/model";
 import { OperationHistory } from "./operations/history";
 import {
   createQuantizationPattern,
+  isBlockPermutationParameters,
+  isBlockShiftParameters,
   isBlockTransferParameters,
+  isCoefficientGlitchParameters,
+  isQuantizationParameters,
   MAX_BLOCK_TRANSFER_BLOCKS,
-  GLITCH_FREQUENCY_BANDS,
   QUANTIZATION_PATTERNS,
   type CoefficientDomain,
   type CoefficientGlitchMode,
@@ -78,15 +81,18 @@ import {
   type QuantizationPattern,
   type QuantizationSemantics,
 } from "./operations/jpeg-glitch";
+import { PreviewCoordinator } from "./application/preview-coordinator";
 import {
   BUILT_IN_COEFFICIENT_BRUSHES,
-  DEFAULT_USER_BRUSH,
-  readCoefficientBrushes,
   readBrushAutoApply,
-  updateCoefficientBrush,
   writeBrushAutoApply,
   type CoefficientBrush,
 } from "./application/coefficient-brushes";
+import {
+  readCoefficientEffectSettings,
+  writeCoefficientEffectSettings,
+  type CoefficientEffectSettings,
+} from "./application/coefficient-effect-settings";
 import {
   initialWorkspaceState,
   getHistoryDisplayEntries,
@@ -116,18 +122,68 @@ import {
 } from "./jpeg/scan-decode-diagnostic";
 import {
   ComponentChoiceGroup,
-  getQuantizationTableLabel,
   getCoefficientRangeOptions,
   RadioChoiceGroup,
   SeedField,
-  type CoefficientRangeChoice,
 } from "./ui/tool-controls";
+import { EFFECT_CATALOG, type EffectId } from "./ui/effect-catalog";
+import {
+  DctBasisMatrix,
+  type DctFrequencyChoice,
+  type DctMatrixTarget,
+} from "./ui/dct-basis-matrix";
+import { ComponentPreview } from "./ui/component-preview";
+import {
+  getJpegComponentLabels,
+  getQuantizationTableLabel,
+  identifyJpegColorModel,
+  type JpegComponentLabel,
+} from "./jpeg/color-model";
 
 const MARKER_LIMIT = 250;
 const APPLICATION_VERSION = "0.1.0";
+type CoefficientStepUpdate = {
+  -readonly [
+    Key in keyof CoefficientBrush["step"]
+  ]?: CoefficientBrush["step"][Key];
+};
 const JPEG_CODEC_VERSION = "libjpeg-turbo 3.2.0";
 const EMPTY_JPEG_OPERATIONS: JpegEditableState["jpegOperations"] =
   Object.freeze([]);
+type CoefficientCatalogEffectId = Extract<
+  EffectId,
+  | "pixelate"
+  | "ac-scale"
+  | "coefficient-randomize"
+  | "dc-offset"
+  | "posterization"
+  | "ac-low-pass"
+  | "ringing"
+  | "engraving"
+  | "engraving-vertical"
+  | "ac-invert"
+  | "ac-isolate"
+>;
+const COEFFICIENT_EFFECT_BRUSH_IDS: Readonly<
+  Record<CoefficientCatalogEffectId, string>
+> = {
+  pixelate: "pixelate",
+  "ac-scale": "chroma-scale",
+  "coefficient-randomize": "coefficient-randomize",
+  "dc-offset": "dc-offset",
+  posterization: "dc-steps",
+  "ac-low-pass": "ac-low-pass",
+  ringing: "ringing",
+  engraving: "engraving",
+  "engraving-vertical": "engraving-vertical",
+  "ac-invert": "ac-invert",
+  "ac-isolate": "ac-isolate",
+};
+function isCoefficientCatalogEffectId(
+  effectId: EffectId,
+): effectId is CoefficientCatalogEffectId {
+  return effectId in COEFFICIENT_EFFECT_BRUSH_IDS;
+}
 type ImagePoint = { x: number; y: number };
 type BlockTransformGesture = {
   readonly kind:
@@ -284,6 +340,7 @@ function ImageOverlays({
   selection,
   mask,
   brushDraft,
+  brushCursorPoint,
   brushRadius,
   componentId,
   selectedBlock,
@@ -299,6 +356,7 @@ function ImageOverlays({
   selection: SpatialSelection | null;
   mask: SpatialMask | null;
   brushDraft: readonly (readonly ImagePoint[])[];
+  brushCursorPoint: ImagePoint | null;
   brushRadius: number;
   componentId: number;
   selectedBlock: JpegBlockCoordinate | null;
@@ -428,6 +486,22 @@ function ImageOverlays({
       {draftBrushCoverage?.ok && (
         <path className="brush-draft-cells" d={draftBrushCoverage.value} />
       )}
+      {brushCursorPoint && (
+        <>
+          <circle
+            className="brush-cursor-outline"
+            cx={brushCursorPoint.x}
+            cy={brushCursorPoint.y}
+            r={brushRadius}
+          />
+          <circle
+            className="brush-cursor"
+            cx={brushCursorPoint.x}
+            cy={brushCursorPoint.y}
+            r={brushRadius}
+          />
+        </>
+      )}
       {selectedBlock && (
         <rect
           className="selected-block-overlay"
@@ -459,26 +533,7 @@ function describeMask(mask: SpatialMask): string {
   return `Image-pixel brush · radius ${shape.radius.toFixed(1)} px · ${shape.points.length} samples`;
 }
 
-function loadInitialBrushes(): {
-  brushes: readonly CoefficientBrush[];
-  error: string;
-} {
-  let storage: Storage;
-  try {
-    storage = window.localStorage;
-  } catch {
-    return {
-      brushes: [],
-      error: "Saved brushes are unavailable in this browser.",
-    };
-  }
-  const result = readCoefficientBrushes(storage);
-  return result.ok
-    ? { brushes: result.value, error: "" }
-    : { brushes: [], error: result.error.message };
-}
-
-function loadInitialBrushAutoApply(): {
+function loadInitialEffectAutoApply(): {
   settings: Readonly<Record<string, boolean>>;
   error: string;
 } {
@@ -488,10 +543,29 @@ function loadInitialBrushAutoApply(): {
   } catch {
     return {
       settings: {},
-      error: "Brush automatic-apply settings are unavailable.",
+      error: "Effect automatic-apply settings are unavailable.",
     };
   }
   const result = readBrushAutoApply(storage);
+  return result.ok
+    ? { settings: result.value, error: "" }
+    : { settings: {}, error: result.error.message };
+}
+
+function loadInitialCoefficientEffectSettings(): {
+  settings: CoefficientEffectSettings;
+  error: string;
+} {
+  let storage: Storage;
+  try {
+    storage = window.localStorage;
+  } catch {
+    return {
+      settings: {},
+      error: "Coefficient effect settings are unavailable in this browser.",
+    };
+  }
+  const result = readCoefficientEffectSettings(storage);
   return result.ok
     ? { settings: result.value, error: "" }
     : { settings: {}, error: result.error.message };
@@ -703,17 +777,104 @@ function MetadataInspector({
   );
 }
 
+const PREVIEW_TOOL_BUTTONS: readonly {
+  readonly id: "hand" | "brush" | "select" | "inspector";
+  readonly label: string;
+  readonly shortcut: string;
+}[] = [
+  { id: "hand", label: "Hand", shortcut: "V" },
+  { id: "brush", label: "Brush", shortcut: "B" },
+  { id: "select", label: "Select", shortcut: "M" },
+  { id: "inspector", label: "Inspector", shortcut: "I" },
+];
+
+function getEffectIconPaths(effectId: EffectId): readonly string[] {
+  switch (effectId) {
+    case "pixelate":
+      return ["M4 4h16v16H4z", "M9 4v16", "M15 4v16", "M4 9h16", "M4 15h16"];
+    case "ac-scale":
+      return ["M4 18h16", "M6 15V9", "M10 15V5", "M14 15V8", "M18 15V3"];
+    case "coefficient-randomize":
+      return [
+        "M4 6h4l3 6 3-6h6",
+        "M4 18h4l3-6 3 6h6",
+        "m17 3 3 3-3 3",
+        "m17 15 3 3-3 3",
+      ];
+    case "dc-offset":
+      return ["M4 12h6", "M14 12h6", "M12 5v14", "M9 8l3-3 3 3"];
+    case "posterization":
+      return ["M5 5h14", "M5 10h10", "M5 15h6", "M5 20h14"];
+    case "ac-low-pass":
+      return ["M3 17h4l3-7 3 4 3-9 5 2", "M3 21h18"];
+    case "ringing":
+      return [
+        "M3 12h4",
+        "M17 12h4",
+        "M12 3v4",
+        "M12 17v4",
+        "M8 8a5.7 5.7 0 0 1 8 0",
+      ];
+    case "engraving":
+      return ["M4 6h16", "M4 10h16", "M4 14h16", "M4 18h16"];
+    case "engraving-vertical":
+      return ["M6 4v16", "M10 4v16", "M14 4v16", "M18 4v16"];
+    case "ac-invert":
+      return ["M4 7h6l4 10h6", "m17 14 3 3-3 3", "m7 4-3 3 3 3"];
+    case "ac-isolate":
+      return ["M3 12h4", "M9 12h6", "M17 12h4", "M9 7v10", "M15 7v10"];
+    case "block-transfer":
+      return ["M3 5h6v6H3z", "M15 13h6v6h-6z", "M9 8l6 6", "m11 14 4 0 0-4"];
+    case "block-repeat":
+      return ["M4 4h6v6H4z", "M14 4h6v6h-6z", "M4 14h6v6H4z", "M14 14h6v6h-6z"];
+    case "block-shuffle":
+      return [
+        "M4 5h5v5H4z",
+        "M15 5h5v5h-5z",
+        "M4 15h5v5H4z",
+        "M15 15h5v5h-5z",
+        "m9 8 6 8",
+        "m15 8-6 8",
+      ];
+    case "local-shift":
+      return [
+        "M4 4h6v6H4z",
+        "M14 14h6v6h-6z",
+        "M10 7h5",
+        "m12 4 3 3-3 3",
+        "M14 17H9",
+        "m12 14-3 3 3 3",
+      ];
+    case "quantization":
+      return getToolIconPaths("quantization");
+    case "scan-corrupt":
+      return getToolIconPaths("scan-corrupt");
+  }
+}
+
 function QuantizationMatrixEditor({
   quantizationTables,
   components,
+  componentLabels,
   disabled,
   onApply,
+  onPreview,
+  onDraftChange,
   onError,
 }: {
   quantizationTables: readonly { id: number; values: readonly number[] }[];
   components: JpegInspection["components"];
+  componentLabels: readonly JpegComponentLabel[];
   disabled: boolean;
   onError(message: string): void;
+  onPreview(
+    tableId: number,
+    values: readonly number[],
+    semantics: QuantizationSemantics,
+    pattern: QuantizationPattern | "manual",
+    seed: number,
+  ): void;
+  onDraftChange(): void;
   onApply(
     tableId: number,
     values: readonly number[],
@@ -732,6 +893,10 @@ function QuantizationMatrixEditor({
   const [semantics, setSemantics] =
     useState<QuantizationSemantics>("reinterpret");
   const [seed, setSeed] = useState("1");
+  const onPreviewRef = useRef(onPreview);
+  useEffect(() => {
+    onPreviewRef.current = onPreview;
+  }, [onPreview]);
   const table = quantizationTables.find(
     (candidate) => candidate.id === tableId,
   );
@@ -744,30 +909,46 @@ function QuantizationMatrixEditor({
     if (!nextTable) return;
     setTableId(nextId);
     setValues(nextTable.values.slice());
+    onDraftChange();
     onError("");
   }
 
-  function applyPattern() {
+  function choosePattern(next: QuantizationPattern | "manual") {
+    setPattern(next);
+    onError("");
+    if (next === "manual") {
+      onDraftChange();
+      return;
+    }
     const seedValue = Number(seed);
-    if (
-      !Number.isInteger(seedValue) ||
-      seedValue < 0 ||
-      seedValue > 0xffff_ffff
-    ) {
-      onError("Pattern seed must be an unsigned 32-bit integer.");
-      return;
-    }
-    if (pattern === "manual") {
-      onError("Choose a generated pattern before applying it.");
-      return;
-    }
-    const result = createQuantizationPattern(pattern, values, seedValue);
+    const result = createQuantizationPattern(next, values, seedValue);
     if (!result.ok) {
       onError(result.error.message);
       return;
     }
     setValues([...result.value]);
-    onError("");
+    onDraftChange();
+  }
+
+  function changeSeed(value: string) {
+    setSeed(value);
+    const seedValue = Number(value);
+    if (
+      pattern !== "random" ||
+      !Number.isInteger(seedValue) ||
+      seedValue < 0 ||
+      seedValue > 0xffff_ffff
+    ) {
+      onDraftChange();
+      return;
+    }
+    const result = createQuantizationPattern("random", values, seedValue);
+    if (!result.ok) {
+      onError(result.error.message);
+      return;
+    }
+    setValues([...result.value]);
+    onDraftChange();
   }
 
   const validValues =
@@ -779,54 +960,47 @@ function QuantizationMatrixEditor({
       (value) => Number.isInteger(value) && value >= 1 && value <= 255,
     );
 
+  useEffect(() => {
+    if (!validValues || !table) return;
+    const timeout = window.setTimeout(() => {
+      onPreviewRef.current(tableId, values, semantics, pattern, Number(seed));
+    }, 250);
+    return () => window.clearTimeout(timeout);
+  }, [pattern, seed, semantics, table, tableId, validValues, values]);
+
   return (
     <section className="inspector-section quantization-editor">
-      <p className="operation-description">
-        Edit the 64 quantization values used by components assigned to this
-        table. Changing DQT values does not recover detail discarded earlier.
-      </p>
       <RadioChoiceGroup<number>
         name="quantization-table"
         legend="Table assigned to component(s)"
         value={tableId}
         options={quantizationTables.map((entry) => ({
           value: entry.id,
-          label: getQuantizationTableLabel(entry.id, components),
+          label: getQuantizationTableLabel(
+            entry.id,
+            components,
+            componentLabels,
+          ),
         }))}
         disabled={disabled}
         onChange={(id) => chooseTable(String(id))}
         layout="inline"
       />
       <h3 className="parameter-group-title">Core parameters</h3>
-      <div className="quantization-pattern-controls">
-        <label className="coefficient-field">
-          <span>Pattern</span>
-          <select
-            value={pattern}
-            disabled={disabled}
-            onChange={(event) => {
-              const next = QUANTIZATION_PATTERNS.find(
-                (candidate) => candidate === event.currentTarget.value,
-              );
-              if (next) setPattern(next);
-            }}
-          >
-            <option value="manual">manual values</option>
-            {QUANTIZATION_PATTERNS.map((candidate) => (
-              <option key={candidate} value={candidate}>
-                {candidate}
-              </option>
-            ))}
-          </select>
-        </label>
-        <SeedField
-          id="quantization-seed"
-          label="Pattern seed"
-          value={seed}
-          disabled={disabled}
-          onChange={setSeed}
-        />
-      </div>
+      <RadioChoiceGroup<QuantizationPattern | "manual">
+        name="quantization-pattern"
+        legend="Quantization pattern"
+        value={pattern}
+        options={[
+          { value: "manual", label: "Manual" },
+          ...QUANTIZATION_PATTERNS.map((candidate) => ({
+            value: candidate,
+            label: candidate.replaceAll("-", " "),
+          })),
+        ]}
+        disabled={disabled}
+        onChange={choosePattern}
+      />
       <div className="coefficient-table-wrap">
         <table className="coefficient-table editable-quantization-table">
           <tbody>
@@ -852,6 +1026,7 @@ function QuantizationMatrixEditor({
                           next[index] = Number(event.currentTarget.value);
                           setValues(next);
                           setPattern("manual");
+                          onDraftChange();
                         }}
                       />
                     </td>
@@ -862,6 +1037,14 @@ function QuantizationMatrixEditor({
           </tbody>
         </table>
       </div>
+      {pattern === "random" && (
+        <SeedField
+          label="Random pattern seed"
+          value={seed}
+          disabled={disabled}
+          onChange={changeSeed}
+        />
+      )}
       <details className="advanced-controls">
         <summary>Advanced parameters · quantization semantics</summary>
         <div className="advanced-control-content">
@@ -882,7 +1065,10 @@ function QuantizationMatrixEditor({
               },
             ]}
             disabled={disabled}
-            onChange={setSemantics}
+            onChange={(value) => {
+              setSemantics(value);
+              onDraftChange();
+            }}
             layout="inline"
           />
           <p className="coefficient-note">
@@ -892,24 +1078,18 @@ function QuantizationMatrixEditor({
           </p>
         </div>
       </details>
-      <button
-        className="operation-button secondary"
-        type="button"
-        disabled={disabled || pattern === "manual"}
-        onClick={applyPattern}
-      >
-        Generate pattern
-      </button>
-      <button
-        className="operation-button"
-        type="button"
-        disabled={disabled || !table || !validValues}
-        onClick={() =>
-          onApply(tableId, values, semantics, pattern, Number(seed))
-        }
-      >
-        Apply DQT pattern
-      </button>
+      <div className="operation-actions">
+        <button
+          className="operation-button"
+          type="button"
+          disabled={disabled || !table || !validValues}
+          onClick={() =>
+            onApply(tableId, values, semantics, pattern, Number(seed))
+          }
+        >
+          Apply
+        </button>
+      </div>
     </section>
   );
 }
@@ -1096,6 +1276,9 @@ function App() {
   const [editedPreviewUrl, setEditedPreviewUrl] = useState<string | null>(null);
   const [editedBytes, setEditedBytes] = useState<Uint8Array | null>(null);
   const [editedPreviewError, setEditedPreviewError] = useState("");
+  const [draftPreviewUrl, setDraftPreviewUrl] = useState<string | null>(null);
+  const [draftPreviewSignature, setDraftPreviewSignature] = useState("");
+  const [isDraftPreviewing, setIsDraftPreviewing] = useState(false);
   const [cleanEncodedPreviewUrl, setCleanEncodedPreviewUrl] = useState<
     string | null
   >(null);
@@ -1141,7 +1324,6 @@ function App() {
   const {
     activeTool: toolMode,
     panelTool,
-    isRightPanelCollapsed,
     selectedBlock,
     selectionMask: globalSelectionMask,
   } = workspaceState;
@@ -1151,14 +1333,32 @@ function App() {
   const [maskGrid, setMaskGrid] = useState<JpegSelectionGrid>("dct");
   const [componentIndex, setComponentIndex] = useState(0);
   const [inspectorComponentId, setInspectorComponentId] = useState(0);
-  const [frequencyBand, setFrequencyBand] =
-    useState<GlitchFrequencyBand>("all");
-  const [coefficientDomain, setCoefficientDomain] =
-    useState<CoefficientDomain>("ac");
-  const [coefficientMode, setCoefficientMode] =
-    useState<CoefficientGlitchMode>("zero");
-  const [coefficientStrength, setCoefficientStrength] = useState(1);
-  const [coefficientSeed, setCoefficientSeed] = useState(1);
+  const [initialCoefficientSettings] = useState(
+    loadInitialCoefficientEffectSettings,
+  );
+  const [coefficientEffectSettings, setCoefficientEffectSettings] = useState(
+    initialCoefficientSettings.settings,
+  );
+  const [coefficientEffectSettingsError, setCoefficientEffectSettingsError] =
+    useState(initialCoefficientSettings.error);
+  const initialPixelateSettings =
+    initialCoefficientSettings.settings.pixelate ??
+    BUILT_IN_COEFFICIENT_BRUSHES[0]!.step;
+  const [frequencyBand, setFrequencyBand] = useState<GlitchFrequencyBand>(
+    initialPixelateSettings.frequencyBand,
+  );
+  const [coefficientDomain, setCoefficientDomain] = useState<CoefficientDomain>(
+    initialPixelateSettings.domain,
+  );
+  const [coefficientMode, setCoefficientMode] = useState<CoefficientGlitchMode>(
+    initialPixelateSettings.mode,
+  );
+  const [coefficientStrength, setCoefficientStrength] = useState(
+    initialPixelateSettings.strength,
+  );
+  const [coefficientSeed, setCoefficientSeed] = useState(
+    initialPixelateSettings.seed,
+  );
   const [repeatSource, setRepeatSource] = useState<JpegBlockRegion | null>(
     null,
   );
@@ -1189,25 +1389,28 @@ function App() {
     readonly y: number;
   } | null>(null);
   const [brushSize, setBrushSize] = useState(32);
-  const [initialBrushState] = useState(loadInitialBrushes);
-  const [userBrushes, setUserBrushes] = useState(initialBrushState.brushes);
-  const [brushStorageError, setBrushStorageError] = useState(
-    initialBrushState.error,
-  );
   const [selectedBrushId, setSelectedBrushId] = useState("pixelate");
-  const [brushName, setBrushName] = useState("");
-  const [initialAutoApply] = useState(loadInitialBrushAutoApply);
-  const [brushAutoApply, setBrushAutoApply] = useState(
+  const [initialAutoApply] = useState(loadInitialEffectAutoApply);
+  const [effectAutoApply, setEffectAutoApply] = useState(
     initialAutoApply.settings,
   );
-  const [brushAutoError, setBrushAutoError] = useState(initialAutoApply.error);
+  const [effectAutoApplyError, setEffectAutoApplyError] = useState(
+    initialAutoApply.error,
+  );
   const [zoom, setZoom] = useState(1);
   const [selection, setSelection] = useState<SpatialSelection | null>(null);
   const [brushDraft, setBrushDraft] = useState<
     readonly (readonly ImagePoint[])[]
   >([]);
+  const [brushCursorPoint, setBrushCursorPoint] = useState<ImagePoint | null>(
+    null,
+  );
   const fileInput = useRef<HTMLInputElement>(null);
   const requestId = useRef(0);
+  const previewCoordinator = useRef(new PreviewCoordinator());
+  const previewAbortController = useRef<AbortController | null>(null);
+  const previewRequestSignature = useRef("");
+  const previewCurrentEffectRef = useRef<(() => Promise<void>) | null>(null);
   const dragDepth = useRef(0);
   const importController = useRef<AbortController | null>(null);
   const operationHistory = useRef<OperationHistory<JpegEditableState> | null>(
@@ -1235,15 +1438,98 @@ function App() {
   const jpegOperations =
     historyDocument?.currentState.jpegOperations ?? EMPTY_JPEG_OPERATIONS;
   const activeMask = globalSelectionMask;
-  const brushes = [
-    ...BUILT_IN_COEFFICIENT_BRUSHES,
-    ...(userBrushes.some((brush) => brush.id === DEFAULT_USER_BRUSH.id)
-      ? userBrushes
-      : [DEFAULT_USER_BRUSH, ...userBrushes]),
-  ];
-  const selectedBrush = brushes.find((brush) => brush.id === selectedBrushId);
+  const selectedBrush = BUILT_IN_COEFFICIENT_BRUSHES.find(
+    (brush) => brush.id === selectedBrushId,
+  );
+  const selectedCoefficientCatalogEffect = EFFECT_CATALOG.find(
+    (effect) =>
+      isCoefficientCatalogEffectId(effect.id) &&
+      COEFFICIENT_EFFECT_BRUSH_IDS[effect.id] === selectedBrushId,
+  );
+  const selectedCatalogEffectId: EffectId | null =
+    panelTool === "coefficient-glitch"
+      ? (selectedCoefficientCatalogEffect?.id ?? null)
+      : panelTool === "block-transform"
+        ? blockTransformMode === "transfer"
+          ? "block-transfer"
+          : blockTransformMode === "repeat"
+            ? "block-repeat"
+            : blockTransformMode === "shuffle"
+              ? "block-shuffle"
+              : "local-shift"
+        : panelTool === "quantization"
+          ? "quantization"
+          : panelTool === "scan-corrupt"
+            ? "scan-corrupt"
+            : null;
+  const dctMatrixTarget: DctMatrixTarget =
+    coefficientMode === "offset" || coefficientMode === "dc-steps"
+      ? { kind: "dc" }
+      : coefficientMode === "low-pass"
+        ? { kind: "low-pass", cutoff: coefficientStrength }
+        : coefficientMode === "ringing-boost"
+          ? { kind: "ringing" }
+          : coefficientMode === "engrave-horizontal" ||
+              coefficientMode === "engrave-vertical"
+            ? {
+                kind: "engraving",
+                direction:
+                  coefficientMode === "engrave-horizontal"
+                    ? "horizontal"
+                    : "vertical",
+              }
+            : coefficientDomain === "dc"
+              ? { kind: "dc" }
+              : { kind: "band", band: frequencyBand };
+  const availableDctChoices: readonly DctFrequencyChoice[] =
+    getCoefficientRangeOptions(coefficientMode).map(({ value }) =>
+      value === "dc" ? "dc" : (value.slice(3) as DctFrequencyChoice),
+    );
+  const selectedDctChoice: DctFrequencyChoice | null =
+    availableDctChoices.length === 0
+      ? null
+      : coefficientDomain === "dc"
+        ? "dc"
+        : frequencyBand;
   const componentCount = document?.inspection.components.length ?? 0;
   const documentHash = document?.originalAsset.sha256;
+  const colorModel = useMemo(
+    () =>
+      document
+        ? identifyJpegColorModel(
+            document.originalAsset.readBytes(),
+            document.inspection,
+          )
+        : null,
+    [document],
+  );
+  const componentLabels = useMemo(
+    () =>
+      colorModel
+        ? getJpegComponentLabels(colorModel, componentCount)
+        : ([] as readonly JpegComponentLabel[]),
+    [colorModel, componentCount],
+  );
+  const effectPreviewSignature = JSON.stringify({
+    documentHash,
+    revision: historyDocument?.revision ?? 0,
+    panelTool,
+    selectedBrushId,
+    componentIndex,
+    coefficientDomain,
+    coefficientMode,
+    frequencyBand,
+    coefficientStrength,
+    coefficientSeed,
+    blockTransformMode,
+    permutationSeed,
+    blockShiftX,
+    blockShiftY,
+    maskId: activeMask?.id ?? null,
+  });
+  const isDraftPreviewStale =
+    draftPreviewUrl !== null &&
+    draftPreviewSignature !== effectPreviewSignature;
   const currentQuantizationTables = useMemo(
     () =>
       document
@@ -1252,10 +1538,10 @@ function App() {
     [document, jpegOperations],
   );
   const contextualErrorMessage = [
-    brushStorageError
-      ? `${brushStorageError} Saving brushes is unavailable.`
+    coefficientEffectSettingsError
+      ? `${coefficientEffectSettingsError} Coefficient settings may not be retained.`
       : "",
-    brushAutoError,
+    effectAutoApplyError,
     documentHash && componentIndex >= componentCount
       ? `This image has no component ${componentIndex}. Choose another brush or component.`
       : "",
@@ -1273,6 +1559,30 @@ function App() {
     (contextualErrorMessage !== dismissedToastMessage
       ? contextualErrorMessage
       : "");
+
+  useEffect(() => {
+    if (previewRequestSignature.current !== effectPreviewSignature) {
+      previewAbortController.current?.abort();
+      previewCoordinator.current.cancel();
+    }
+    if (
+      panelTool !== "coefficient-glitch" ||
+      !activeMask ||
+      scanCorruptionReports.length > 0
+    ) {
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      const previewCurrentEffect = previewCurrentEffectRef.current;
+      if (previewCurrentEffect) void previewCurrentEffect();
+    }, 250);
+    return () => window.clearTimeout(timeout);
+  }, [
+    activeMask,
+    effectPreviewSignature,
+    panelTool,
+    scanCorruptionReports.length,
+  ]);
 
   useEffect(() => {
     const dialog = saveDialogRef.current;
@@ -1293,6 +1603,14 @@ function App() {
       if (editedPreviewUrl) URL.revokeObjectURL(editedPreviewUrl);
     },
     [editedPreviewUrl],
+  );
+
+  useEffect(
+    () => () => {
+      previewAbortController.current?.abort();
+      if (draftPreviewUrl) URL.revokeObjectURL(draftPreviewUrl);
+    },
+    [draftPreviewUrl],
   );
 
   useEffect(
@@ -1487,6 +1805,10 @@ function App() {
         ? projectData.scanCorruptionStages
         : null;
     projectStagesReplayStarted.current = false;
+    previewAbortController.current?.abort();
+    previewCoordinator.current.cancel();
+    setDraftPreviewUrl(null);
+    setDraftPreviewSignature("");
     setEditedPreviewUrl(null);
     setEditedBytes(null);
     setEditedPreviewError("");
@@ -1510,11 +1832,11 @@ function App() {
     setBrushDraft([]);
     setComponentIndex(0);
     setInspectorComponentId(result.value.inspection.components[0]?.id ?? 0);
-    setFrequencyBand("all");
-    setCoefficientDomain("ac");
-    setCoefficientMode("zero");
-    setCoefficientStrength(1);
-    setCoefficientSeed(1);
+    setFrequencyBand(initialPixelateSettings.frequencyBand);
+    setCoefficientDomain(initialPixelateSettings.domain);
+    setCoefficientMode(initialPixelateSettings.mode);
+    setCoefficientStrength(initialPixelateSettings.strength);
+    setCoefficientSeed(initialPixelateSettings.seed);
     setSelectedBrushId("pixelate");
     setRepeatSource(null);
     setRepeatDraft(null);
@@ -1577,6 +1899,10 @@ function App() {
       scanCorruptionController.current = null;
       scanCorruptionHistory.current.clear();
       cleanEncodedBytes.current = null;
+      previewAbortController.current?.abort();
+      previewCoordinator.current.cancel();
+      setDraftPreviewUrl(null);
+      setDraftPreviewSignature("");
       setScanCorruptionReports([]);
       setScanDecodeDiagnostic(null);
       setEditedPreviewUrl(null);
@@ -1862,11 +2188,7 @@ function App() {
       keyboardSelectionAnchor.current = null;
       setSelection(null);
       dispatchWorkspace({ type: "set-selection", selection: mask.value });
-      if (
-        panelTool === "coefficient-glitch" &&
-        brushAutoApply[selectedBrushId] &&
-        applyCoefficientOperation(mask.value)
-      ) {
+      if (autoApplySelectionEffect(mask.value)) {
         dispatchWorkspace({ type: "set-selection", selection: null });
       }
       setCanvasKeyboardAnnouncement("Rectangle selection complete.");
@@ -2178,6 +2500,11 @@ function App() {
       return;
     }
     const imagePoint = getImagePoint(event);
+    if (toolMode === "brush" && imagePoint && isImagePointInside(imagePoint)) {
+      setBrushCursorPoint(imagePoint);
+    } else {
+      setBrushCursorPoint(null);
+    }
     const transformGesture = blockTransformGesture.current;
     if (toolMode === "block-transform" && transformGesture && imagePoint) {
       const pointIsInside = isImagePointInside(imagePoint);
@@ -2365,13 +2692,8 @@ function App() {
       }
       setSelection(null);
       dispatchWorkspace({ type: "set-selection", selection: mask.value });
-      if (
-        panelTool === "coefficient-glitch" &&
-        brushAutoApply[selectedBrushId]
-      ) {
-        if (applyCoefficientOperation(mask.value)) {
-          dispatchWorkspace({ type: "set-selection", selection: null });
-        }
+      if (autoApplySelectionEffect(mask.value)) {
+        dispatchWorkspace({ type: "set-selection", selection: null });
       }
       return;
     }
@@ -2390,13 +2712,8 @@ function App() {
         } else {
           setSelection(null);
           dispatchWorkspace({ type: "set-selection", selection: mask.value });
-          if (
-            panelTool === "coefficient-glitch" &&
-            brushAutoApply[selectedBrushId]
-          ) {
-            if (applyCoefficientOperation(mask.value)) {
-              dispatchWorkspace({ type: "set-selection", selection: null });
-            }
+          if (autoApplySelectionEffect(mask.value)) {
+            dispatchWorkspace({ type: "set-selection", selection: null });
           }
         }
       }
@@ -2435,6 +2752,48 @@ function App() {
     if (activeToolPanel.current) activeToolPanel.current.open = true;
   }
 
+  function activateCatalogEffect(effectId: EffectId) {
+    if (isCoefficientCatalogEffectId(effectId)) {
+      activateTool("coefficient-glitch");
+      selectCoefficientBrush(COEFFICIENT_EFFECT_BRUSH_IDS[effectId]);
+      return;
+    }
+
+    switch (effectId) {
+      case "block-transfer":
+      case "block-repeat":
+      case "block-shuffle":
+      case "local-shift": {
+        const mode = {
+          "block-transfer": "transfer",
+          "block-repeat": "repeat",
+          "block-shuffle": "shuffle",
+          "local-shift": "shift",
+        }[effectId] as typeof blockTransformMode;
+        activateTool("block-transform");
+        setBlockTransformMode(mode);
+        if (mode === "shuffle" || mode === "shift") {
+          dispatchWorkspace({
+            type: "activate-mask-effect",
+            tool: "block-transform",
+          });
+        } else {
+          dispatchWorkspace({
+            type: "activate-tool",
+            tool: "block-transform",
+          });
+        }
+        return;
+      }
+      case "quantization":
+        activateTool("quantization");
+        return;
+      case "scan-corrupt":
+        activateTool("scan-corrupt");
+        return;
+    }
+  }
+
   function applyCoefficientOperation(mask = activeMask) {
     if (!ensureCoefficientPhase()) return false;
     const history = operationHistory.current;
@@ -2462,116 +2821,85 @@ function App() {
   }
 
   function selectCoefficientBrush(id: string) {
-    const brush = brushes.find((candidate) => candidate.id === id);
+    const brush = BUILT_IN_COEFFICIENT_BRUSHES.find(
+      (candidate) => candidate.id === id,
+    );
     if (!brush) {
       setErrorMessage("The selected brush is unavailable.");
       return;
     }
+    const step = coefficientEffectSettings[id] ?? brush.step;
     setSelectedBrushId(id);
-    setBrushName(brush.name);
-    setCoefficientDomain(brush.step.domain);
-    setCoefficientMode(brush.step.mode);
-    setFrequencyBand(brush.step.frequencyBand);
-    setCoefficientStrength(brush.step.strength);
-    setCoefficientSeed(brush.step.seed);
+    setCoefficientDomain(step.domain);
+    setCoefficientMode(step.mode);
+    setFrequencyBand(step.frequencyBand);
+    setCoefficientStrength(step.strength);
+    setCoefficientSeed(step.seed);
     setErrorMessage("");
   }
 
-  function createCurrentCoefficientStep(): CoefficientBrush["step"] {
-    return {
+  function updateCoefficientSettings(update: CoefficientStepUpdate) {
+    const current: CoefficientBrush["step"] = {
       domain: coefficientDomain,
       mode: coefficientMode,
       frequencyBand,
-      strength:
-        coefficientMode === "invert" || coefficientMode === "isolate"
-          ? 0
-          : coefficientStrength,
+      strength: coefficientStrength,
       seed: coefficientSeed,
+      ...update,
     };
-  }
-
-  function saveCurrentBrush() {
+    setCoefficientDomain(current.domain);
+    setCoefficientMode(current.mode);
+    setFrequencyBand(current.frequencyBand);
+    setCoefficientStrength(current.strength);
+    setCoefficientSeed(current.seed);
+    const persistedStep = {
+      ...current,
+      strength:
+        current.mode === "invert" || current.mode === "isolate"
+          ? 0
+          : current.strength,
+    };
+    const next = {
+      ...coefficientEffectSettings,
+      [selectedBrushId]: persistedStep,
+    };
     let storage: Storage;
     try {
       storage = window.localStorage;
     } catch {
-      setBrushStorageError("Saved brushes are unavailable in this browser.");
+      setCoefficientEffectSettingsError(
+        "Coefficient effect settings are unavailable in this browser.",
+      );
       return;
     }
-    if (brushStorageError) {
-      setErrorMessage("Resolve the brush storage error before saving.");
-      return;
-    }
-    const brush: CoefficientBrush = {
-      id: selectedBrushId,
-      name: brushName.trim(),
-      step: createCurrentCoefficientStep(),
-    };
-    const saved = updateCoefficientBrush(storage, userBrushes, brush);
+    const saved = writeCoefficientEffectSettings(storage, next);
     if (!saved.ok) {
-      setErrorMessage(saved.error.message);
+      setCoefficientEffectSettingsError(saved.error.message);
       return;
     }
-    setUserBrushes(saved.value);
-    setErrorMessage("");
+    setCoefficientEffectSettings(next);
+    setCoefficientEffectSettingsError("");
   }
 
-  function addCoefficientBrush() {
-    if (brushStorageError) {
-      setErrorMessage("Resolve the brush storage error before adding a brush.");
-      return;
-    }
+  function changeEffectAutoApply(checked: boolean, effectId = selectedBrushId) {
+    if (effectAutoApplyError) return;
     let storage: Storage;
     try {
       storage = window.localStorage;
     } catch {
-      setBrushStorageError("Saved brushes are unavailable in this browser.");
+      setEffectAutoApplyError(
+        "Effect automatic-apply settings are unavailable.",
+      );
       return;
     }
-    let number = 2;
-    while (
-      brushes.some(
-        (brush) => brush.name.toLowerCase() === `user brush ${number}`,
-      )
-    )
-      number += 1;
-    const brush = {
-      ...DEFAULT_USER_BRUSH,
-      id: crypto.randomUUID(),
-      name: `User brush ${number}`,
-    };
-    const saved = updateCoefficientBrush(storage, userBrushes, brush);
-    if (!saved.ok) {
-      setErrorMessage(saved.error.message);
-      return;
-    }
-    setUserBrushes(saved.value);
-    setSelectedBrushId(brush.id);
-    setBrushName(brush.name);
-    setCoefficientDomain(brush.step.domain);
-    setCoefficientMode(brush.step.mode);
-    setFrequencyBand(brush.step.frequencyBand);
-    setCoefficientStrength(brush.step.strength);
-    setCoefficientSeed(brush.step.seed);
-    setErrorMessage("");
-  }
-
-  function changeBrushAutoApply(checked: boolean) {
-    if (brushAutoError) return;
-    let storage: Storage;
-    try {
-      storage = window.localStorage;
-    } catch {
-      setBrushAutoError("Brush automatic-apply settings are unavailable.");
-      return;
-    }
-    const next = { ...brushAutoApply, [selectedBrushId]: checked };
+    const next = { ...effectAutoApply, [effectId]: checked };
     const result = writeBrushAutoApply(storage, next);
     if (!result.ok) {
-      setBrushAutoError(result.error.message);
+      setEffectAutoApplyError(result.error.message);
       return;
     }
-    setBrushAutoApply(next);
+    setEffectAutoApply(next);
+    setEffectAutoApplyError("");
   }
 
   function applyBlockRepeat() {
@@ -2596,40 +2924,63 @@ function App() {
     );
   }
 
-  function applyBlockPermutation() {
-    if (!ensureCoefficientPhase()) return;
+  function applyBlockPermutation(mask = activeMask): boolean {
+    if (!ensureCoefficientPhase()) return false;
     const history = operationHistory.current;
-    const mask = activeMask;
     if (!history || !mask) {
       setErrorMessage("Draw or select a mask before permuting DCT blocks.");
-      return;
+      return false;
     }
-    updateHistory(
-      applyBlockPermutationOperation(history, {
-        kind: "block-permutation",
-        componentIndex,
-        mask,
-        seed: permutationSeed,
-      }),
-    );
+    const result = applyBlockPermutationOperation(history, {
+      kind: "block-permutation",
+      componentIndex,
+      mask,
+      seed: permutationSeed,
+    });
+    updateHistory(result);
+    return result.ok;
   }
 
-  function applyBlockShift() {
-    if (!ensureCoefficientPhase()) return;
+  function applyBlockShift(mask = activeMask): boolean {
+    if (!ensureCoefficientPhase()) return false;
     const history = operationHistory.current;
-    if (!history || !activeMask) {
+    if (!history || !mask) {
       setErrorMessage("Draw or select a mask before shifting DCT blocks.");
-      return;
+      return false;
     }
-    updateHistory(
-      applyBlockShiftOperation(history, {
-        kind: "block-shift",
-        componentIndex,
-        mask: activeMask,
-        offsetX: blockShiftX,
-        offsetY: blockShiftY,
-      }),
-    );
+    const result = applyBlockShiftOperation(history, {
+      kind: "block-shift",
+      componentIndex,
+      mask,
+      offsetX: blockShiftX,
+      offsetY: blockShiftY,
+    });
+    updateHistory(result);
+    return result.ok;
+  }
+
+  function autoApplySelectionEffect(mask: SpatialMask): boolean {
+    if (
+      panelTool === "coefficient-glitch" &&
+      effectAutoApply[selectedBrushId]
+    ) {
+      return applyCoefficientOperation(mask);
+    }
+    if (
+      panelTool === "block-transform" &&
+      blockTransformMode === "shuffle" &&
+      effectAutoApply["block-shuffle"]
+    ) {
+      return applyBlockPermutation(mask);
+    }
+    if (
+      panelTool === "block-transform" &&
+      blockTransformMode === "shift" &&
+      effectAutoApply["local-shift"]
+    ) {
+      return applyBlockShift(mask);
+    }
+    return false;
   }
 
   function applyQuantizationEdit(
@@ -2653,6 +3004,213 @@ function App() {
       }),
     );
   }
+
+  function previewQuantizationEdit(
+    tableId: number,
+    values: readonly number[],
+    semantics: QuantizationSemantics,
+    pattern: QuantizationPattern | "manual",
+    seed: number,
+  ) {
+    if (!document) return;
+    const operation: JpegGlitchOperation = {
+      kind: "quantization",
+      tableId,
+      values,
+      semantics,
+      pattern,
+      seed,
+    };
+    if (!isQuantizationParameters(operation, document.inspection)) {
+      setErrorMessage("The current DQT settings are invalid.");
+      return;
+    }
+    void previewCurrentEffect(operation);
+  }
+
+  function markDraftPreviewStale() {
+    previewAbortController.current?.abort();
+    previewCoordinator.current.cancel();
+    setDraftPreviewUrl(null);
+    setDraftPreviewSignature("");
+  }
+
+  async function previewCurrentEffect(operationOverride?: JpegGlitchOperation) {
+    if (!document || !historyDocument) return;
+    if (!ensureCoefficientPhase()) return;
+
+    let operation: JpegGlitchOperation;
+    if (operationOverride) {
+      operation = operationOverride;
+    } else if (panelTool === "coefficient-glitch") {
+      if (!activeMask) {
+        setErrorMessage("Select an area before previewing this effect.");
+        return;
+      }
+      const candidate: JpegGlitchOperation = {
+        kind: "coefficients",
+        mask: activeMask,
+        componentIndex,
+        domain: coefficientDomain,
+        mode: coefficientMode,
+        frequencyBand,
+        strength:
+          coefficientMode === "invert" || coefficientMode === "isolate"
+            ? 0
+            : coefficientStrength,
+        seed: coefficientSeed,
+      };
+      if (!isCoefficientGlitchParameters(candidate, document.inspection)) {
+        setErrorMessage("The current coefficient settings are invalid.");
+        return;
+      }
+      operation = candidate;
+    } else if (
+      panelTool === "block-transform" &&
+      blockTransformMode === "shuffle"
+    ) {
+      if (!activeMask) {
+        setErrorMessage("Select an area before previewing block shuffle.");
+        return;
+      }
+      const candidate: JpegGlitchOperation = {
+        kind: "block-permutation",
+        componentIndex,
+        mask: activeMask,
+        seed: permutationSeed,
+      };
+      if (!isBlockPermutationParameters(candidate, document.inspection)) {
+        setErrorMessage("The current block-shuffle settings are invalid.");
+        return;
+      }
+      operation = candidate;
+    } else if (
+      panelTool === "block-transform" &&
+      blockTransformMode === "shift"
+    ) {
+      if (!activeMask) {
+        setErrorMessage("Select an area before previewing local shift.");
+        return;
+      }
+      const candidate: JpegGlitchOperation = {
+        kind: "block-shift",
+        componentIndex,
+        mask: activeMask,
+        offsetX: blockShiftX,
+        offsetY: blockShiftY,
+      };
+      if (!isBlockShiftParameters(candidate, document.inspection)) {
+        setErrorMessage("The current local-shift settings are invalid.");
+        return;
+      }
+      operation = candidate;
+    } else {
+      setErrorMessage(
+        "Preview is available for coefficient effects and mask-based block effects.",
+      );
+      return;
+    }
+
+    previewAbortController.current?.abort();
+    const controller = new AbortController();
+    previewAbortController.current = controller;
+    const coordinator = previewCoordinator.current;
+    const token = coordinator.begin(historyDocument.revision);
+    previewRequestSignature.current = effectPreviewSignature;
+    setIsDraftPreviewing(true);
+    setErrorMessage("");
+
+    const geometry: JpegBlockGeometry = {
+      width: document.inspection.width,
+      height: document.inspection.height,
+      components: document.inspection.components.map(
+        ({ id, horizontalSampling, verticalSampling, quantizationTable }) => ({
+          id,
+          horizontalSampling,
+          verticalSampling,
+          quantizationTable,
+        }),
+      ),
+    };
+
+    try {
+      const encoded = await encodeJpegCoefficients(
+        document.originalAsset.readBytes(),
+        geometry,
+        [...jpegOperations, operation],
+        controller.signal,
+      );
+      if (controller.signal.aborted) return;
+      if (!encoded.ok) {
+        setErrorMessage(encoded.error.message);
+        return;
+      }
+      if (
+        !coordinator.isCurrent(
+          token,
+          operationHistory.current?.snapshot.revision ??
+            historyDocument.revision,
+        )
+      ) {
+        return;
+      }
+
+      const previewUrl = createJpegPreviewUrl(encoded.value);
+      const preview = new Image();
+      preview.src = previewUrl;
+      try {
+        await preview.decode();
+      } catch {
+        URL.revokeObjectURL(previewUrl);
+        if (!controller.signal.aborted) {
+          setErrorMessage(
+            "The effect was encoded, but the browser could not decode its preview.",
+          );
+        }
+        return;
+      }
+      if (
+        controller.signal.aborted ||
+        !coordinator.isCurrent(
+          token,
+          operationHistory.current?.snapshot.revision ??
+            historyDocument.revision,
+        )
+      ) {
+        URL.revokeObjectURL(previewUrl);
+        return;
+      }
+      if (
+        preview.naturalWidth !== document.inspection.width ||
+        preview.naturalHeight !== document.inspection.height
+      ) {
+        URL.revokeObjectURL(previewUrl);
+        setErrorMessage(
+          "The effect preview dimensions do not match the image.",
+        );
+        return;
+      }
+      setDraftPreviewUrl(previewUrl);
+      setDraftPreviewSignature(effectPreviewSignature);
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setErrorMessage(
+          error instanceof Error
+            ? `Effect preview failed: ${error.message}`
+            : "Effect preview failed for an unknown reason.",
+        );
+      }
+    } finally {
+      if (previewAbortController.current === controller) {
+        previewAbortController.current = null;
+        setIsDraftPreviewing(false);
+      }
+    }
+  }
+
+  useEffect(() => {
+    previewCurrentEffectRef.current = () => previewCurrentEffect();
+  });
 
   function clearSelection() {
     setSelection(null);
@@ -3155,7 +3713,8 @@ function App() {
     ? document?.previewUrl
     : showCleanEncoded
       ? cleanEncodedPreviewUrl
-      : (editedPreviewUrl ??
+      : (draftPreviewUrl ??
+        editedPreviewUrl ??
         (hasScanCorruption ? cleanEncodedPreviewUrl : document?.previewUrl));
 
   useEffect(() => {
@@ -3225,7 +3784,7 @@ function App() {
   }, [blockTransformMode, document, panelTool, selectAllImage, toolMode]);
 
   return (
-    <main className={`workspace ${document ? "has-tool-bar" : ""}`}>
+    <main className={`workspace ${document ? "has-document" : ""}`}>
       <header className="topbar">
         <a
           className="brand"
@@ -3388,386 +3947,442 @@ function App() {
         </dialog>
       )}
 
-      {document && (
-        <nav className="tool-bar" aria-label="Editing tools">
-          {TOOL_GROUPS.map((group) => (
-            <div
-              className="tool-group"
-              key={group.label}
-              role="group"
-              aria-label={group.label}
-            >
-              <span className="tool-group-label">{group.label}</span>
-              <div className="tool-group-buttons">
-                {group.tools.map((tool) => {
-                  const enabled = isCanvasToolEnabled(
-                    tool.id,
-                    panelTool,
-                    panelTool === "block-transform" &&
-                      (blockTransformMode === "shuffle" ||
-                        blockTransformMode === "shift"),
-                  );
-                  return (
-                    <button
-                      className={`tool-button ${toolMode === tool.id || panelTool === tool.id ? "is-active" : ""}`}
-                      key={tool.id}
-                      type="button"
-                      disabled={!enabled}
-                      aria-label={tool.label}
-                      aria-pressed={
-                        toolMode === tool.id || panelTool === tool.id
-                      }
-                      aria-keyshortcuts={tool.shortcut}
-                      title={
-                        enabled
-                          ? `${tool.label} (${tool.shortcut})`
-                          : `Select Coefficient Glitch to enable ${tool.label}`
-                      }
-                      onClick={() => activateTool(tool.id)}
-                    >
-                      <svg
-                        className="tool-icon"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth={
-                          tool.id === "block-transform" ? "2.6" : "1.7"
-                        }
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden="true"
-                      >
-                        {getToolIconPaths(tool.id).map((path) => (
-                          <path
-                            d={path}
-                            key={path}
-                            strokeDasharray={
-                              tool.id === "select" ? "3 3" : undefined
-                            }
-                          />
-                        ))}
-                      </svg>
-                      <span>{tool.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-        </nav>
-      )}
-
       <section
-        className={`editor ${isDragging ? "is-dragging" : ""} ${isRightPanelCollapsed ? "is-panel-collapsed" : ""}`}
+        className={`editor ${isDragging ? "is-dragging" : ""}`}
         aria-label="JPEG workspace"
         onDragEnter={onDragEnter}
         onDragOver={(event) => event.preventDefault()}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
       >
-        <div className="canvas">
-          {visibleErrorMessage && (
-            <div className="workspace-error-toast" role="alert">
-              <span className="error-icon" aria-hidden="true">
-                !
-              </span>
-              <span className="workspace-error-message">
-                {visibleErrorMessage}
-              </span>
-              <button
-                type="button"
-                aria-label="Dismiss error"
-                onClick={() => {
-                  setDismissedToastMessage(visibleErrorMessage);
-                  setErrorMessage("");
-                }}
-              >
-                ×
-              </button>
-            </div>
-          )}
-          {!document ? (
-            <div className="welcome">
-              <div className="eyebrow">JPEG STRUCTURE · CREATIVE CONTROL</div>
-              <h1>Make room for happy accidents.</h1>
-              <p>
-                Inspect JPEG structure and quantized DCT coefficients locally.
-                The original file stays untouched and its pixel preview remains
-                separate.
-              </p>
-              <button
-                className="welcome-button"
-                type="button"
-                onClick={() => fileInput.current?.click()}
-                disabled={isLoading}
-              >
-                Choose a JPEG
-                <span aria-hidden="true">↗</span>
-              </button>
-              <div className="milestone-note">
-                <span className="note-index">03</span>
-                <span>
-                  Drop a JPEG to inspect it, select a region, and apply
-                  reversible JPEG effects.
+        {document && (
+          <aside className="effects-catalog" aria-label="Effects">
+            <header className="effects-catalog-header">
+              <h2>Effects</h2>
+            </header>
+            {Array.from(
+              new Set(EFFECT_CATALOG.map((effect) => effect.category)),
+            ).map((category) => (
+              <section className="effects-category" key={category}>
+                <h3>{category}</h3>
+                <ul>
+                  {EFFECT_CATALOG.filter(
+                    (effect) => effect.category === category,
+                  ).map((effect) => (
+                    <li key={effect.id}>
+                      <button
+                        className={`effect-catalog-item ${selectedCatalogEffectId === effect.id ? "is-selected" : ""} ${effect.applicationMode === "selection" && !activeMask ? "needs-selection" : ""}`}
+                        type="button"
+                        aria-pressed={selectedCatalogEffectId === effect.id}
+                        onClick={() => activateCatalogEffect(effect.id)}
+                      >
+                        <svg
+                          className="effect-catalog-icon"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.6"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden="true"
+                        >
+                          {getEffectIconPaths(effect.id).map((path) => (
+                            <path d={path} key={path} />
+                          ))}
+                        </svg>
+                        <span className="effect-catalog-copy">
+                          <span className="effect-catalog-name">
+                            {effect.label}
+                          </span>
+                          <span className="effect-catalog-description">
+                            {effect.description}
+                          </span>
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </aside>
+        )}
+        <div className="canvas-column">
+          <div className="canvas">
+            {visibleErrorMessage && (
+              <div className="workspace-error-toast" role="alert">
+                <span className="error-icon" aria-hidden="true">
+                  !
                 </span>
+                <span className="workspace-error-message">
+                  {visibleErrorMessage}
+                </span>
+                <button
+                  type="button"
+                  aria-label="Dismiss error"
+                  onClick={() => {
+                    setDismissedToastMessage(visibleErrorMessage);
+                    setErrorMessage("");
+                  }}
+                >
+                  ×
+                </button>
               </div>
-              <nav className="contact-links" aria-label="Contact">
-                <a href="https://instagram.com/sahdoum">Instagram</a>
-                <a href="https://t.me/achekhonte">Telegram</a>
-                <a href="https://github.com/sahdoum">GitHub</a>
-              </nav>
-              {import.meta.env.VITE_GTM_CONTAINER_ID && (
-                <p className="analytics-notice">
-                  This site uses Google Tag Manager for visit analytics. Google
-                  receives visit data; images are processed locally.{" "}
-                  <a href="https://policies.google.com/privacy">
-                    Google privacy policy
-                  </a>
+            )}
+            {!document ? (
+              <div className="welcome">
+                <div className="eyebrow">JPEG STRUCTURE · CREATIVE CONTROL</div>
+                <h1>Make room for happy accidents.</h1>
+                <p>
+                  Inspect JPEG structure and quantized DCT coefficients locally.
+                  The original file stays untouched and its pixel preview
+                  remains separate.
                 </p>
-              )}
-            </div>
-          ) : (
-            <div className="preview-workspace">
-              <div className="preview-toolbar">
-                <div>
-                  <div className="section-kicker">
-                    {hasScanCorruption && showCleanEncoded
-                      ? "CLEAN ENCODED COMPARISON"
-                      : hasScanCorruption && !showOriginal
-                        ? "ENTROPY SCAN EXPERIMENT"
-                        : editedBytes && !showOriginal
-                          ? "ENCODED JPEG EXPERIMENT"
-                          : "DECODED PIXEL PREVIEW"}
-                  </div>
-                  <p>
-                    {isEncoding
-                      ? isScanCorrupting
-                        ? "Corrupting a verified entropy-coded scan in the local worker…"
-                        : "Applying JPEG-domain operations in the local worker…"
-                      : editedBytes && editedPreviewError
-                        ? editedPreviewError
-                        : hasScanCorruption
-                          ? "Bounded entropy-coded scan corruption · JPEG structure protected · source bytes remain unchanged"
-                          : editedBytes && !showOriginal
-                            ? "libjpeg-turbo re-encoding · source bytes remain unchanged"
-                            : "Original JPEG · no pixel-only editing"}
-                    {" · "}
-                    {document.inspection.width} × {document.inspection.height}
-                  </p>
-                </div>
-                <div className="overlay-controls">
-                  <button
-                    className="tool-toggle"
-                    type="button"
-                    onClick={() =>
-                      setZoom((current) => Math.max(0.25, current - 0.25))
-                    }
-                    aria-label="Zoom out"
-                  >
-                    −
-                  </button>
-                  <span className="zoom-readout">
-                    {Math.round(zoom * 100)}%
+                <button
+                  className="welcome-button"
+                  type="button"
+                  onClick={() => fileInput.current?.click()}
+                  disabled={isLoading}
+                >
+                  Choose a JPEG
+                  <span aria-hidden="true">↗</span>
+                </button>
+                <div className="milestone-note">
+                  <span className="note-index">03</span>
+                  <span>
+                    Drop a JPEG to inspect it, select a region, and apply
+                    reversible JPEG effects.
                   </span>
-                  <button
-                    className="tool-toggle"
-                    type="button"
-                    onClick={() =>
-                      setZoom((current) => Math.min(4, current + 0.25))
-                    }
-                    aria-label="Zoom in"
+                </div>
+                <nav className="contact-links" aria-label="Contact">
+                  <a href="https://instagram.com/sahdoum">Instagram</a>
+                  <a href="https://t.me/achekhonte">Telegram</a>
+                  <a href="https://github.com/sahdoum">GitHub</a>
+                </nav>
+                {import.meta.env.VITE_GTM_CONTAINER_ID && (
+                  <p className="analytics-notice">
+                    This site uses Google Tag Manager for visit analytics.
+                    Google receives visit data; images are processed locally.{" "}
+                    <a href="https://policies.google.com/privacy">
+                      Google privacy policy
+                    </a>
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="preview-workspace">
+                <div className="preview-toolbar">
+                  <nav
+                    className="preview-toolbar-tools"
+                    aria-label="Canvas tools"
                   >
-                    +
-                  </button>
-                  <button
-                    className="tool-toggle"
-                    type="button"
-                    onClick={() => setZoom(1)}
-                  >
-                    Fit
-                  </button>
-                  {hasScanCorruption && cleanEncodedPreviewUrl && (
-                    <button
-                      className="tool-toggle"
-                      type="button"
-                      aria-pressed={showCleanEncoded}
-                      onClick={() => {
-                        setShowOriginal(false);
-                        setShowCleanEncoded((current) => !current);
-                      }}
+                    {PREVIEW_TOOL_BUTTONS.map((tool) => {
+                      const enabled =
+                        tool.id === "hand" ||
+                        tool.id === "inspector" ||
+                        isCanvasToolEnabled(
+                          tool.id,
+                          panelTool,
+                          panelTool === "block-transform" &&
+                            (blockTransformMode === "shuffle" ||
+                              blockTransformMode === "shift"),
+                        );
+                      const needsMask =
+                        !activeMask &&
+                        (panelTool === "coefficient-glitch" ||
+                          (panelTool === "block-transform" &&
+                            (blockTransformMode === "shuffle" ||
+                              blockTransformMode === "shift")));
+                      const isSuggested =
+                        needsMask &&
+                        (tool.id === "brush" || tool.id === "select");
+                      return (
+                        <button
+                          className={`tool-button ${toolMode === tool.id ? "is-active" : ""} ${isSuggested ? "is-suggested" : ""}`}
+                          key={tool.id}
+                          type="button"
+                          disabled={!enabled}
+                          aria-label={tool.label}
+                          aria-pressed={toolMode === tool.id}
+                          aria-keyshortcuts={tool.shortcut}
+                          title={
+                            isSuggested
+                              ? `Create an area selection with ${tool.label} (${tool.shortcut})`
+                              : enabled
+                                ? `${tool.label} (${tool.shortcut})`
+                                : `Select a mask-based effect to enable ${tool.label}`
+                          }
+                          onClick={() => activateTool(tool.id)}
+                        >
+                          <svg
+                            className="tool-icon"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.7"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                          >
+                            {getToolIconPaths(tool.id).map((path) => (
+                              <path
+                                d={path}
+                                key={path}
+                                strokeDasharray={
+                                  tool.id === "select" ? "3 3" : undefined
+                                }
+                              />
+                            ))}
+                          </svg>
+                          <span>{tool.label}</span>
+                        </button>
+                      );
+                    })}
+                    {(toolMode === "brush" || toolMode === "select") && (
+                      <div
+                        className="canvas-tool-context"
+                        aria-label="Selection tool settings"
+                      >
+                        {toolMode === "brush" && (
+                          <label className="canvas-context-field">
+                            <span>Brush · {brushSize} image px</span>
+                            <input
+                              type="range"
+                              min="4"
+                              max="256"
+                              step="4"
+                              value={brushSize}
+                              onChange={(event) =>
+                                setBrushSize(Number(event.currentTarget.value))
+                              }
+                            />
+                          </label>
+                        )}
+                        <RadioChoiceGroup<JpegSelectionGrid>
+                          name="canvas-mask-snap-grid"
+                          legend="Snap"
+                          value={maskGrid}
+                          options={[
+                            { value: "dct", label: "DCT" },
+                            { value: "mcu", label: "MCU" },
+                          ]}
+                          onChange={setMaskGrid}
+                          layout="inline"
+                          showCheckmark={false}
+                        />
+                      </div>
+                    )}
+                  </nav>
+                  {draftPreviewUrl && !showOriginal && !showCleanEncoded && (
+                    <span
+                      className={`preview-state ${isDraftPreviewStale ? "is-stale" : ""}`}
+                      role="status"
+                      title={
+                        isDraftPreviewStale
+                          ? "Parameters changed since this temporary preview."
+                          : "Temporary JPEG-encoded preview; History is unchanged."
+                      }
                     >
-                      {showCleanEncoded
-                        ? "Show corrupt result"
-                        : "Show clean encoded"}
-                    </button>
-                  )}
-                  {editedBytes && (
-                    <button
-                      className="tool-toggle"
-                      type="button"
-                      aria-pressed={showOriginal}
-                      onClick={() => {
-                        setShowCleanEncoded(false);
-                        setShowOriginal((current) => !current);
-                      }}
-                    >
-                      {showOriginal ? "Show edited" : "Show original"}
-                    </button>
-                  )}
-                  {isEncoding && (
-                    <span className="encoding-indicator" role="status">
-                      {isScanCorrupting ? "Corrupting scan…" : "Re-encoding…"}
+                      {isDraftPreviewStale ? "Stale" : "Preview"}
                     </span>
                   )}
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={showBlocks}
-                      onChange={(event) =>
-                        setShowBlocks(event.currentTarget.checked)
+                  <div className="overlay-controls">
+                    <button
+                      className="tool-toggle"
+                      type="button"
+                      onClick={() =>
+                        setZoom((current) => Math.max(0.25, current - 0.25))
                       }
-                    />
-                    <span>8×8 DCT blocks</span>
-                  </label>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={showMcus}
-                      onChange={(event) =>
-                        setShowMcus(event.currentTarget.checked)
+                      aria-label="Zoom out"
+                    >
+                      −
+                    </button>
+                    <span className="zoom-readout">
+                      {Math.round(zoom * 100)}%
+                    </span>
+                    <button
+                      className="tool-toggle"
+                      type="button"
+                      onClick={() =>
+                        setZoom((current) => Math.min(4, current + 0.25))
                       }
-                    />
-                    <span>MCUs</span>
-                  </label>
+                      aria-label="Zoom in"
+                    >
+                      +
+                    </button>
+                    <button
+                      className="tool-toggle"
+                      type="button"
+                      onClick={() => setZoom(1)}
+                    >
+                      Fit
+                    </button>
+                    {hasScanCorruption && cleanEncodedPreviewUrl && (
+                      <button
+                        className="tool-toggle"
+                        type="button"
+                        aria-pressed={showCleanEncoded}
+                        onClick={() => {
+                          setShowOriginal(false);
+                          setShowCleanEncoded((current) => !current);
+                        }}
+                      >
+                        {showCleanEncoded
+                          ? "Show corrupted"
+                          : "Show clean encoded"}
+                      </button>
+                    )}
+                    {editedBytes && (
+                      <button
+                        className="tool-toggle"
+                        type="button"
+                        aria-pressed={showOriginal}
+                        onClick={() => {
+                          setShowCleanEncoded(false);
+                          setShowOriginal((current) => !current);
+                        }}
+                      >
+                        {showOriginal ? "Show edited" : "Show original"}
+                      </button>
+                    )}
+                    {isEncoding && (
+                      <span className="encoding-indicator" role="status">
+                        {isScanCorrupting ? "Corrupting scan…" : "Re-encoding…"}
+                      </span>
+                    )}
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={showBlocks}
+                        onChange={(event) =>
+                          setShowBlocks(event.currentTarget.checked)
+                        }
+                      />
+                      <span>8×8 DCT</span>
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={showMcus}
+                        onChange={(event) =>
+                          setShowMcus(event.currentTarget.checked)
+                        }
+                      />
+                      <span>MCUs</span>
+                    </label>
+                  </div>
                 </div>
-              </div>
-              <div
-                className="image-stage"
-                ref={imageStage}
-                onPointerDown={onImagePointerDown}
-                onPointerMove={onImagePointerMove}
-                onPointerUp={onImagePointerUp}
-                onPointerCancel={() => {
-                  selectionStart.current = null;
-                  blockTransformGesture.current = null;
-                  setBlockTransferDraft(null);
-                  setBlockTransferDraftOutOfBounds(false);
-                  setRepeatDraft(null);
-                  setRepeatDestination(null);
-                  brushPoints.current = [];
-                  panStart.current = null;
-                  setBrushDraft([]);
-                }}
-              >
                 <div
-                  className={`preview-image-wrap ${toolMode === "select" ? "is-selecting" : ""} ${toolMode === "brush" ? "is-brushing" : ""} ${toolMode === "inspector" ? "is-inspecting" : ""} ${toolMode === "hand" ? "is-panning" : ""} ${toolMode === "block-transform" && (blockTransformMode === "transfer" || blockTransformMode === "repeat") ? "is-block-transforming" : ""}`}
-                  style={{ transform: `scale(${zoom})` }}
-                  role="group"
-                  tabIndex={0}
-                  aria-label="JPEG image canvas"
-                  aria-describedby={
-                    toolMode === "select" || toolMode === "inspector"
-                      ? "canvas-keyboard-help"
-                      : undefined
-                  }
-                  aria-keyshortcuts={
-                    toolMode === "select" ? "Control+A Meta+A" : undefined
-                  }
-                  onFocus={() => {
-                    setCanvasHasKeyboardFocus(true);
-                    setKeyboardCursor(getInitialKeyboardCursor());
+                  className="image-stage"
+                  ref={imageStage}
+                  onPointerDown={onImagePointerDown}
+                  onPointerMove={onImagePointerMove}
+                  onPointerUp={onImagePointerUp}
+                  onPointerLeave={() => setBrushCursorPoint(null)}
+                  onPointerCancel={() => {
+                    selectionStart.current = null;
+                    blockTransformGesture.current = null;
+                    setBlockTransferDraft(null);
+                    setBlockTransferDraftOutOfBounds(false);
+                    setRepeatDraft(null);
+                    setRepeatDestination(null);
+                    brushPoints.current = [];
+                    panStart.current = null;
+                    setBrushDraft([]);
+                    setBrushCursorPoint(null);
                   }}
-                  onBlur={() => setCanvasHasKeyboardFocus(false)}
-                  onKeyDown={onCanvasKeyDown}
-                  ref={previewImageWrap}
                 >
-                  {previewUrlToDisplay ? (
-                    <img
-                      className="preview-image"
-                      src={previewUrlToDisplay}
-                      alt={`${showOriginal ? "Original" : showCleanEncoded ? "Clean encoded" : hasScanCorruption ? "Entropy-corrupted" : "Re-encoded"} JPEG preview of ${document.originalAsset.fileName}`}
+                  <div
+                    className={`preview-image-wrap ${toolMode === "select" ? "is-selecting" : ""} ${toolMode === "brush" ? "is-brushing" : ""} ${toolMode === "inspector" ? "is-inspecting" : ""} ${toolMode === "hand" ? "is-panning" : ""} ${toolMode === "block-transform" && (blockTransformMode === "transfer" || blockTransformMode === "repeat") ? "is-block-transforming" : ""}`}
+                    style={{ transform: `scale(${zoom})` }}
+                    role="group"
+                    tabIndex={0}
+                    aria-label="JPEG image canvas"
+                    aria-describedby={
+                      toolMode === "select" || toolMode === "inspector"
+                        ? "canvas-keyboard-help"
+                        : undefined
+                    }
+                    aria-keyshortcuts={
+                      toolMode === "select" ? "Control+A Meta+A" : undefined
+                    }
+                    onFocus={() => {
+                      setCanvasHasKeyboardFocus(true);
+                      setKeyboardCursor(getInitialKeyboardCursor());
+                    }}
+                    onBlur={() => setCanvasHasKeyboardFocus(false)}
+                    onKeyDown={onCanvasKeyDown}
+                    ref={previewImageWrap}
+                  >
+                    {previewUrlToDisplay ? (
+                      <img
+                        className="preview-image"
+                        src={previewUrlToDisplay}
+                        alt={`${showOriginal ? "Original" : showCleanEncoded ? "Clean encoded" : draftPreviewUrl ? "Uncommitted effect preview" : hasScanCorruption ? "Entropy-corrupted" : "Re-encoded"} JPEG preview of ${document.originalAsset.fileName}`}
+                      />
+                    ) : (
+                      <div className="scan-preview-unavailable" role="status">
+                        {cleanEncodedPreviewError ||
+                          editedPreviewError ||
+                          "No decoded preview is available. The clean and corrupted JPEG bytes remain separate from the original."}
+                      </div>
+                    )}
+                    <ImageOverlays
+                      inspection={document.inspection}
+                      showBlocks={showBlocks}
+                      showMcus={showMcus}
+                      selection={visibleSelection}
+                      mask={activeMaskForOverlay}
+                      brushDraft={brushDraft}
+                      brushCursorPoint={
+                        toolMode === "brush" ? brushCursorPoint : null
+                      }
+                      brushRadius={brushSize / 2}
+                      componentId={
+                        document.inspection.components[componentIndex]?.id ?? -1
+                      }
+                      selectedBlock={
+                        overlayVisibility.inspectedBlock ? selectedBlock : null
+                      }
+                      keyboardCursor={
+                        canvasHasKeyboardFocus ? keyboardCursor : null
+                      }
+                      blockTransferSource={blockTransferSourceSelection}
+                      blockTransferSourceInvalid={blockTransferSourceInvalid}
+                      blockTransferDestination={
+                        blockTransferDestinationSelection
+                      }
+                      blockTransferDestinationInvalid={
+                        blockTransferDestinationInvalid
+                      }
                     />
-                  ) : (
-                    <div className="scan-preview-unavailable" role="status">
-                      {cleanEncodedPreviewError ||
-                        editedPreviewError ||
-                        "No decoded preview is available. The clean and corrupted JPEG bytes remain separate from the original."}
-                    </div>
-                  )}
-                  <ImageOverlays
-                    inspection={document.inspection}
-                    showBlocks={showBlocks}
-                    showMcus={showMcus}
-                    selection={visibleSelection}
-                    mask={activeMaskForOverlay}
-                    brushDraft={brushDraft}
-                    brushRadius={brushSize / 2}
-                    componentId={
-                      document.inspection.components[componentIndex]?.id ?? -1
-                    }
-                    selectedBlock={
-                      overlayVisibility.inspectedBlock ? selectedBlock : null
-                    }
-                    keyboardCursor={
-                      canvasHasKeyboardFocus ? keyboardCursor : null
-                    }
-                    blockTransferSource={blockTransferSourceSelection}
-                    blockTransferSourceInvalid={blockTransferSourceInvalid}
-                    blockTransferDestination={blockTransferDestinationSelection}
-                    blockTransferDestinationInvalid={
-                      blockTransferDestinationInvalid
-                    }
-                  />
+                  </div>
                 </div>
+                {(toolMode === "select" || toolMode === "inspector") && (
+                  <p id="canvas-keyboard-help" className="canvas-keyboard-help">
+                    {toolMode === "select"
+                      ? "Keyboard: Ctrl/⌘+A selects the whole image; arrows move one DCT block; Enter starts or commits a rectangular mask; Escape clears it."
+                      : "Keyboard: arrow keys move one DCT block; Enter inspects the focused block."}
+                  </p>
+                )}
+                <span
+                  className="visually-hidden"
+                  role="status"
+                  aria-live="polite"
+                >
+                  {canvasKeyboardAnnouncement}
+                </span>
               </div>
-              {(toolMode === "select" || toolMode === "inspector") && (
-                <p id="canvas-keyboard-help" className="canvas-keyboard-help">
-                  {toolMode === "select"
-                    ? "Keyboard: Ctrl/⌘+A selects the whole image; arrows move one DCT block; Enter starts or commits a rectangular mask; Escape clears it."
-                    : "Keyboard: arrow keys move one DCT block; Enter inspects the focused block."}
-                </p>
-              )}
-              <span
-                className="visually-hidden"
-                role="status"
-                aria-live="polite"
-              >
-                {canvasKeyboardAnnouncement}
-              </span>
-            </div>
-          )}
-          {isDragging && (
-            <div className="drop-overlay" aria-hidden="true">
-              <span>Drop one JPEG to inspect</span>
-            </div>
-          )}
+            )}
+            {isDragging && (
+              <div className="drop-overlay" aria-hidden="true">
+                <span>Drop one JPEG to inspect</span>
+              </div>
+            )}
+          </div>
         </div>
 
         <aside className="side-panel">
-          <button
-            className="side-panel-toggle"
-            type="button"
-            aria-expanded={!isRightPanelCollapsed}
-            aria-controls="side-panel-content"
-            aria-label={
-              isRightPanelCollapsed
-                ? "Expand right panel"
-                : "Collapse right panel"
-            }
-            onClick={() =>
-              dispatchWorkspace({
-                type: "set-panel-collapsed",
-                collapsed: !isRightPanelCollapsed,
-              })
-            }
-          >
-            <span aria-hidden="true">{isRightPanelCollapsed ? "‹" : "›"}</span>
-          </button>
-          <div
-            className="side-panel-content"
-            id="side-panel-content"
-            aria-hidden={isRightPanelCollapsed}
-          >
+          <div className="side-panel-content">
             {projectNotice && (
               <p className="project-notice" role="status">
                 {projectNotice}
@@ -3800,6 +4415,7 @@ function App() {
                       <ComponentChoiceGroup
                         name="inspector-component"
                         inspection={document.inspection}
+                        componentLabels={componentLabels}
                         value={Math.max(
                           0,
                           document.inspection.components.findIndex(
@@ -3865,63 +4481,13 @@ function App() {
                   )}
                   {panelTool === "coefficient-glitch" && (
                     <section className="inspector-section selection-panel">
-                      <div className="coefficient-field">
-                        <span>Coefficient effects</span>
-                        <div
-                          className="brush-picker"
-                          role="group"
-                          aria-label="Coefficient effects"
-                        >
-                          {brushes.map((brush) => (
-                            <button
-                              className={`brush-preset ${selectedBrushId === brush.id ? "is-active" : ""}`}
-                              type="button"
-                              key={brush.id}
-                              aria-label={brush.name}
-                              aria-pressed={selectedBrushId === brush.id}
-                              title={brush.name}
-                              onClick={() => selectCoefficientBrush(brush.id)}
-                            >
-                              <span aria-hidden="true">
-                                {brush.id === "pixelate"
-                                  ? "▦"
-                                  : brush.id === "chroma-scale"
-                                    ? "◈"
-                                    : brush.id === "dc-steps"
-                                      ? "▤"
-                                      : brush.id === "ringing"
-                                        ? "◉"
-                                        : brush.id === "engraving"
-                                          ? "▥"
-                                          : "✎"}
-                              </span>
-                              <small>{brush.name}</small>
-                            </button>
-                          ))}
-                          <button
-                            className="brush-preset brush-add"
-                            type="button"
-                            aria-label="Add user brush"
-                            title="Add user brush"
-                            disabled={!!brushStorageError}
-                            onClick={addCoefficientBrush}
-                          >
-                            +
-                          </button>
-                        </div>
-                      </div>
+                      {!activeMask && (
+                        <p className="selection-required" role="status">
+                          Select an area to apply this effect. Brush and Select
+                          are available in the canvas toolbar.
+                        </p>
+                      )}
                       <div className="coefficient-effect-actions">
-                        <label className="coefficient-note">
-                          <input
-                            type="checkbox"
-                            checked={!!brushAutoApply[selectedBrushId]}
-                            disabled={!!brushAutoError}
-                            onChange={(event) =>
-                              changeBrushAutoApply(event.currentTarget.checked)
-                            }
-                          />{" "}
-                          Apply automatically after drawing
-                        </label>
                         <button
                           className="operation-button"
                           type="button"
@@ -3935,13 +4501,25 @@ function App() {
                           }
                           onClick={() => applyCoefficientOperation()}
                         >
-                          Apply {selectedBrush?.name ?? "effect"}
+                          Apply
                         </button>
+                        <label className="effect-auto-apply">
+                          <input
+                            type="checkbox"
+                            checked={!!effectAutoApply[selectedBrushId]}
+                            disabled={!!effectAutoApplyError}
+                            onChange={(event) =>
+                              changeEffectAutoApply(event.currentTarget.checked)
+                            }
+                          />
+                          Apply while painting
+                        </label>
                       </div>
                       <h3 className="parameter-group-title">Core parameters</h3>
                       <ComponentChoiceGroup
                         name="coefficient-component"
                         inspection={document.inspection}
+                        componentLabels={componentLabels}
                         value={componentIndex}
                         includeUnavailable
                         onChange={(index) => {
@@ -3949,200 +4527,99 @@ function App() {
                           setErrorMessage("");
                         }}
                       />
-                      {!BUILT_IN_COEFFICIENT_BRUSHES.some(
-                        (brush) => brush.id === selectedBrushId,
-                      ) && (
-                        <div className="coefficient-brush-settings">
-                          <RadioChoiceGroup<CoefficientGlitchMode>
-                            name="coefficient-mode"
-                            legend="Operation"
-                            value={coefficientMode}
-                            options={[
-                              {
-                                value: "zero",
-                                label: "Zero",
-                                hint: "Set selected coefficients to 0",
-                              },
-                              {
-                                value: "scale",
-                                label: "Scale",
-                                hint: "Multiply selected values",
-                              },
-                              {
-                                value: "randomize",
-                                label: "Randomize",
-                                hint: "Replace with seeded values",
-                              },
-                              {
-                                value: "offset",
-                                label: "DC offset",
-                                hint: "Add to the block-average value",
-                              },
-                              {
-                                value: "dc-steps",
-                                label: "Poster",
-                                hint: "Round block averages to steps",
-                              },
-                              {
-                                value: "low-pass",
-                                label: "AC low-pass",
-                                hint: "Remove AC above a frequency cutoff",
-                              },
-                              {
-                                value: "ringing-boost",
-                                label: "Ringing boost",
-                                hint: "Boost the retained frequency edge",
-                              },
-                              {
-                                value: "engrave-horizontal",
-                                label: "Engraving horizontal",
-                                hint: "Keep one DCT frequency axis",
-                              },
-                              {
-                                value: "engrave-vertical",
-                                label: "Engraving vertical",
-                                hint: "Keep the other DCT frequency axis",
-                              },
-                              {
-                                value: "invert",
-                                label: "Invert AC",
-                                hint: "Negate selected AC coefficients",
-                              },
-                              {
-                                value: "isolate",
-                                label: "Isolate band",
-                                hint: "Clear AC values outside the band",
-                              },
-                            ]}
-                            onChange={(next) => {
-                              setCoefficientMode(next);
-                              if (next === "offset" || next === "dc-steps") {
-                                setCoefficientDomain("dc");
-                                setFrequencyBand("all");
-                                if (next === "dc-steps") {
-                                  setCoefficientStrength(32);
-                                }
-                              } else if (
-                                next === "low-pass" ||
-                                next === "ringing-boost" ||
-                                next === "engrave-horizontal" ||
-                                next === "engrave-vertical"
-                              ) {
-                                setCoefficientDomain("ac");
-                                setFrequencyBand("all");
-                                setCoefficientStrength(4);
-                              } else if (
-                                next === "invert" ||
-                                next === "isolate"
-                              ) {
-                                setCoefficientDomain("ac");
-                                if (
-                                  next === "isolate" &&
-                                  frequencyBand === "all"
-                                ) {
-                                  setFrequencyBand("low");
-                                }
-                              }
-                            }}
-                          />
-                          {coefficientMode !== "offset" &&
-                            coefficientMode !== "dc-steps" &&
-                            coefficientMode !== "low-pass" &&
-                            coefficientMode !== "ringing-boost" &&
-                            coefficientMode !== "engrave-horizontal" &&
-                            coefficientMode !== "engrave-vertical" && (
-                              <>
-                                <RadioChoiceGroup<CoefficientRangeChoice>
-                                  name="coefficient-target-range"
-                                  legend="Coefficient range"
-                                  value={
-                                    coefficientDomain === "dc"
-                                      ? "dc"
-                                      : `ac:${frequencyBand}`
-                                  }
-                                  options={getCoefficientRangeOptions(
-                                    coefficientMode,
-                                  )}
-                                  onChange={(next) => {
-                                    if (next === "dc") {
-                                      setCoefficientDomain("dc");
-                                      setFrequencyBand("all");
-                                      return;
-                                    }
-                                    const band = GLITCH_FREQUENCY_BANDS.find(
-                                      (candidate) => next === `ac:${candidate}`,
-                                    );
-                                    if (band) {
-                                      setCoefficientDomain("ac");
-                                      setFrequencyBand(band);
-                                    }
-                                  }}
-                                  layout="bands"
-                                  showCheckmark={false}
-                                />
-                                <p className="coefficient-note">
-                                  DC is the block-average coefficient. AC bands
-                                  refer to u+v coordinates in quantized 8×8 DCT
-                                  coefficients.
-                                </p>
-                                {coefficientMode === "isolate" && (
-                                  <p className="coefficient-note">
-                                    Isolate band targets AC only: DC is not an
-                                    AC band, and AC All would leave no
-                                    coefficients outside the selected range to
-                                    clear.
-                                  </p>
-                                )}
-                              </>
-                            )}
-                          {["scale", "randomize", "offset"].includes(
-                            coefficientMode,
-                          ) && (
-                            <label className="coefficient-field tool-field">
-                              <span>
-                                {coefficientMode === "scale"
-                                  ? "Scale multiplier"
-                                  : coefficientMode === "randomize"
-                                    ? "Random coefficient range"
-                                    : "DC offset"}
-                              </span>
-                              <input
-                                type="number"
-                                min={
-                                  coefficientMode === "scale"
-                                    ? "-8"
-                                    : coefficientMode === "offset"
-                                      ? "-2047"
-                                      : "1"
-                                }
-                                max={
-                                  coefficientMode === "scale"
-                                    ? "8"
-                                    : coefficientMode === "offset"
-                                      ? "2047"
-                                      : "2047"
-                                }
-                                step={coefficientMode === "scale" ? "0.1" : "1"}
-                                value={coefficientStrength}
-                                onChange={(event) =>
-                                  setCoefficientStrength(
-                                    Number(event.currentTarget.value),
-                                  )
-                                }
-                              />
-                            </label>
-                          )}
-                          {coefficientMode === "randomize" && (
-                            <SeedField
-                              id="coefficient-seed"
-                              label="Deterministic seed"
-                              value={coefficientSeed}
-                              onChange={(value) =>
-                                setCoefficientSeed(Number(value))
-                              }
-                            />
-                          )}
+                      {(colorModel?.kind === "ycbcr" ||
+                        colorModel?.kind === "assumed-ycbcr") && (
+                        <div className="component-explanations">
+                          <p>
+                            <strong>Y</strong> is luminance and represents
+                            brightness information.
+                          </p>
+                          <p>
+                            <strong>Cb</strong> and <strong>Cr</strong> carry
+                            blue-difference and red-difference chroma
+                            information. Chroma may have lower spatial
+                            resolution due to JPEG subsampling.
+                          </p>
                         </div>
+                      )}
+                      {document.inspection.components.length === 3 &&
+                        (colorModel?.kind === "ycbcr" ||
+                          colorModel?.kind === "assumed-ycbcr" ||
+                          colorModel?.kind === "rgb") && (
+                          <ComponentPreview
+                            imageUrl={previewUrlToDisplay ?? null}
+                            component={
+                              colorModel.kind === "rgb"
+                                ? ((["R", "G", "B"] as const)[componentIndex] ??
+                                  "R")
+                                : ((["Y", "Cb", "Cr"] as const)[
+                                    componentIndex
+                                  ] ?? "Y")
+                            }
+                          />
+                        )}
+                      {colorModel && (
+                        <p className="component-model-note" role="status">
+                          {colorModel.description}
+                        </p>
+                      )}
+                      {availableDctChoices.length > 0 && (
+                        <DctBasisMatrix
+                          target={dctMatrixTarget}
+                          selectedChoice={selectedDctChoice}
+                          availableChoices={availableDctChoices}
+                          onSelect={(choice) =>
+                            choice === "dc"
+                              ? updateCoefficientSettings({
+                                  domain: "dc",
+                                  frequencyBand: "all",
+                                })
+                              : updateCoefficientSettings({
+                                  domain: "ac",
+                                  frequencyBand: choice,
+                                })
+                          }
+                        />
+                      )}
+                      {coefficientMode === "isolate" && (
+                        <p className="coefficient-note">
+                          Isolate band targets AC only. DC is not an AC band,
+                          and selecting AC All would leave no coefficients
+                          outside the selected range to clear.
+                        </p>
+                      )}
+                      {(coefficientMode === "randomize" ||
+                        coefficientMode === "offset") && (
+                        <label className="coefficient-field tool-field">
+                          <span>
+                            {coefficientMode === "randomize"
+                              ? "Random coefficient range"
+                              : "DC offset"}
+                          </span>
+                          <input
+                            type="number"
+                            min={coefficientMode === "offset" ? "-2047" : "1"}
+                            max="2047"
+                            step="1"
+                            value={coefficientStrength}
+                            onChange={(event) =>
+                              updateCoefficientSettings({
+                                strength: Number(event.currentTarget.value),
+                              })
+                            }
+                          />
+                        </label>
+                      )}
+                      {coefficientMode === "randomize" && (
+                        <SeedField
+                          label="Deterministic seed"
+                          value={coefficientSeed}
+                          onChange={(value) =>
+                            updateCoefficientSettings({
+                              seed: Number(value),
+                            })
+                          }
+                        />
                       )}
                       {coefficientMode === "scale" && (
                         <div className="coefficient-field tool-field range-field">
@@ -4158,9 +4635,9 @@ function App() {
                               value={coefficientStrength}
                               aria-labelledby="coefficient-strength-label"
                               onChange={(event) =>
-                                setCoefficientStrength(
-                                  Number(event.currentTarget.value),
-                                )
+                                updateCoefficientSettings({
+                                  strength: Number(event.currentTarget.value),
+                                })
                               }
                             />
                             <input
@@ -4171,9 +4648,9 @@ function App() {
                               value={coefficientStrength}
                               aria-labelledby="coefficient-strength-label"
                               onChange={(event) =>
-                                setCoefficientStrength(
-                                  Number(event.currentTarget.value),
-                                )
+                                updateCoefficientSettings({
+                                  strength: Number(event.currentTarget.value),
+                                })
                               }
                             />
                           </div>
@@ -4197,9 +4674,9 @@ function App() {
                               value={coefficientStrength}
                               aria-labelledby="dc-step-label"
                               onChange={(event) =>
-                                setCoefficientStrength(
-                                  Number(event.currentTarget.value),
-                                )
+                                updateCoefficientSettings({
+                                  strength: Number(event.currentTarget.value),
+                                })
                               }
                             />
                             <input
@@ -4210,9 +4687,9 @@ function App() {
                               value={coefficientStrength}
                               aria-labelledby="dc-step-label"
                               onChange={(event) =>
-                                setCoefficientStrength(
-                                  Number(event.currentTarget.value),
-                                )
+                                updateCoefficientSettings({
+                                  strength: Number(event.currentTarget.value),
+                                })
                               }
                             />
                           </div>
@@ -4242,9 +4719,9 @@ function App() {
                               value={coefficientStrength}
                               aria-labelledby="ac-cutoff-label"
                               onChange={(event) =>
-                                setCoefficientStrength(
-                                  Number(event.currentTarget.value),
-                                )
+                                updateCoefficientSettings({
+                                  strength: Number(event.currentTarget.value),
+                                })
                               }
                             />
                             <input
@@ -4255,9 +4732,9 @@ function App() {
                               value={coefficientStrength}
                               aria-labelledby="ac-cutoff-label"
                               onChange={(event) =>
-                                setCoefficientStrength(
-                                  Number(event.currentTarget.value),
-                                )
+                                updateCoefficientSettings({
+                                  strength: Number(event.currentTarget.value),
+                                })
                               }
                             />
                           </div>
@@ -4286,9 +4763,9 @@ function App() {
                               value={coefficientStrength}
                               aria-labelledby="ringing-boost-label"
                               onChange={(event) =>
-                                setCoefficientStrength(
-                                  Number(event.currentTarget.value),
-                                )
+                                updateCoefficientSettings({
+                                  strength: Number(event.currentTarget.value),
+                                })
                               }
                             />
                             <input
@@ -4299,9 +4776,9 @@ function App() {
                               value={coefficientStrength}
                               aria-labelledby="ringing-boost-label"
                               onChange={(event) =>
-                                setCoefficientStrength(
-                                  Number(event.currentTarget.value),
-                                )
+                                updateCoefficientSettings({
+                                  strength: Number(event.currentTarget.value),
+                                })
                               }
                             />
                           </div>
@@ -4319,26 +4796,6 @@ function App() {
                       {(coefficientMode === "engrave-horizontal" ||
                         coefficientMode === "engrave-vertical") && (
                         <div className="coefficient-field tool-field range-field">
-                          <RadioChoiceGroup<
-                            "engrave-horizontal" | "engrave-vertical"
-                          >
-                            name="engraving-direction"
-                            legend="Line direction"
-                            value={coefficientMode}
-                            options={[
-                              {
-                                value: "engrave-horizontal",
-                                label: "Horizontal",
-                                hint: "Keep vertical-frequency AC (u=0)",
-                              },
-                              {
-                                value: "engrave-vertical",
-                                label: "Vertical",
-                                hint: "Keep horizontal-frequency AC (v=0)",
-                              },
-                            ]}
-                            onChange={setCoefficientMode}
-                          />
                           <span id="engraving-strength-label">
                             Directional AC gain · {coefficientStrength}×
                           </span>
@@ -4351,9 +4808,9 @@ function App() {
                               value={coefficientStrength}
                               aria-labelledby="engraving-strength-label"
                               onChange={(event) =>
-                                setCoefficientStrength(
-                                  Number(event.currentTarget.value),
-                                )
+                                updateCoefficientSettings({
+                                  strength: Number(event.currentTarget.value),
+                                })
                               }
                             />
                             <input
@@ -4364,9 +4821,9 @@ function App() {
                               value={coefficientStrength}
                               aria-labelledby="engraving-strength-label"
                               onChange={(event) =>
-                                setCoefficientStrength(
-                                  Number(event.currentTarget.value),
-                                )
+                                updateCoefficientSettings({
+                                  strength: Number(event.currentTarget.value),
+                                })
                               }
                             />
                           </div>
@@ -4381,181 +4838,22 @@ function App() {
                           </p>
                         </div>
                       )}
-                      {!BUILT_IN_COEFFICIENT_BRUSHES.some(
-                        (brush) => brush.id === selectedBrushId,
-                      ) && (
-                        <details className="advanced-controls">
-                          <summary>Advanced brush settings</summary>
-                          <div className="advanced-control-content">
-                            <p className="coefficient-note">
-                              Save changes to this brush in this browser.
-                              Clearing browser data removes saved brushes.
-                            </p>
-                            <label className="coefficient-field">
-                              <span>Brush name</span>
-                              <input
-                                type="text"
-                                maxLength={48}
-                                value={brushName}
-                                onChange={(event) =>
-                                  setBrushName(event.currentTarget.value)
-                                }
-                              />
-                            </label>
-                            <div className="operation-actions">
-                              <button
-                                className="operation-button secondary"
-                                type="button"
-                                disabled={
-                                  !brushName.trim() || !!brushStorageError
-                                }
-                                onClick={saveCurrentBrush}
-                              >
-                                Save brush
-                              </button>
-                            </div>
-                          </div>
-                        </details>
-                      )}
-                    </section>
-                  )}
-                  {(toolMode === "brush" || toolMode === "select") && (
-                    <section className="inspector-section selection-panel">
-                      <div className="section-kicker">MASK AUTHORING</div>
-                      <h2>
-                        {toolMode === "brush" ? "Brush mask" : "Grid selection"}
-                      </h2>
-                      <p className="operation-description">
-                        Create a spatial mask in image-pixel coordinates.
-                        Effects use the current mask and keep the exact mask
-                        snapshot used in their history entry.
-                      </p>
-                      <RadioChoiceGroup<JpegSelectionGrid>
-                        name="mask-snap-grid"
-                        legend="Snap to JPEG grid"
-                        value={maskGrid}
-                        options={[
-                          {
-                            value: "dct",
-                            label: "8×8 DCT blocks",
-                            hint: "Selected component",
-                          },
-                          {
-                            value: "mcu",
-                            label: "MCU",
-                            hint: "Image sampling geometry",
-                          },
-                        ]}
-                        onChange={setMaskGrid}
-                        layout="inline"
-                      />
-                      {maskGrid === "dct" && (
-                        <p className="coefficient-note">
-                          DCT snapping follows the active JPEG effect target
-                          (component ID{" "}
-                          {document.inspection.components[componentIndex]?.id ??
-                            "unavailable"}
-                          ).
-                        </p>
-                      )}
-                      {toolMode === "brush" && (
-                        <label className="coefficient-field tool-field">
-                          <span>Brush diameter · {brushSize} image pixels</span>
-                          <input
-                            type="range"
-                            min="4"
-                            max="256"
-                            step="4"
-                            value={brushSize}
-                            onChange={(event) =>
-                              setBrushSize(Number(event.currentTarget.value))
-                            }
-                          />
-                          <div className="range-endpoints">
-                            <span>Small · 4 px</span>
-                            <span>Large · 256 px</span>
-                          </div>
-                        </label>
-                      )}
-                      {visibleSelection && (
-                        <p className="selection-readout">
-                          x {visibleSelection.x.toFixed(1)} · y{" "}
-                          {visibleSelection.y.toFixed(1)} ·{" "}
-                          {visibleSelection.width.toFixed(1)} ×{" "}
-                          {visibleSelection.height.toFixed(1)} image pixels
-                        </p>
-                      )}
-                      {globalSelectionMask && (
-                        <p className="selection-readout">
-                          Draft · {describeMask(globalSelectionMask)}
-                        </p>
-                      )}
-                      <div className="operation-actions">
-                        <button
-                          className="operation-button secondary"
-                          type="button"
-                          disabled={!globalSelectionMask && !selection}
-                          onClick={clearSelection}
-                        >
-                          Clear draft
-                        </button>
-                      </div>
                     </section>
                   )}
                   {panelTool === "block-transform" && (
                     <section className="inspector-section">
-                      <p className="operation-description">
-                        Changes quantized DCT blocks in one component, then
-                        re-encodes the JPEG. This does not copy pixels, MCUs, or
-                        entropy-coded bytes.
-                      </p>
-                      <div
-                        className="block-transform-modes"
-                        role="group"
-                        aria-label="Block transform mode"
-                      >
-                        {(
-                          [
-                            ["transfer", "Drag transfer"],
-                            ["repeat", "Copy / repeat"],
-                            ["shuffle", "Shuffle"],
-                            ["shift", "Local shift"],
-                          ] as const
-                        ).map(([mode, label]) => (
-                          <button
-                            className={`operation-button ${blockTransformMode === mode ? "" : "secondary"}`}
-                            type="button"
-                            aria-pressed={blockTransformMode === mode}
-                            key={mode}
-                            onClick={() => {
-                              blockTransformGesture.current = null;
-                              setBlockTransferDraft(null);
-                              setRepeatDraft(null);
-                              setBlockTransformMode(mode);
-                              if (mode === "shuffle" || mode === "shift") {
-                                dispatchWorkspace({
-                                  type: "activate-mask-effect",
-                                  tool: "block-transform",
-                                });
-                              } else {
-                                selectionStart.current = null;
-                                brushPoints.current = [];
-                                setBrushDraft([]);
-                                setSelection(null);
-                                dispatchWorkspace({
-                                  type: "activate-tool",
-                                  tool: "block-transform",
-                                });
-                              }
-                            }}
-                          >
-                            {label}
-                          </button>
-                        ))}
-                      </div>
+                      {(blockTransformMode === "shuffle" ||
+                        blockTransformMode === "shift") &&
+                        !activeMask && (
+                          <p className="selection-required" role="status">
+                            Select an area to apply this effect. Brush and
+                            Select are available in the canvas toolbar.
+                          </p>
+                        )}
                       <ComponentChoiceGroup
                         name="block-transform-component"
                         inspection={document.inspection}
+                        componentLabels={componentLabels}
                         value={componentIndex}
                         onChange={(index) => {
                           setComponentIndex(index);
@@ -4567,6 +4865,31 @@ function App() {
                           setRepeatDestination(null);
                         }}
                       />
+                      {(blockTransformMode === "shuffle" ||
+                        blockTransformMode === "shift") && (
+                        <label className="coefficient-note effect-auto-apply">
+                          <input
+                            type="checkbox"
+                            checked={
+                              !!effectAutoApply[
+                                blockTransformMode === "shuffle"
+                                  ? "block-shuffle"
+                                  : "local-shift"
+                              ]
+                            }
+                            disabled={!!effectAutoApplyError}
+                            onChange={(event) =>
+                              changeEffectAutoApply(
+                                event.currentTarget.checked,
+                                blockTransformMode === "shuffle"
+                                  ? "block-shuffle"
+                                  : "local-shift",
+                              )
+                            }
+                          />{" "}
+                          Apply while painting
+                        </label>
+                      )}
                       {blockTransformMode === "transfer" && (
                         <>
                           <p className="coefficient-note">
@@ -4711,7 +5034,6 @@ function App() {
                             used once; blocks outside it are unchanged.
                           </p>
                           <SeedField
-                            id="block-shuffle-seed"
                             label="Deterministic seed"
                             value={permutationSeed}
                             onChange={(value) =>
@@ -4719,10 +5041,20 @@ function App() {
                             }
                           />
                           <button
+                            className="operation-button secondary"
+                            type="button"
+                            disabled={
+                              !activeMask || isEncoding || isDraftPreviewing
+                            }
+                            onClick={() => void previewCurrentEffect()}
+                          >
+                            {isDraftPreviewing ? "Previewing…" : "Preview"}
+                          </button>
+                          <button
                             className="operation-button"
                             type="button"
                             disabled={!activeMask || isEncoding}
-                            onClick={applyBlockPermutation}
+                            onClick={() => applyBlockPermutation()}
                           >
                             Shuffle blocks in mask
                           </button>
@@ -4768,10 +5100,20 @@ function App() {
                             />
                           </label>
                           <button
+                            className="operation-button secondary"
+                            type="button"
+                            disabled={
+                              !activeMask || isEncoding || isDraftPreviewing
+                            }
+                            onClick={() => void previewCurrentEffect()}
+                          >
+                            {isDraftPreviewing ? "Previewing…" : "Preview"}
+                          </button>
+                          <button
                             className="operation-button"
                             type="button"
                             disabled={!activeMask || isEncoding}
-                            onClick={applyBlockShift}
+                            onClick={() => applyBlockShift()}
                           >
                             Shift blocks in mask
                           </button>
@@ -4862,7 +5204,6 @@ function App() {
                         </label>
                       </div>
                       <SeedField
-                        id="scan-corruption-seed"
                         label="Unsigned 32-bit seed"
                         value={scanCorruptionSeed}
                         onChange={(value) =>
@@ -4952,8 +5293,11 @@ function App() {
                       key={document.originalAsset.sha256}
                       quantizationTables={currentQuantizationTables}
                       components={document.inspection.components}
+                      componentLabels={componentLabels}
                       disabled={isEncoding || hasScanCorruption}
                       onApply={applyQuantizationEdit}
+                      onPreview={previewQuantizationEdit}
+                      onDraftChange={markDraftPreviewStale}
                       onError={setErrorMessage}
                     />
                   )}
@@ -4967,6 +5311,7 @@ function App() {
                     scanCorruptionReports.length
                   }
                   className="history-panel"
+                  initiallyOpen={false}
                 >
                   <section className="inspector-section operation-stack">
                     <p className="operation-description">

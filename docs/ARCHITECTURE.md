@@ -96,31 +96,39 @@ snapping; the overlay therefore shows the component blocks an effect will
 change. This is a view of the existing image-pixel mask and does not change
 its stored shape or operation coverage.
 
-The toolbar is a vertical rail to the left of the canvas and presents
-contextual controls in the right column. Coefficient Glitch, Brush, and Select
-are grouped together so mask-authoring tools remain visible beside their
-primary effect. Brush and Select are enabled in Coefficient Glitch and in
-Block Transform's Shuffle and Local shift modes. Block transfer and repeat
-use their own canvas gestures.
-The right column contains the active tool panel followed by History. Original
-asset and JPEG structure details are rendered inside the Info tool panel rather
-than persistently below History. History displays newer operations above older
-ones without changing their bottom-to-top replay order. UI collapse and panel
-selection are presentation state, not document or operation data.
+The workspace has an Effects catalog on the left, a canvas with a single
+horizontal tool row above it, and contextual effect settings plus History on
+the right. The catalog groups coefficient, block, quantization, and
+encoded-data operations and stays visible while settings are shown. History is
+collapsed at the bottom of the right-side scrolling panel; when expanded, it
+follows the settings in that scroll flow. On narrow screens the catalog, canvas,
+and right panel reflow vertically. Brush and Select are enabled on the canvas
+toolbar only for Coefficient Glitch and mask-based block modes; block transfer
+and repeat use their own canvas gestures. Original asset and JPEG structure
+details are rendered inside the Info tool panel rather than persistently below
+History. History displays newer operations above older ones without changing
+their bottom-to-top replay order. UI collapse and panel selection are
+presentation state, not document or operation data.
 
-Coefficient brushes hold a single coefficient operation but no component
-index. The effect's current component selection is applied when the operation
-is committed, and the resulting JPEG operation records that component index.
-The built-in presets therefore do not force a component target. Custom
-brushes use the v2 local-storage schema, separate from multi-step recipes;
-v1 brushes are migrated by dropping their stored component index. Each brush's
-automatic-apply toggle is saved locally per brush: when enabled, a completed
-brush or rectangle mask immediately creates an ordinary undoable coefficient
+Coefficient effect settings are validated and saved separately per effect in
+browser `localStorage`; they are not serialized into `.jpglitch` projects.
+Applied operations retain their own immutable parameter snapshots in History.
+Other UI settings are not guaranteed to persist across reloads.
+
+Coefficient effects use single-operation presets without a component index.
+The effect's current component selection is applied when the operation is
+committed, and the resulting JPEG operation records that component index.
+Every supported coefficient mode is selected through the Effects catalog;
+custom User brush creation and selection are not exposed. Previously stored
+custom-brush data is left untouched in browser storage but is not loaded by the
+interface. Per-effect automatic-apply toggles continue to use the existing
+browser-storage key for compatibility: when enabled, a completed Brush or
+rectangle mask immediately creates an ordinary undoable coefficient
 operation and clears the draft mask after the operation is accepted. If
 validation fails, the draft remains available for correction. The operation's
 mask snapshot can be restored from history if encoding fails.
 The current single-shape mask replaces the previous draft; automatic apply
-does not imply an additive brush. Effect history contains an immutable mask
+does not imply an additive mask. Effect history contains an immutable mask
 snapshot; restoring it replaces the draft without confirmation.
 
 ### `jpeg/`
@@ -349,6 +357,14 @@ It does not imply fractional-sample chroma translation or MCU manipulation.
 7. Export retains the encoded experiment. Independent validation may report
    whether it is standards-compliant and decodable, but a failed browser
    preview does not discard the encoded bytes.
+
+An uncommitted effect preview is explicitly requested, re-encodes a temporary
+JPEG, and does not add a History operation. The UI supports this path for
+coefficient effects, mask-based block effects, and DQT edits. Parameter changes
+mark an existing draft preview stale; obsolete requests are superseded through
+the preview coordinator. This is not a lightweight live-preview path because
+the current codec re-encodes the JPEG. Scan Corrupt does not have this draft
+preview path. Full before/after split or wipe comparison remains future work.
 
 The UI must distinguish:
 
