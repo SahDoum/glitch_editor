@@ -46,6 +46,39 @@ describe("coefficient brushes", () => {
           seed: 1,
         },
       },
+      {
+        id: "dc-steps",
+        name: "DC steps",
+        step: {
+          domain: "dc",
+          mode: "dc-steps",
+          frequencyBand: "all",
+          strength: 32,
+          seed: 1,
+        },
+      },
+      {
+        id: "ringing",
+        name: "Ringing",
+        step: {
+          domain: "ac",
+          mode: "ringing-boost",
+          frequencyBand: "all",
+          strength: 4,
+          seed: 1,
+        },
+      },
+      {
+        id: "engraving",
+        name: "Engraving",
+        step: {
+          domain: "ac",
+          mode: "engrave-horizontal",
+          frequencyBand: "all",
+          strength: 4,
+          seed: 1,
+        },
+      },
     ]);
   });
 

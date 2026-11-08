@@ -656,8 +656,12 @@ export function getMaskBlockCoverageAtLeastHalf(
   inspection: JpegBlockGeometry,
   componentId: number,
 ): Result<Uint8Array> {
-  const intersecting = getMaskBlockCoverage(mask, inspection, componentId);
-  if (!intersecting.ok) return intersecting;
+  if (mask.width !== inspection.width || mask.height !== inspection.height) {
+    return failure({
+      code: "INVALID_INPUT",
+      message: "The spatial mask dimensions do not match the JPEG image.",
+    });
+  }
   const grid = getJpegComponentBlockGrid(inspection, componentId);
   const component = inspection.components.find(
     (candidate) => candidate.id === componentId,
@@ -679,11 +683,13 @@ export function getMaskBlockCoverageAtLeastHalf(
   );
   const blockWidth = (8 * maxHorizontalSampling) / component.horizontalSampling;
   const blockHeight = (8 * maxVerticalSampling) / component.verticalSampling;
-  const selected = new Uint8Array(intersecting.value.length);
+  const selected = new Uint8Array(grid.columns * grid.rows);
   const shape = mask.shapes[0];
   if (!shape) return success(selected);
 
   if (shape.kind === "rectangle") {
+    const intersecting = getMaskBlockCoverage(mask, inspection, componentId);
+    if (!intersecting.ok) return intersecting;
     for (let blockY = 0; blockY < grid.rows; blockY += 1) {
       const top = blockY * blockHeight;
       const bottom = Math.min(inspection.height, top + blockHeight);
@@ -709,47 +715,102 @@ export function getMaskBlockCoverageAtLeastHalf(
     return success(selected);
   }
 
-  const candidateCount = intersecting.value.reduce(
-    (count, value) => count + value,
-    0,
-  );
-  const coverageWork = candidateCount * 64 * shape.points.length;
-  if (!Number.isSafeInteger(coverageWork) || coverageWork > 50_000_000) {
-    return failure({
-      code: "PROCESSING_FAILED",
-      message:
-        "The block-permutation mask is too complex to measure safely. Use a smaller brush mask or a rectangular selection.",
-    });
-  }
+  const lowerSamples = new Uint32Array(selected.length);
+  const upperSamples = new Uint32Array(selected.length);
+  const sampleCounts = new Uint8Array(selected.length);
+  const seenPoints = new Set<string>();
+  const radiusSquared = shape.radius * shape.radius;
+  let work = 0;
+  const maxWork = 50_000_000;
 
-  for (let blockY = 0; blockY < grid.rows; blockY += 1) {
-    const top = blockY * blockHeight;
-    const bottom = Math.min(inspection.height, top + blockHeight);
-    for (let blockX = 0; blockX < grid.columns; blockX += 1) {
-      const index = blockY * grid.columns + blockX;
-      if (intersecting.value[index] === 0) continue;
-      const left = blockX * blockWidth;
-      const right = Math.min(inspection.width, left + blockWidth);
-      let coveredSamples = 0;
-      for (let sampleY = 0; sampleY < 8; sampleY += 1) {
-        const y = top + ((sampleY + 0.5) * (bottom - top)) / 8;
-        for (let sampleX = 0; sampleX < 8; sampleX += 1) {
-          const x = left + ((sampleX + 0.5) * (right - left)) / 8;
-          if (
-            shape.points.some((point) => {
-              const distanceX = point.x - x;
-              const distanceY = point.y - y;
-              return (
-                distanceX * distanceX + distanceY * distanceY <=
-                shape.radius * shape.radius
-              );
-            })
-          ) {
-            coveredSamples += 1;
+  for (const point of shape.points) {
+    const key = `${point.x},${point.y}`;
+    if (seenPoints.has(key)) continue;
+    seenPoints.add(key);
+    const startX = Math.max(
+      0,
+      Math.floor((point.x - shape.radius) / blockWidth),
+    );
+    const startY = Math.max(
+      0,
+      Math.floor((point.y - shape.radius) / blockHeight),
+    );
+    const endX = Math.min(
+      grid.columns,
+      Math.floor((point.x + shape.radius) / blockWidth) + 1,
+    );
+    const endY = Math.min(
+      grid.rows,
+      Math.floor((point.y + shape.radius) / blockHeight) + 1,
+    );
+
+    for (let blockY = startY; blockY < endY; blockY += 1) {
+      const top = blockY * blockHeight;
+      const bottom = Math.min(inspection.height, top + blockHeight);
+      for (let blockX = startX; blockX < endX; blockX += 1) {
+        work += 1;
+        if (work > maxWork) {
+          return failure({
+            code: "PROCESSING_FAILED",
+            message:
+              "The brush mask requires too much processing. Use a shorter stroke, a smaller brush, or a rectangular selection.",
+          });
+        }
+        const index = blockY * grid.columns + blockX;
+        if (selected[index]) continue;
+        const left = blockX * blockWidth;
+        const right = Math.min(inspection.width, left + blockWidth);
+        const nearestX = Math.max(left, Math.min(point.x, right));
+        const nearestY = Math.max(top, Math.min(point.y, bottom));
+        if (
+          (point.x - nearestX) ** 2 + (point.y - nearestY) ** 2 >
+          radiusSquared
+        )
+          continue;
+        const farX = Math.max(
+          Math.abs(point.x - left),
+          Math.abs(point.x - right),
+        );
+        const farY = Math.max(
+          Math.abs(point.y - top),
+          Math.abs(point.y - bottom),
+        );
+        if (farX * farX + farY * farY <= radiusSquared) {
+          selected[index] = 1;
+          continue;
+        }
+        for (let sampleY = 0; sampleY < 8 && !selected[index]; sampleY += 1) {
+          const y = top + ((sampleY + 0.5) * (bottom - top)) / 8;
+          for (let sampleX = 0; sampleX < 8; sampleX += 1) {
+            work += 1;
+            if (work > maxWork) {
+              return failure({
+                code: "PROCESSING_FAILED",
+                message:
+                  "The brush mask requires too much processing. Use a shorter stroke, a smaller brush, or a rectangular selection.",
+              });
+            }
+            const sample = sampleY * 8 + sampleX;
+            const samples = sample < 32 ? lowerSamples : upperSamples;
+            const bit = 1 << (sample % 32);
+            if ((samples[index]! & bit) !== 0) continue;
+            const x = left + ((sampleX + 0.5) * (right - left)) / 8;
+            const distanceX = point.x - x;
+            const distanceY = point.y - y;
+            if (
+              distanceX * distanceX + distanceY * distanceY <=
+              radiusSquared
+            ) {
+              samples[index] = samples[index]! | bit;
+              sampleCounts[index]! += 1;
+              if (sampleCounts[index] === 32) {
+                selected[index] = 1;
+                break;
+              }
+            }
           }
         }
       }
-      if (coveredSamples >= 32) selected[index] = 1;
     }
   }
   return success(selected);

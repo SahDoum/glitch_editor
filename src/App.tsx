@@ -20,6 +20,7 @@ import {
 import {
   applyBlockPermutationOperation,
   applyBlockRepeatOperation,
+  applyBlockShiftOperation,
   applyBlockTransferOperation,
   applyCoefficientGlitchOperation,
   applyQuantizationOperation,
@@ -1161,8 +1162,10 @@ function App() {
   const [repeatCount, setRepeatCount] = useState(1);
   const [permutationSeed, setPermutationSeed] = useState(1);
   const [blockTransformMode, setBlockTransformMode] = useState<
-    "shuffle" | "repeat" | "transfer"
+    "shuffle" | "repeat" | "transfer" | "shift"
   >("transfer");
+  const [blockShiftX, setBlockShiftX] = useState(1);
+  const [blockShiftY, setBlockShiftY] = useState(0);
   const [blockTransferMode, setBlockTransferMode] =
     useState<BlockTransferMode>("all");
   const [blockTransferAction, setBlockTransferAction] =
@@ -2290,11 +2293,14 @@ function App() {
     setSelection(null);
     const maskEffect =
       tool === "coefficient-glitch" ||
-      (tool === "block-transform" && blockTransformMode === "shuffle");
+      (tool === "block-transform" &&
+        (blockTransformMode === "shuffle" || blockTransformMode === "shift"));
     const preservePanel =
       (tool === "brush" || tool === "select") &&
       (panelTool === "coefficient-glitch" ||
-        (panelTool === "block-transform" && blockTransformMode === "shuffle"));
+        (panelTool === "block-transform" &&
+          (blockTransformMode === "shuffle" ||
+            blockTransformMode === "shift")));
     if (
       maskEffect &&
       (tool === "coefficient-glitch" || tool === "block-transform")
@@ -2481,6 +2487,24 @@ function App() {
         componentIndex,
         mask,
         seed: permutationSeed,
+      }),
+    );
+  }
+
+  function applyBlockShift() {
+    if (!ensureCoefficientPhase()) return;
+    const history = operationHistory.current;
+    if (!history || !activeMask) {
+      setErrorMessage("Draw or select a mask before shifting DCT blocks.");
+      return;
+    }
+    updateHistory(
+      applyBlockShiftOperation(history, {
+        kind: "block-shift",
+        componentIndex,
+        mask: activeMask,
+        offsetX: blockShiftX,
+        offsetY: blockShiftY,
       }),
     );
   }
@@ -2914,7 +2938,9 @@ function App() {
   const activeMaskForOverlay = overlayVisibility.mask
     ? isMaskAuthoring
       ? globalSelectionMask
-      : toolMode === "block-transform" && blockTransformMode !== "shuffle"
+      : toolMode === "block-transform" &&
+          blockTransformMode !== "shuffle" &&
+          blockTransformMode !== "shift"
         ? null
         : activeMask
     : null;
@@ -2996,10 +3022,27 @@ function App() {
       }
       if (!event.ctrlKey && !event.metaKey && !event.altKey && document) {
         const tool = getCanvasToolShortcut(event.key);
-        if (!tool || !isCanvasToolEnabled(tool, panelTool)) return;
+        if (
+          !tool ||
+          !isCanvasToolEnabled(
+            tool,
+            panelTool,
+            blockTransformMode === "shuffle" || blockTransformMode === "shift",
+          )
+        )
+          return;
         event.preventDefault();
         keyboardSelectionAnchor.current = null;
-        dispatchWorkspace({ type: "activate-tool", tool });
+        dispatchWorkspace({
+          type: "activate-tool",
+          tool,
+          preservePanel:
+            (tool === "brush" || tool === "select") &&
+            (panelTool === "coefficient-glitch" ||
+              (panelTool === "block-transform" &&
+                (blockTransformMode === "shuffle" ||
+                  blockTransformMode === "shift"))),
+        });
         setKeyboardCursor(null);
         setCanvasKeyboardAnnouncement(`${tool} tool selected.`);
         return;
@@ -3020,7 +3063,7 @@ function App() {
 
     window.addEventListener("keydown", onWorkspaceKeyDown);
     return () => window.removeEventListener("keydown", onWorkspaceKeyDown);
-  }, [document, panelTool, selectAllImage, toolMode]);
+  }, [blockTransformMode, document, panelTool, selectAllImage, toolMode]);
 
   return (
     <main className={`workspace ${document ? "has-tool-bar" : ""}`}>
@@ -3198,7 +3241,12 @@ function App() {
               <span className="tool-group-label">{group.label}</span>
               <div className="tool-group-buttons">
                 {group.tools.map((tool) => {
-                  const enabled = isCanvasToolEnabled(tool.id, panelTool);
+                  const enabled = isCanvasToolEnabled(
+                    tool.id,
+                    panelTool,
+                    blockTransformMode === "shuffle" ||
+                      blockTransformMode === "shift",
+                  );
                   return (
                     <button
                       className={`tool-button ${toolMode === tool.id || panelTool === tool.id ? "is-active" : ""}`}
@@ -3657,7 +3705,13 @@ function App() {
                                   ? "▦"
                                   : brush.id === "chroma-scale"
                                     ? "◈"
-                                    : "✎"}
+                                    : brush.id === "dc-steps"
+                                      ? "▤"
+                                      : brush.id === "ringing"
+                                        ? "◉"
+                                        : brush.id === "engraving"
+                                          ? "▥"
+                                          : "✎"}
                               </span>
                               <small>{brush.name}</small>
                             </button>
@@ -3745,6 +3799,31 @@ function App() {
                                 hint: "Add to the block-average value",
                               },
                               {
+                                value: "dc-steps",
+                                label: "DC steps",
+                                hint: "Round block averages to steps",
+                              },
+                              {
+                                value: "low-pass",
+                                label: "AC low-pass",
+                                hint: "Remove AC above a frequency cutoff",
+                              },
+                              {
+                                value: "ringing-boost",
+                                label: "Ringing boost",
+                                hint: "Boost the retained frequency edge",
+                              },
+                              {
+                                value: "engrave-horizontal",
+                                label: "Engraving horizontal",
+                                hint: "Keep one DCT frequency axis",
+                              },
+                              {
+                                value: "engrave-vertical",
+                                label: "Engraving vertical",
+                                hint: "Keep the other DCT frequency axis",
+                              },
+                              {
                                 value: "invert",
                                 label: "Invert AC",
                                 hint: "Negate selected AC coefficients",
@@ -3757,9 +3836,21 @@ function App() {
                             ]}
                             onChange={(next) => {
                               setCoefficientMode(next);
-                              if (next === "offset") {
+                              if (next === "offset" || next === "dc-steps") {
                                 setCoefficientDomain("dc");
                                 setFrequencyBand("all");
+                                if (next === "dc-steps") {
+                                  setCoefficientStrength(32);
+                                }
+                              } else if (
+                                next === "low-pass" ||
+                                next === "ringing-boost" ||
+                                next === "engrave-horizontal" ||
+                                next === "engrave-vertical"
+                              ) {
+                                setCoefficientDomain("ac");
+                                setFrequencyBand("all");
+                                setCoefficientStrength(4);
                               } else if (
                                 next === "invert" ||
                                 next === "isolate"
@@ -3774,49 +3865,55 @@ function App() {
                               }
                             }}
                           />
-                          {coefficientMode !== "offset" && (
-                            <>
-                              <RadioChoiceGroup<CoefficientRangeChoice>
-                                name="coefficient-target-range"
-                                legend="Coefficient range"
-                                value={
-                                  coefficientDomain === "dc"
-                                    ? "dc"
-                                    : `ac:${frequencyBand}`
-                                }
-                                options={getCoefficientRangeOptions(
-                                  coefficientMode,
-                                )}
-                                onChange={(next) => {
-                                  if (next === "dc") {
-                                    setCoefficientDomain("dc");
-                                    setFrequencyBand("all");
-                                    return;
+                          {coefficientMode !== "offset" &&
+                            coefficientMode !== "dc-steps" &&
+                            coefficientMode !== "low-pass" &&
+                            coefficientMode !== "ringing-boost" &&
+                            coefficientMode !== "engrave-horizontal" &&
+                            coefficientMode !== "engrave-vertical" && (
+                              <>
+                                <RadioChoiceGroup<CoefficientRangeChoice>
+                                  name="coefficient-target-range"
+                                  legend="Coefficient range"
+                                  value={
+                                    coefficientDomain === "dc"
+                                      ? "dc"
+                                      : `ac:${frequencyBand}`
                                   }
-                                  const band = GLITCH_FREQUENCY_BANDS.find(
-                                    (candidate) => next === `ac:${candidate}`,
-                                  );
-                                  if (band) {
-                                    setCoefficientDomain("ac");
-                                    setFrequencyBand(band);
-                                  }
-                                }}
-                                layout="bands"
-                              />
-                              <p className="coefficient-note">
-                                DC is the block-average coefficient. AC bands
-                                refer to u+v coordinates in quantized 8×8 DCT
-                                coefficients.
-                              </p>
-                              {coefficientMode === "isolate" && (
+                                  options={getCoefficientRangeOptions(
+                                    coefficientMode,
+                                  )}
+                                  onChange={(next) => {
+                                    if (next === "dc") {
+                                      setCoefficientDomain("dc");
+                                      setFrequencyBand("all");
+                                      return;
+                                    }
+                                    const band = GLITCH_FREQUENCY_BANDS.find(
+                                      (candidate) => next === `ac:${candidate}`,
+                                    );
+                                    if (band) {
+                                      setCoefficientDomain("ac");
+                                      setFrequencyBand(band);
+                                    }
+                                  }}
+                                  layout="bands"
+                                />
                                 <p className="coefficient-note">
-                                  Isolate band targets AC only: DC is not an AC
-                                  band, and AC All would leave no coefficients
-                                  outside the selected range to clear.
+                                  DC is the block-average coefficient. AC bands
+                                  refer to u+v coordinates in quantized 8×8 DCT
+                                  coefficients.
                                 </p>
-                              )}
-                            </>
-                          )}
+                                {coefficientMode === "isolate" && (
+                                  <p className="coefficient-note">
+                                    Isolate band targets AC only: DC is not an
+                                    AC band, and AC All would leave no
+                                    coefficients outside the selected range to
+                                    clear.
+                                  </p>
+                                )}
+                              </>
+                            )}
                           {["scale", "randomize", "offset"].includes(
                             coefficientMode,
                           ) && (
@@ -3903,6 +4000,204 @@ function App() {
                             <span>−8 · reduce or invert</span>
                             <span>+8 · increase</span>
                           </div>
+                        </div>
+                      )}
+                      {coefficientMode === "dc-steps" && (
+                        <div className="coefficient-field tool-field range-field">
+                          <span id="dc-step-label">
+                            DC coefficient step · {coefficientStrength}
+                          </span>
+                          <div className="range-input-row">
+                            <input
+                              type="range"
+                              min="1"
+                              max="512"
+                              step="1"
+                              value={coefficientStrength}
+                              aria-labelledby="dc-step-label"
+                              onChange={(event) =>
+                                setCoefficientStrength(
+                                  Number(event.currentTarget.value),
+                                )
+                              }
+                            />
+                            <input
+                              type="number"
+                              min="1"
+                              max="512"
+                              step="1"
+                              value={coefficientStrength}
+                              aria-labelledby="dc-step-label"
+                              onChange={(event) =>
+                                setCoefficientStrength(
+                                  Number(event.currentTarget.value),
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="range-endpoints">
+                            <span>1 · finest</span>
+                            <span>512 · coarser</span>
+                          </div>
+                          <p className="coefficient-note">
+                            Rounds the selected component&apos;s quantized DC
+                            coefficients; AC remains unchanged. This may produce
+                            blocky tonal steps, not guaranteed pixel
+                            posterization.
+                          </p>
+                        </div>
+                      )}
+                      {coefficientMode === "low-pass" && (
+                        <div className="coefficient-field tool-field range-field">
+                          <span id="ac-cutoff-label">
+                            AC frequency cutoff · {coefficientStrength}
+                          </span>
+                          <div className="range-input-row">
+                            <input
+                              type="range"
+                              min="1"
+                              max="14"
+                              step="1"
+                              value={coefficientStrength}
+                              aria-labelledby="ac-cutoff-label"
+                              onChange={(event) =>
+                                setCoefficientStrength(
+                                  Number(event.currentTarget.value),
+                                )
+                              }
+                            />
+                            <input
+                              type="number"
+                              min="1"
+                              max="14"
+                              step="1"
+                              value={coefficientStrength}
+                              aria-labelledby="ac-cutoff-label"
+                              onChange={(event) =>
+                                setCoefficientStrength(
+                                  Number(event.currentTarget.value),
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="range-endpoints">
+                            <span>1 · strongest cutoff</span>
+                            <span>14 · unchanged</span>
+                          </div>
+                          <p className="coefficient-note">
+                            Keeps DC and AC with u+v at or below the cutoff;
+                            removes higher AC in masked blocks. Edge halos are
+                            possible but not guaranteed.
+                          </p>
+                        </div>
+                      )}
+                      {coefficientMode === "ringing-boost" && (
+                        <div className="coefficient-field tool-field range-field">
+                          <span id="ringing-boost-label">
+                            Ringing boost · {coefficientStrength}×
+                          </span>
+                          <div className="range-input-row">
+                            <input
+                              type="range"
+                              min="1"
+                              max="8"
+                              step="0.1"
+                              value={coefficientStrength}
+                              aria-labelledby="ringing-boost-label"
+                              onChange={(event) =>
+                                setCoefficientStrength(
+                                  Number(event.currentTarget.value),
+                                )
+                              }
+                            />
+                            <input
+                              type="number"
+                              min="1"
+                              max="8"
+                              step="0.1"
+                              value={coefficientStrength}
+                              aria-labelledby="ringing-boost-label"
+                              onChange={(event) =>
+                                setCoefficientStrength(
+                                  Number(event.currentTarget.value),
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="range-endpoints">
+                            <span>1× · low-pass only</span>
+                            <span>8× · stronger</span>
+                          </div>
+                          <p className="coefficient-note">
+                            Keeps DC and AC with u+v below 3, boosts AC at 3,
+                            and removes higher AC in masked blocks. May create
+                            edge halos, blur or block artifacts.
+                          </p>
+                        </div>
+                      )}
+                      {(coefficientMode === "engrave-horizontal" ||
+                        coefficientMode === "engrave-vertical") && (
+                        <div className="coefficient-field tool-field range-field">
+                          <RadioChoiceGroup<
+                            "engrave-horizontal" | "engrave-vertical"
+                          >
+                            name="engraving-direction"
+                            legend="Line direction"
+                            value={coefficientMode}
+                            options={[
+                              {
+                                value: "engrave-horizontal",
+                                label: "Horizontal",
+                                hint: "Keep vertical-frequency AC (u=0)",
+                              },
+                              {
+                                value: "engrave-vertical",
+                                label: "Vertical",
+                                hint: "Keep horizontal-frequency AC (v=0)",
+                              },
+                            ]}
+                            onChange={setCoefficientMode}
+                          />
+                          <span id="engraving-strength-label">
+                            Directional AC gain · {coefficientStrength}×
+                          </span>
+                          <div className="range-input-row">
+                            <input
+                              type="range"
+                              min="1"
+                              max="8"
+                              step="0.1"
+                              value={coefficientStrength}
+                              aria-labelledby="engraving-strength-label"
+                              onChange={(event) =>
+                                setCoefficientStrength(
+                                  Number(event.currentTarget.value),
+                                )
+                              }
+                            />
+                            <input
+                              type="number"
+                              min="1"
+                              max="8"
+                              step="0.1"
+                              value={coefficientStrength}
+                              aria-labelledby="engraving-strength-label"
+                              onChange={(event) =>
+                                setCoefficientStrength(
+                                  Number(event.currentTarget.value),
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="range-endpoints">
+                            <span>1× · directional cut</span>
+                            <span>8× · stronger</span>
+                          </div>
+                          <p className="coefficient-note">
+                            Keeps DC and scales AC on one frequency axis; other
+                            AC is removed in masked blocks. The result may be
+                            blocky and is not guaranteed to resemble engraving.
+                          </p>
                         </div>
                       )}
                       <button
@@ -4042,7 +4337,7 @@ function App() {
                   {panelTool === "block-transform" && (
                     <section className="inspector-section">
                       <p className="operation-description">
-                        Reorders quantized DCT blocks in one component, then
+                        Changes quantized DCT blocks in one component, then
                         re-encodes the JPEG. This does not copy pixels, MCUs, or
                         entropy-coded bytes.
                       </p>
@@ -4056,6 +4351,7 @@ function App() {
                             ["transfer", "Drag transfer"],
                             ["repeat", "Copy / repeat"],
                             ["shuffle", "Shuffle"],
+                            ["shift", "Local shift"],
                           ] as const
                         ).map(([mode, label]) => (
                           <button
@@ -4068,7 +4364,7 @@ function App() {
                               setBlockTransferDraft(null);
                               setRepeatDraft(null);
                               setBlockTransformMode(mode);
-                              if (mode === "shuffle") {
+                              if (mode === "shuffle" || mode === "shift") {
                                 dispatchWorkspace({
                                   type: "activate-mask-effect",
                                   tool: "block-transform",
@@ -4261,6 +4557,55 @@ function App() {
                             onClick={applyBlockPermutation}
                           >
                             Shuffle blocks in mask
+                          </button>
+                        </>
+                      )}
+                      {blockTransformMode === "shift" && (
+                        <>
+                          <p className="operation-description">
+                            Copy whole DCT blocks from the selected component
+                            into masked destinations, shifted by component
+                            blocks. Choose a chroma component for a color shift.
+                            Source blocks outside the image leave destinations
+                            unchanged. At least 50% mask coverage is required.
+                          </p>
+                          <label className="coefficient-field tool-field">
+                            <span>Horizontal offset in component blocks</span>
+                            <input
+                              type="number"
+                              min="-256"
+                              max="256"
+                              step="1"
+                              value={blockShiftX}
+                              onChange={(event) =>
+                                setBlockShiftX(
+                                  Number(event.currentTarget.value),
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="coefficient-field tool-field">
+                            <span>Vertical offset in component blocks</span>
+                            <input
+                              type="number"
+                              min="-256"
+                              max="256"
+                              step="1"
+                              value={blockShiftY}
+                              onChange={(event) =>
+                                setBlockShiftY(
+                                  Number(event.currentTarget.value),
+                                )
+                              }
+                            />
+                          </label>
+                          <button
+                            className="operation-button"
+                            type="button"
+                            disabled={!activeMask || isEncoding}
+                            onClick={applyBlockShift}
+                          >
+                            Shift blocks in mask
                           </button>
                         </>
                       )}
@@ -4544,13 +4889,15 @@ function App() {
                                             : operationKind ===
                                                 "block-permutation"
                                               ? "Block shuffle"
-                                              : operationKind ===
-                                                  "block-transfer"
-                                                ? "Block region transfer"
+                                              : operationKind === "block-shift"
+                                                ? "Local block shift"
                                                 : operationKind ===
-                                                    "quantization"
-                                                  ? "DQT matrix edit"
-                                                  : operation.type}
+                                                    "block-transfer"
+                                                  ? "Block region transfer"
+                                                  : operationKind ===
+                                                      "quantization"
+                                                    ? "DQT matrix edit"
+                                                    : operation.type}
                                   </span>
                                 </label>
                                 <span className="operation-status">
@@ -4569,8 +4916,10 @@ function App() {
                                     {Reflect.get(parameters, "componentIndex")}{" "}
                                     · {Reflect.get(parameters, "mode")}{" "}
                                     {Reflect.get(parameters, "domain")} ·{" "}
-                                    {Reflect.get(parameters, "frequencyBand")} ·
-                                    seed {Reflect.get(parameters, "seed")}
+                                    {Reflect.get(parameters, "frequencyBand")} ·{" "}
+                                    strength{" "}
+                                    {Reflect.get(parameters, "strength")} · seed{" "}
+                                    {Reflect.get(parameters, "seed")}
                                   </p>
                                 )}
                               {parameters &&
@@ -4603,6 +4952,16 @@ function App() {
                                     {Reflect.get(parameters, "componentIndex")}{" "}
                                     · seed {Reflect.get(parameters, "seed")} ·
                                     Fisher–Yates
+                                  </p>
+                                )}
+                              {parameters &&
+                                operationKind === "block-shift" && (
+                                  <p className="operation-parameters">
+                                    Component{" "}
+                                    {Reflect.get(parameters, "componentIndex")}{" "}
+                                    · offset (
+                                    {Reflect.get(parameters, "offsetX")},{" "}
+                                    {Reflect.get(parameters, "offsetY")}) blocks
                                   </p>
                                 )}
                               {parameters &&

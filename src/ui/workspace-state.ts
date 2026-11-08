@@ -116,10 +116,12 @@ export function getCanvasToolShortcut(key: string): CanvasTool | null {
 export function isCanvasToolEnabled(
   tool: CanvasTool,
   panelTool: CanvasTool,
+  blockMaskMode = false,
 ): boolean {
   return (
     (tool !== "brush" && tool !== "select") ||
-    panelTool === "coefficient-glitch"
+    panelTool === "coefficient-glitch" ||
+    (panelTool === "block-transform" && blockMaskMode)
   );
 }
 

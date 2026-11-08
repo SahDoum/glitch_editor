@@ -25,5 +25,10 @@ describe("coefficient range choices", () => {
 
   it("has no range choices for DC offset", () => {
     expect(getValues("offset")).toEqual([]);
+    expect(getValues("dc-steps")).toEqual([]);
+    expect(getValues("low-pass")).toEqual([]);
+    expect(getValues("ringing-boost")).toEqual([]);
+    expect(getValues("engrave-horizontal")).toEqual([]);
+    expect(getValues("engrave-vertical")).toEqual([]);
   });
 });

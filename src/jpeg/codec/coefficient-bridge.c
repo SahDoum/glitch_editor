@@ -23,7 +23,8 @@ enum {
   CODEC_INVALID_BLOCK = -4,
   CODEC_OUTPUT_LIMIT = -5,
   CODEC_INVALID_OPERATION = -6,
-  CODEC_INVALID_QUANTIZATION = -7
+  CODEC_INVALID_QUANTIZATION = -7,
+  CODEC_SHIFT_LIMIT = -8
 };
 
 struct bridge_error_mgr {
@@ -342,7 +343,7 @@ int coefficient_apply(int component, int mode, int domain, int frequency_band,
 
   if (!state.created || state.coefficients == NULL || block_mask == NULL ||
       component < 0 || component >= state.cinfo.num_components || mode < 0 ||
-      mode > 5 || domain < 0 || domain > 1 || frequency_band < 0 ||
+      mode > 10 || domain < 0 || domain > 1 || frequency_band < 0 ||
       frequency_band > 3 || !isfinite(strength)) {
     return CODEC_INVALID_OPERATION;
   }
@@ -361,6 +362,15 @@ int coefficient_apply(int component, int mode, int domain, int frequency_band,
       (mode == 3 &&
        (domain != 1 || strength < -2047.0 || strength > 2047.0 ||
         (double)(int)strength != strength)) ||
+      (mode == 6 &&
+       (domain != 1 || strength < 1.0 || strength > 512.0 ||
+        (double)(int)strength != strength)) ||
+      (mode == 7 &&
+       (domain != 0 || frequency_band != 3 || strength < 1.0 ||
+        strength > 14.0 || (double)(int)strength != strength)) ||
+      ((mode == 8 || mode == 9 || mode == 10) &&
+       (domain != 0 || frequency_band != 3 || strength < 1.0 ||
+        strength > 8.0)) ||
       ((mode == 4 || mode == 5) &&
        (domain != 0 || strength != 0.0 ||
         (mode == 5 && frequency_band == 3)))) {
@@ -404,7 +414,11 @@ int coefficient_apply(int component, int mode, int domain, int frequency_band,
         if ((domain == 1 && !is_dc) || (domain == 0 && is_dc)) continue;
         if (!is_dc) {
           unsigned int frequency = index / DCTSIZE + index % DCTSIZE;
-          if (mode == 5) {
+          if (mode == 7) {
+            if (frequency <= (unsigned int)strength) continue;
+          } else if (mode == 8) {
+            if (frequency < 3) continue;
+          } else if (mode == 5) {
             if (frequency >= minimum_frequency &&
                 frequency <= maximum_frequency) {
               continue;
@@ -429,6 +443,18 @@ int coefficient_apply(int component, int mode, int domain, int frequency_band,
           value += (int)strength;
         } else if (mode == 4) {
           value = -value;
+        } else if (mode == 6) {
+          int step = (int)strength;
+          int magnitude = value < 0 ? -value : value;
+          int rounded = ((magnitude + step / 2) / step) * step;
+          int max_multiple = (2047 / step) * step;
+          if (rounded > max_multiple) rounded = max_multiple;
+          value = value < 0 ? -rounded : rounded;
+        } else if ((mode == 8 && index / DCTSIZE + index % DCTSIZE == 3) ||
+                   (mode == 9 && index % DCTSIZE == 0) ||
+                   (mode == 10 && index / DCTSIZE == 0)) {
+          double scaled = value * strength;
+          value = scaled >= 0 ? (int)(scaled + 0.5) : (int)(scaled - 0.5);
         } else {
           value = 0;
         }
@@ -554,6 +580,66 @@ int coefficient_permute_blocks(int component,
   }
 
   free((void *)block_indices);
+  return CODEC_OK;
+}
+
+struct shifted_block {
+  unsigned int destination;
+  JBLOCK coefficients;
+};
+
+int coefficient_shift_blocks(int component, const unsigned char *block_mask,
+                             unsigned int block_mask_size, int offset_x,
+                             int offset_y) {
+  struct shifted_block * volatile snapshot = NULL;
+  const jpeg_component_info *info;
+  unsigned int count = 0;
+  if (!state.created || state.coefficients == NULL || block_mask == NULL ||
+      component < 0 || component >= state.cinfo.num_components ||
+      offset_x < -256 || offset_x > 256 || offset_y < -256 || offset_y > 256 ||
+      (offset_x == 0 && offset_y == 0)) return CODEC_INVALID_OPERATION;
+  info = &state.cinfo.comp_info[component];
+  if ((uint64_t)info->width_in_blocks * info->height_in_blocks !=
+          block_mask_size || block_mask_size > MAX_EDITED_BLOCKS)
+    return CODEC_INVALID_OPERATION;
+  for (unsigned int index = 0; index < block_mask_size; ++index) {
+    if (!block_mask[index]) continue;
+    int64_t x = (int64_t)(index % info->width_in_blocks) - offset_x;
+    int64_t y = (int64_t)(index / info->width_in_blocks) - offset_y;
+    if (x >= 0 && y >= 0 && x < info->width_in_blocks &&
+        y < info->height_in_blocks && ++count > MAX_TRANSFER_BLOCKS)
+      return CODEC_SHIFT_LIMIT;
+  }
+  if (count == 0) return CODEC_OK;
+  if (setjmp(state.error.jump_buffer) != 0) {
+    free((void *)snapshot);
+    return CODEC_MALFORMED;
+  }
+  snapshot = malloc((size_t)count * sizeof(*snapshot));
+  if (snapshot == NULL) return CODEC_RESOURCE_LIMIT;
+  unsigned int next = 0;
+  for (unsigned int index = 0; index < block_mask_size; ++index) {
+    if (!block_mask[index]) continue;
+    int64_t x = (int64_t)(index % info->width_in_blocks) - offset_x;
+    int64_t y = (int64_t)(index / info->width_in_blocks) - offset_y;
+    if (x < 0 || y < 0 || x >= info->width_in_blocks ||
+        y >= info->height_in_blocks) continue;
+    JBLOCKARRAY row = state.cinfo.mem->access_virt_barray(
+        (j_common_ptr)&state.cinfo, state.coefficients[component],
+        (JDIMENSION)y, 1, FALSE);
+    snapshot[next].destination = index;
+    memcpy(snapshot[next].coefficients, row[0][x], sizeof(JBLOCK));
+    ++next;
+  }
+  for (unsigned int index = 0; index < count; ++index) {
+    unsigned int destination = snapshot[index].destination;
+    JBLOCKARRAY row = state.cinfo.mem->access_virt_barray(
+        (j_common_ptr)&state.cinfo, state.coefficients[component],
+        destination / info->width_in_blocks, 1, TRUE);
+    memcpy(row[0][destination % info->width_in_blocks],
+           snapshot[index].coefficients, sizeof(JBLOCK));
+  }
+  free((void *)snapshot);
   return CODEC_OK;
 }
 

@@ -24,12 +24,14 @@ import {
 import {
   isBlockRepeatParameters,
   isBlockPermutationParameters,
+  isBlockShiftParameters,
   isBlockTransferParameters,
   isCoefficientGlitchParameters,
   isQuantizationParameters,
   MAX_GLITCH_OPERATIONS,
   type BlockRepeatOperation,
   type BlockPermutationOperation,
+  type BlockShiftOperation,
   type BlockTransferOperation,
   type CoefficientGlitchOperation,
   type JpegGlitchOperation,
@@ -221,6 +223,19 @@ export function createJpegDocumentSession(
           : failure({
               code: "INVALID_INPUT",
               message: "The block permutation parameters are invalid.",
+            }),
+    ),
+    registerGlitchOperation(
+      registry,
+      "jpeg/glitch/block-shift",
+      "jpeg-coefficients",
+      (value) => isBlockShiftParameters(value, imported.inspection),
+      (parameters) =>
+        isBlockShiftParameters(parameters, imported.inspection)
+          ? success(parameters)
+          : failure({
+              code: "INVALID_INPUT",
+              message: "The block shift parameters are invalid.",
             }),
     ),
     registerGlitchOperation(
@@ -538,6 +553,33 @@ export function applyBlockTransferOperation(
     });
   }
   return history.add("jpeg/glitch/block-transfer", 1, { ...input });
+}
+
+export function applyBlockShiftOperation(
+  history: OperationHistory<JpegEditableState>,
+  input: BlockShiftOperation,
+): Result<ProjectDocument<JpegEditableState>> {
+  const limit = checkOperationLimit(history);
+  if (!limit.ok) return limit;
+  const parameters = { ...input, mask: spatialMaskToJson(input.mask) };
+  if (!isBlockShiftParameters(parameters, history.snapshot.inspection)) {
+    return failure({
+      code: "INVALID_INPUT",
+      message: "The block shift parameters, component, or mask are invalid.",
+    });
+  }
+  return history.add(
+    "jpeg/glitch/block-shift",
+    1,
+    {
+      kind: input.kind,
+      componentIndex: input.componentIndex,
+      mask: spatialMaskToJson(input.mask),
+      offsetX: input.offsetX,
+      offsetY: input.offsetY,
+    },
+    { maskId: input.mask.id },
+  );
 }
 
 export function applyQuantizationOperation(

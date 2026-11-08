@@ -106,6 +106,24 @@ export function isCoefficientRecipeStep(
         Number.isInteger(strength) &&
         strength >= -2047 &&
         strength <= 2047) ||
+      (mode === "dc-steps" &&
+        domain === "dc" &&
+        Number.isInteger(strength) &&
+        strength >= 1 &&
+        strength <= 512) ||
+      (mode === "low-pass" &&
+        domain === "ac" &&
+        frequencyBand === "all" &&
+        Number.isInteger(strength) &&
+        strength >= 1 &&
+        strength <= 14) ||
+      ((mode === "ringing-boost" ||
+        mode === "engrave-horizontal" ||
+        mode === "engrave-vertical") &&
+        domain === "ac" &&
+        frequencyBand === "all" &&
+        strength >= 1 &&
+        strength <= 8) ||
       ((mode === "invert" || mode === "isolate") &&
         domain === "ac" &&
         strength === 0 &&

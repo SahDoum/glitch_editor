@@ -65,7 +65,10 @@ Use these statuses consistently:
 - Can ringing be isolated around edges?
 - How does the effect depend on the source image?
 
-**Status:** `HYPOTHESIS`
+**Status:** `HYPOTHESIS` for visible ringing. The UI provides a masked
+frequency-edge boost with an adjustable multiplier as an experiment, as well
+as AC low-pass in custom brushes; halos are not guaranteed. See
+[GLITCH_EXPERIMENTS.md](./GLITCH_EXPERIMENTS.md).
 
 ### 3.3 Mosquito noise
 
@@ -118,7 +121,10 @@ Use these statuses consistently:
 - Which frequency bands affect tonal smoothness?
 - Can the effect be controlled separately for Y, Cb, and Cr?
 
-**Status:** `HYPOTHESIS`
+**Status:** `HYPOTHESIS` for visual posterization. The UI now includes a
+masked DC-step rounding experiment, which reduces block-average coefficient
+levels without modifying AC; it is not equivalent to quantizing pixels. See
+[GLITCH_EXPERIMENTS.md](./GLITCH_EXPERIMENTS.md) for evidence and limits.
 
 ### 4.2 False colors
 
@@ -227,7 +233,11 @@ A copied range may fail to decode or produce a result different from the intende
 
 **Technical note:** SOF component identifiers and sampling factors, as well as SOS component mappings, define how components are interpreted. Arbitrarily changing component identifiers or ordering is more likely to cause a decoding error or invalid interpretation than a clean chroma displacement.
 
-**Status:** `HYPOTHESIS`
+**Status:** `IMPLEMENTED` for integer, masked same-component DCT-block shifts
+in Block Transform → Local shift. This does not imply a verified visual outcome
+on photographs, fractional-sample shifts, or a synchronized multi-component MCU
+operation. The representation-level experiment and outstanding visual work
+are recorded in [GLITCH_EXPERIMENTS.md](./GLITCH_EXPERIMENTS.md#локальный-chroma-shift--реализация-2026-11-08).
 
 ## 6. Component and frequency experiments
 
@@ -303,7 +313,10 @@ Therefore this proposal must be treated as a hypothesis, not as a verified engra
 
 **Duplicate check:** The underlying operations overlap with component selection and AC/DC coefficient manipulation. The potentially new part is the visual recipe and its resulting appearance, not necessarily a new JPEG operation.
 
-**Status:** `HYPOTHESIS`
+**Status:** `HYPOTHESIS` for an engraving-like appearance. The UI now
+provides a separate masked directional AC experiment, without automatically
+removing chroma. Its effect on real images is not yet visually verified; see
+[GLITCH_EXPERIMENTS.md](./GLITCH_EXPERIMENTS.md).
 
 ## 8. Entropy and bitstream effects
 

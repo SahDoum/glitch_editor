@@ -542,6 +542,29 @@ separately named operations in history. None copies MCU byte ranges or
 entropy-coded data. Each operation changes quantized coefficients and
 produces a re-encoded JPEG; the original JPEG bytes remain unchanged.
 
+The experimental DC steps brush rounds selected quantized DC coefficients
+to multiples of an integer step while leaving AC unchanged. It can create
+blockwise tonal steps, but is not pixel posterization; the visible result
+depends on the image and its quantization tables.
+
+The experimental Ringing brush retains DC and AC below u+v 3, amplifies AC
+at u+v 3 and clears higher AC in masked blocks of a selected component.
+A separate AC low-pass mode retains a configurable cutoff. These blockwise
+operations may produce halos, blur or blocking; they do not detect edges or
+guarantee ringing.
+
+The experimental Engraving brush keeps DC and amplifies AC on a single
+DCT frequency axis, clearing the remaining AC in masked blocks of one
+component. Horizontal and vertical directions are selectable; it does not
+remove chroma automatically or guarantee an engraving-like appearance.
+
+Local shift copies source DCT blocks from an immutable pre-operation snapshot
+to masked destinations in the same component, offset by whole component
+blocks. A destination with an out-of-bounds source remains unchanged. The
+mask uses the same 50% coverage threshold as Shuffle; choosing a chroma
+component permits experimentation with color misalignment. It is not a
+fractional-sample shift, an MCU transform, or an entropy-stream operation.
+
 ### 8.2 Scan Corrupt workflow and history
 
 Scan Corrupt is a separate advanced tool that acts on the entropy-coded scan

@@ -29,8 +29,11 @@ const CODEC_ERRORS: Record<number, string> = {
   [-5]: "The encoded JPEG exceeds the 50 MiB output limit.",
   [-6]: "The DCT edit parameters do not match the decoded JPEG.",
   [-7]: "The selected quantization table or its 64 values are invalid.",
+  [-8]: "The local block shift exceeds 262,144 destination blocks. Use a smaller mask.",
 };
 const MAX_JPEG_BYTES = 50 * 1024 * 1024;
+// Bump when the generated codec changes so older cached WASM cannot be reused.
+const CODEC_VERSION = "engraving-1";
 const MAX_EDITED_BLOCKS = 8 * 1024 * 1024;
 const MAX_EDIT_COUNT = MAX_GLITCH_OPERATIONS;
 const FREQUENCY_BAND_INDEX = {
@@ -46,6 +49,11 @@ const GLITCH_MODE_INDEX = {
   offset: 3,
   invert: 4,
   isolate: 5,
+  "dc-steps": 6,
+  "low-pass": 7,
+  "ringing-boost": 8,
+  "engrave-horizontal": 9,
+  "engrave-vertical": 10,
 } as const;
 const COEFFICIENT_DOMAIN_INDEX = {
   ac: 0,
@@ -62,7 +70,7 @@ let requestQueue = Promise.resolve();
 
 function getCodec() {
   const moduleUrl = new URL(
-    `${import.meta.env.BASE_URL}codec/libjpeg-coefficients.js`,
+    `${import.meta.env.BASE_URL}codec/libjpeg-coefficients.js?v=${CODEC_VERSION}`,
     self.location.origin,
   ).href;
   codecPromise ??= import(/* @vite-ignore */ moduleUrl).then((module) => {
@@ -73,7 +81,7 @@ function getCodec() {
       locateFile(path) {
         return path.endsWith(".wasm")
           ? new URL(
-              `${import.meta.env.BASE_URL}codec/libjpeg-coefficients.wasm`,
+              `${import.meta.env.BASE_URL}codec/libjpeg-coefficients.wasm?v=${CODEC_VERSION}`,
               self.location.origin,
             ).href
           : path;
@@ -85,6 +93,7 @@ function getCodec() {
         "_coefficient_apply",
         "_coefficient_repeat_block",
         "_coefficient_permute_blocks",
+        "_coefficient_shift_blocks",
         "_coefficient_transfer_blocks",
         "_coefficient_set_quantization",
         "_coefficient_encode",
@@ -183,6 +192,24 @@ function isGlitchOperation(
           Number.isInteger(strength) &&
           strength >= -2047 &&
           strength <= 2047) ||
+        (mode === "dc-steps" &&
+          domain === "dc" &&
+          Number.isInteger(strength) &&
+          strength >= 1 &&
+          strength <= 512) ||
+        (mode === "low-pass" &&
+          domain === "ac" &&
+          frequencyBand === "all" &&
+          Number.isInteger(strength) &&
+          strength >= 1 &&
+          strength <= 14) ||
+        ((mode === "ringing-boost" ||
+          mode === "engrave-horizontal" ||
+          mode === "engrave-vertical") &&
+          domain === "ac" &&
+          frequencyBand === "all" &&
+          strength >= 1 &&
+          strength <= 8) ||
         ((mode === "invert" || mode === "isolate") &&
           domain === "ac" &&
           strength === 0 &&
@@ -261,6 +288,25 @@ function isGlitchOperation(
       isInteger(seed) &&
       seed >= 0 &&
       seed <= 0xffff_ffff
+    );
+  }
+  if (kind === "block-shift") {
+    const componentIndex = Reflect.get(value, "componentIndex");
+    const mask = Reflect.get(value, "mask");
+    const offsetX = Reflect.get(value, "offsetX");
+    const offsetY = Reflect.get(value, "offsetY");
+    return (
+      isInteger(componentIndex) &&
+      componentIndex >= 0 &&
+      componentIndex < geometry.components.length &&
+      isSpatialMask(mask) &&
+      mask.width === geometry.width &&
+      mask.height === geometry.height &&
+      isInteger(offsetX) &&
+      Math.abs(offsetX) <= 256 &&
+      isInteger(offsetY) &&
+      Math.abs(offsetY) <= 256 &&
+      (offsetX !== 0 || offsetY !== 0)
     );
   }
   if (kind === "block-transfer") {
@@ -382,7 +428,10 @@ function getOperationWorkSize(
     return grid.columns * grid.rows;
   }
   if (operation.kind === "block-repeat") return operation.repetitions;
-  if (operation.kind === "block-permutation") {
+  if (
+    operation.kind === "block-permutation" ||
+    operation.kind === "block-shift"
+  ) {
     const component = geometry.components[operation.componentIndex];
     if (!component) return 0;
     const grid = getComponentBlockGrid(geometry, component);
@@ -551,7 +600,10 @@ async function handleRequest(
             operation.offsetY,
             operation.repetitions,
           );
-        } else if (operation.kind === "block-permutation") {
+        } else if (
+          operation.kind === "block-permutation" ||
+          operation.kind === "block-shift"
+        ) {
           const component =
             request.geometry.components[operation.componentIndex];
           if (!component) {
@@ -576,18 +628,27 @@ async function handleRequest(
               result: failure({
                 code: "PROCESSING_FAILED",
                 message:
-                  "There was not enough memory to prepare the block-permutation mask.",
+                  "There was not enough memory to prepare the block selection mask.",
               }),
             };
           }
           try {
             codec.HEAPU8.set(coverage.value, maskPointer);
-            status = codec._coefficient_permute_blocks(
-              operation.componentIndex,
-              maskPointer,
-              coverage.value.byteLength,
-              operation.seed,
-            );
+            status =
+              operation.kind === "block-permutation"
+                ? codec._coefficient_permute_blocks(
+                    operation.componentIndex,
+                    maskPointer,
+                    coverage.value.byteLength,
+                    operation.seed,
+                  )
+                : codec._coefficient_shift_blocks(
+                    operation.componentIndex,
+                    maskPointer,
+                    coverage.value.byteLength,
+                    operation.offsetX,
+                    operation.offsetY,
+                  );
           } finally {
             codec._free(maskPointer);
           }

@@ -173,7 +173,13 @@ Unclear concepts are kept and clarified, not removed.
 
 ### Milestone 4 — Glitch research and new experiments
 
-**Status:** 📋 Planned
+**Status:** 🔬 In progress
+
+The first representation-level research pass and reproducible native harness
+are recorded in [GLITCH_EXPERIMENTS.md](./GLITCH_EXPERIMENTS.md#milestone-4--первый-воспроизводимый-исследовательский-проход).
+Existing UI controls are mapped there to concrete experiments. Visual
+assessment on photographs, additional sampling modes, MCU and structural/raw
+experiments remain open; the milestone is not complete.
 
 Use `GLITCH_CATALOG.md` as the research backlog.
 

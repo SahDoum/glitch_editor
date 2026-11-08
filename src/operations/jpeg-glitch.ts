@@ -15,6 +15,11 @@ export const COEFFICIENT_GLITCH_MODES = [
   "offset",
   "invert",
   "isolate",
+  "dc-steps",
+  "low-pass",
+  "ringing-boost",
+  "engrave-horizontal",
+  "engrave-vertical",
 ] as const;
 export type CoefficientGlitchMode = (typeof COEFFICIENT_GLITCH_MODES)[number];
 export const QUANTIZATION_SEMANTICS = ["reinterpret", "requantize"] as const;
@@ -57,6 +62,14 @@ export interface BlockPermutationOperation {
   readonly seed: number;
 }
 
+export interface BlockShiftOperation {
+  readonly kind: "block-shift";
+  readonly componentIndex: number;
+  readonly mask: SpatialMask;
+  readonly offsetX: number;
+  readonly offsetY: number;
+}
+
 export const BLOCK_TRANSFER_MODES = ["all", "dc", "ac"] as const;
 export type BlockTransferMode = (typeof BLOCK_TRANSFER_MODES)[number];
 export const BLOCK_TRANSFER_ACTIONS = ["copy", "swap"] as const;
@@ -89,6 +102,7 @@ export type JpegGlitchOperation =
   | CoefficientGlitchOperation
   | BlockRepeatOperation
   | BlockPermutationOperation
+  | BlockShiftOperation
   | BlockTransferOperation
   | QuantizationOperation;
 
@@ -141,6 +155,25 @@ export function isCoefficientGlitchParameters(
         Number.isInteger(strength) &&
         strength >= -2047 &&
         strength <= 2047) ||
+      (mode === "dc-steps" &&
+        domain === "dc" &&
+        Number.isInteger(strength) &&
+        strength >= 1 &&
+        strength <= 512) ||
+      (mode === "low-pass" &&
+        domain === "ac" &&
+        frequencyBand === "all" &&
+        Number.isInteger(strength) &&
+        strength >= 1 &&
+        strength <= 14) ||
+      ((mode === "ringing-boost" ||
+        mode === "engrave-horizontal" ||
+        mode === "engrave-vertical") &&
+        domain === "ac" &&
+        frequencyBand === "all" &&
+        Number.isFinite(strength) &&
+        strength >= 1 &&
+        strength <= 8) ||
       ((mode === "invert" || mode === "isolate") &&
         domain === "ac" &&
         strength === 0 &&
@@ -234,6 +267,35 @@ export function isBlockPermutationParameters(
     Number.isInteger(seed) &&
     seed >= 0 &&
     seed <= 0xffff_ffff
+  );
+}
+
+export function isBlockShiftParameters(
+  value: unknown,
+  inspection: JpegInspection,
+): value is BlockShiftOperation {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return false;
+  const componentIndex = Reflect.get(value, "componentIndex");
+  const mask = Reflect.get(value, "mask");
+  const offsetX = Reflect.get(value, "offsetX");
+  const offsetY = Reflect.get(value, "offsetY");
+  return (
+    Reflect.get(value, "kind") === "block-shift" &&
+    typeof componentIndex === "number" &&
+    Number.isInteger(componentIndex) &&
+    componentIndex >= 0 &&
+    componentIndex < inspection.components.length &&
+    isSpatialMask(mask) &&
+    mask.width === inspection.width &&
+    mask.height === inspection.height &&
+    typeof offsetX === "number" &&
+    Number.isInteger(offsetX) &&
+    Math.abs(offsetX) <= 256 &&
+    typeof offsetY === "number" &&
+    Number.isInteger(offsetY) &&
+    Math.abs(offsetY) <= 256 &&
+    (offsetX !== 0 || offsetY !== 0)
   );
 }
 

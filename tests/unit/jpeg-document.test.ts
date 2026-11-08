@@ -7,6 +7,7 @@ import {
   applyQuantizationOperation,
   applyMaskToDocument,
   applyBlockRepeatOperation,
+  applyBlockShiftOperation,
   createJpegDocumentSession,
   applyCoefficientRecipeOperation,
 } from "../../src/application/jpeg-document";
@@ -22,6 +23,172 @@ import { OriginalAsset } from "../../src/document/model";
 import { inspectJpeg } from "../../src/jpeg/inspect";
 
 describe("JPEG document operation session", () => {
+  it.each([
+    "low-pass",
+    "ringing-boost",
+    "engrave-horizontal",
+    "engrave-vertical",
+  ] as const)(
+    "replays %s through undo, redo, and a restored operation stack",
+    async (mode) => {
+      const bytes = new Uint8Array(
+        await readFile(
+          new URL("../fixtures/synthetic-color-444.jpg", import.meta.url),
+        ),
+      );
+      const inspection = inspectJpeg(bytes);
+      const asset = OriginalAsset.create({
+        fileName: "input.jpg",
+        sha256: "a".repeat(64),
+        bytes,
+      });
+      if (!inspection.ok || !asset.ok) throw new Error("fixture");
+      const imported = {
+        originalAsset: asset.value,
+        inspection: inspection.value,
+        previewUrl: "blob:local-test",
+      };
+      const session = createJpegDocumentSession(imported);
+      const restored = createJpegDocumentSession(imported);
+      if (!session.ok || !restored.ok) throw new Error("session");
+      const selection = createRectangleSelection(0, 0, 16, 16, 16, 16);
+      if (!selection.ok || !selection.value) throw new Error("selection");
+      const mask = createSpatialMask(selection.value, 16, 16);
+      if (!mask.ok) throw new Error(mask.error.message);
+      const history = session.value;
+      expect(
+        applyCoefficientGlitchOperation(history, {
+          kind: "coefficients",
+          mask: mask.value,
+          componentIndex: 0,
+          domain: "ac",
+          mode,
+          frequencyBand: "all",
+          strength: 4,
+          seed: 1,
+        }).ok,
+      ).toBe(true);
+      expect(history.undo().ok).toBe(true);
+      expect(history.snapshot.currentState.jpegOperations).toHaveLength(0);
+      expect(history.redo().ok).toBe(true);
+      expect(
+        restored.value.restoreOperations(history.snapshot.operations).ok,
+      ).toBe(true);
+      expect(restored.value.snapshot.currentState.jpegOperations).toEqual(
+        history.snapshot.currentState.jpegOperations,
+      );
+      expect(history.snapshot.originalAsset.readBytes()).toEqual(bytes);
+    },
+  );
+  it("replays DC steps through undo, redo, and a restored operation stack", async () => {
+    const bytes = new Uint8Array(
+      await readFile(
+        new URL("../fixtures/synthetic-color-444.jpg", import.meta.url),
+      ),
+    );
+    const inspection = inspectJpeg(bytes);
+    const asset = OriginalAsset.create({
+      fileName: "input.jpg",
+      sha256: "a".repeat(64),
+      bytes,
+    });
+    if (!inspection.ok || !asset.ok) throw new Error("fixture");
+    const imported = {
+      originalAsset: asset.value,
+      inspection: inspection.value,
+      previewUrl: "blob:local-test",
+    };
+    const session = createJpegDocumentSession(imported);
+    const restored = createJpegDocumentSession(imported);
+    if (!session.ok || !restored.ok) throw new Error("session");
+    const selection = createRectangleSelection(0, 0, 16, 16, 16, 16);
+    if (!selection.ok || !selection.value) throw new Error("selection");
+    const mask = createSpatialMask(selection.value, 16, 16);
+    if (!mask.ok) throw new Error(mask.error.message);
+    const history = session.value;
+    expect(
+      applyCoefficientGlitchOperation(history, {
+        kind: "coefficients",
+        mask: mask.value,
+        componentIndex: 0,
+        domain: "dc",
+        mode: "dc-steps",
+        frequencyBand: "all",
+        strength: 32,
+        seed: 1,
+      }).ok,
+    ).toBe(true);
+    expect(history.undo().ok).toBe(true);
+    expect(history.snapshot.currentState.jpegOperations).toHaveLength(0);
+    expect(history.redo().ok).toBe(true);
+    expect(
+      restored.value.restoreOperations(history.snapshot.operations).ok,
+    ).toBe(true);
+    expect(restored.value.snapshot.currentState.jpegOperations).toEqual(
+      history.snapshot.currentState.jpegOperations,
+    );
+    expect(history.snapshot.originalAsset.readBytes()).toEqual(bytes);
+  });
+  it("replays and restores a masked block shift without changing the source", async () => {
+    const bytes = new Uint8Array(
+      await readFile(
+        new URL("../fixtures/synthetic-color-444.jpg", import.meta.url),
+      ),
+    );
+    const original = bytes.slice();
+    const inspection = inspectJpeg(bytes);
+    const asset = OriginalAsset.create({
+      fileName: "synthetic-color-444.jpg",
+      sha256: "f".repeat(64),
+      bytes,
+    });
+    if (!inspection.ok || !asset.ok) throw new Error("fixture");
+    const session = createJpegDocumentSession({
+      originalAsset: asset.value,
+      inspection: inspection.value,
+      previewUrl: "blob:local-test",
+    });
+    if (!session.ok) throw new Error(session.error.message);
+    const selection = createRectangleSelection(0, 0, 16, 16, 16, 16);
+    if (!selection.ok || !selection.value) throw new Error("selection");
+    const mask = createSpatialMask(selection.value, 16, 16);
+    if (!mask.ok) throw new Error(mask.error.message);
+    const history = session.value;
+    expect(
+      applyBlockShiftOperation(history, {
+        kind: "block-shift",
+        componentIndex: 1,
+        mask: mask.value,
+        offsetX: 1,
+        offsetY: -1,
+      }).ok,
+    ).toBe(true);
+    expect(history.snapshot.currentState.jpegOperations).toMatchObject([
+      {
+        kind: "block-shift",
+        offsetX: 1,
+        offsetY: -1,
+        mask: { id: mask.value.id },
+      },
+    ]);
+    expect(history.undo().ok).toBe(true);
+    expect(history.snapshot.currentState.jpegOperations).toHaveLength(0);
+    expect(history.redo().ok).toBe(true);
+    expect(history.snapshot.currentState.jpegOperations).toHaveLength(1);
+    const restored = createJpegDocumentSession({
+      originalAsset: asset.value,
+      inspection: inspection.value,
+      previewUrl: "blob:local-test",
+    });
+    if (!restored.ok) throw new Error(restored.error.message);
+    expect(
+      restored.value.restoreOperations(history.snapshot.operations).ok,
+    ).toBe(true);
+    expect(restored.value.snapshot.currentState.jpegOperations).toEqual(
+      history.snapshot.currentState.jpegOperations,
+    );
+    expect(history.snapshot.originalAsset.readBytes()).toEqual(original);
+  });
   it("applies, disables, undoes, and redoes a spatial mask without changing source bytes", async () => {
     const bytes = new Uint8Array(
       await readFile(

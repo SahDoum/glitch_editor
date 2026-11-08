@@ -94,6 +94,8 @@ describe("workspace state", () => {
     expect(isCanvasToolEnabled("brush", "coefficient-glitch")).toBe(true);
     expect(isCanvasToolEnabled("select", "coefficient-glitch")).toBe(true);
     expect(isCanvasToolEnabled("brush", "block-transform")).toBe(false);
+    expect(isCanvasToolEnabled("brush", "block-transform", true)).toBe(true);
+    expect(isCanvasToolEnabled("select", "block-transform", true)).toBe(true);
     expect(isCanvasToolEnabled("select", "info")).toBe(false);
     expect(isCanvasToolEnabled("hand", "info")).toBe(true);
   });

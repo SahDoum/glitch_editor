@@ -33,6 +33,13 @@ interface LibjpegCoefficientsModule {
     blockMaskSize: number,
     seed: number,
   ): number;
+  _coefficient_shift_blocks(
+    component: number,
+    blockMask: number,
+    blockMaskSize: number,
+    offsetX: number,
+    offsetY: number,
+  ): number;
   _coefficient_transfer_blocks(
     component: number,
     sourceX: number,

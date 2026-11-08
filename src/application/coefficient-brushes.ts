@@ -33,6 +33,39 @@ export const BUILT_IN_COEFFICIENT_BRUSHES: readonly CoefficientBrush[] = [
       seed: 1,
     },
   },
+  {
+    id: "dc-steps",
+    name: "DC steps",
+    step: {
+      domain: "dc",
+      mode: "dc-steps",
+      frequencyBand: "all",
+      strength: 32,
+      seed: 1,
+    },
+  },
+  {
+    id: "ringing",
+    name: "Ringing",
+    step: {
+      domain: "ac",
+      mode: "ringing-boost",
+      frequencyBand: "all",
+      strength: 4,
+      seed: 1,
+    },
+  },
+  {
+    id: "engraving",
+    name: "Engraving",
+    step: {
+      domain: "ac",
+      mode: "engrave-horizontal",
+      frequencyBand: "all",
+      strength: 4,
+      seed: 1,
+    },
+  },
 ];
 
 export const COEFFICIENT_BRUSH_STORAGE_KEY = "jpeg-glitch-editor.brushes.v2";

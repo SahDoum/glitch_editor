@@ -13,6 +13,7 @@ import {
   snapImagePointToGrid,
   snapSelectionToComponentBlocks,
   snapSelectionToMcus,
+  type JpegBlockGeometry,
 } from "../../src/jpeg/block-geometry";
 import { inspectJpeg } from "../../src/jpeg/inspect";
 import {
@@ -514,5 +515,112 @@ describe("JPEG block coordinates", () => {
       ok: true,
       value: new Uint8Array([1, 0, 0, 0]),
     });
+  });
+
+  it("matches the original 64-sample union for varied brushes and sampling factors", () => {
+    const geometry: JpegBlockGeometry = {
+      width: 41,
+      height: 27,
+      components: [
+        {
+          id: 1,
+          horizontalSampling: 2,
+          verticalSampling: 2,
+          quantizationTable: 0,
+        },
+        {
+          id: 2,
+          horizontalSampling: 1,
+          verticalSampling: 1,
+          quantizationTable: 1,
+        },
+      ],
+    };
+    let randomState = 123456;
+    const random = () => {
+      randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0;
+      return randomState / 0x100000000;
+    };
+    for (let trial = 0; trial < 80; trial += 1) {
+      const points = Array.from(
+        { length: 1 + Math.floor(random() * 15) },
+        () => ({
+          x: random() * geometry.width,
+          y: random() * geometry.height,
+        }),
+      );
+      if (trial % 2 === 0) points.push(points[0]!);
+      const radius = 0.1 + random() * 20;
+      const mask = createBrushMask(
+        points,
+        radius,
+        geometry.width,
+        geometry.height,
+      );
+      if (!mask.ok) throw new Error(mask.error.message);
+      for (const component of geometry.components) {
+        const blockWidth = 16 / component.horizontalSampling;
+        const blockHeight = 16 / component.verticalSampling;
+        const columns = Math.ceil(geometry.width / blockWidth);
+        const rows = Math.ceil(geometry.height / blockHeight);
+        const expected = new Uint8Array(columns * rows);
+        for (let by = 0; by < rows; by += 1) {
+          for (let bx = 0; bx < columns; bx += 1) {
+            const left = bx * blockWidth;
+            const top = by * blockHeight;
+            const right = Math.min(geometry.width, left + blockWidth);
+            const bottom = Math.min(geometry.height, top + blockHeight);
+            let count = 0;
+            for (let sy = 0; sy < 8; sy += 1) {
+              for (let sx = 0; sx < 8; sx += 1) {
+                const x = left + ((sx + 0.5) * (right - left)) / 8;
+                const y = top + ((sy + 0.5) * (bottom - top)) / 8;
+                if (
+                  points.some(
+                    (point) =>
+                      (point.x - x) ** 2 + (point.y - y) ** 2 <= radius ** 2,
+                  )
+                )
+                  count += 1;
+              }
+            }
+            if (count >= 32) expected[by * columns + bx] = 1;
+          }
+        }
+        expect(
+          getMaskBlockCoverageAtLeastHalf(mask.value, geometry, component.id),
+        ).toEqual({
+          ok: true,
+          value: expected,
+        });
+      }
+    }
+  });
+
+  it("handles long, repeated brush strokes without rejecting a pessimistic work estimate", () => {
+    const geometry: JpegBlockGeometry = {
+      width: 2048,
+      height: 256,
+      components: [
+        {
+          id: 1,
+          horizontalSampling: 1,
+          verticalSampling: 1,
+          quantizationTable: 0,
+        },
+      ],
+    };
+    const points = Array.from({ length: 4000 }, (_, index) => ({
+      x: 16 + (index % 250) * 8,
+      y: 128,
+    }));
+    const mask = createBrushMask(points, 16, geometry.width, geometry.height);
+    if (!mask.ok) throw new Error(mask.error.message);
+    const result = getMaskBlockCoverageAtLeastHalf(mask.value, geometry, 1);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error.message);
+    expect(result.value.reduce((sum, value) => sum + value, 0)).toBeGreaterThan(
+      500,
+    );
   });
 });

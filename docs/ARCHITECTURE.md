@@ -99,9 +99,9 @@ its stored shape or operation coverage.
 The toolbar is a vertical rail to the left of the canvas and presents
 contextual controls in the right column. Coefficient Glitch, Brush, and Select
 are grouped together so mask-authoring tools remain visible beside their
-primary effect. Brush and Select are enabled only while Coefficient Glitch is
-the selected panel; masks authored there remain available to operations that
-use a mask. Block transfer and repeat use their own canvas gestures.
+primary effect. Brush and Select are enabled in Coefficient Glitch and in
+Block Transform's Shuffle and Local shift modes. Block transfer and repeat
+use their own canvas gestures.
 The right column contains the active tool panel followed by History. Original
 asset and JPEG structure details are rendered inside the Info tool panel rather
 than persistently below History. History displays newer operations above older
@@ -292,7 +292,8 @@ Unknown operation versions are rejected explicitly; no migration is claimed
 yet.
 
 Built-in operations include masked coefficient zero/scale/seeded randomize,
-DC offset, AC inversion and frequency isolation, block duplicate/repeat and
+DC offset, DC coefficient step rounding, AC inversion, frequency isolation,
+AC low-pass, ringing boost and directional engraving, block duplicate/repeat and
 seeded whole-block permutation within one component, and DQT table edits.
 Coefficient masks stay in image-pixel coordinates until the worker maps them
 to visible component blocks. Block permutation moves all 64 quantized
@@ -302,6 +303,40 @@ approximately requantizes them; neither mode restores previously discarded
 detail. Every operation replays in order from the immutable original and
 produces a newly encoded experiment. These operations are JPEG-domain edits,
 not pixel filters, MCU copies, or entropy-stream edits.
+
+DC steps rounds selected quantized DC coefficients to signed multiples of an
+integer step from 1 to 512, with half steps rounded away from zero and
+out-of-range multiples limited to the largest representable multiple. AC and
+other components remain unchanged. The step is in quantized coefficient
+units, not decoded pixel values; DQT assignments affect the visual result.
+Older versions do not recognize this new serialized operation mode.
+
+AC low-pass preserves DC and quantized AC coefficients with u+v at or below
+an integer cutoff from 1 to 14 and zeros the remaining AC coefficients in
+masked blocks of one component. It does not detect edges or promise visible
+ringing. Cutoff 14 changes no coefficients. Older versions do not recognize
+this serialized operation mode.
+
+Ringing boost retains DC and AC below u+v 3, scales AC at u+v 3 by a
+factor from 1 to 8, and zeros higher AC in selected blocks. Scaling rounds
+half away from zero and clamps AC to ±1023. This is a separate serialized
+mode: existing AC low-pass operations retain their original semantics. It
+does not identify edges or guarantee ringing.
+
+Directional engraving retains DC, scales the selected axis of AC by a factor
+of 1–8 and zeros other AC in masked blocks of one component. Horizontal
+preserves u=0 (v>0); vertical preserves v=0 (u>0). Scaling rounds half
+away from zero and clamps AC to ±1023. Directions are distinct serialized
+modes, so replay records the choice. This operation neither removes chroma
+automatically nor guarantees an engraving-like image. Older versions do not
+recognize the new modes.
+
+Local block shift snapshots same-component source blocks and copies them into
+masked destinations at a signed block-grid offset. Mask coverage uses the
+same 50% threshold as block permutation. Out-of-bounds sources leave their
+destinations unchanged. Each stage is bounded to 262,144 destinations, is
+versioned in history/project data, and re-encodes through the codec facade.
+It does not imply fractional-sample chroma translation or MCU manipulation.
 
 ## 6. Preview and export pipeline
 

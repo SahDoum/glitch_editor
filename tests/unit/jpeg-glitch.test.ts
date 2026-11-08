@@ -3,6 +3,7 @@ import {
   createQuantizationPattern,
   isBlockPermutationParameters,
   isBlockRepeatParameters,
+  isBlockShiftParameters,
   isBlockTransferParameters,
   isCoefficientGlitchParameters,
   MAX_BLOCK_TRANSFER_BLOCKS,
@@ -43,6 +44,172 @@ const inspection = {
 } as JpegInspection;
 
 describe("JPEG glitch operation validation", () => {
+  it.each(["engrave-horizontal", "engrave-vertical"])(
+    "validates %s direction and gain",
+    (mode) => {
+      const selection = createRectangleSelection(0, 0, 8, 8, 16, 16);
+      if (!selection.ok || !selection.value) throw new Error("selection");
+      const mask = createSpatialMask(selection.value, 16, 16);
+      if (!mask.ok) throw new Error(mask.error.message);
+      const operation = {
+        kind: "coefficients",
+        mask: mask.value,
+        componentIndex: 0,
+        domain: "ac",
+        mode,
+        frequencyBand: "all",
+        strength: 4,
+        seed: 1,
+      };
+      for (const strength of [1, 1.5, 8])
+        expect(
+          isCoefficientGlitchParameters({ ...operation, strength }, inspection),
+        ).toBe(true);
+      for (const strength of [0, 8.1, NaN, Infinity])
+        expect(
+          isCoefficientGlitchParameters({ ...operation, strength }, inspection),
+        ).toBe(false);
+      expect(
+        isCoefficientGlitchParameters(
+          { ...operation, domain: "dc" },
+          inspection,
+        ),
+      ).toBe(false);
+      expect(
+        isCoefficientGlitchParameters(
+          { ...operation, frequencyBand: "low" },
+          inspection,
+        ),
+      ).toBe(false);
+    },
+  );
+  it("validates ringing boost and its fixed AC band", () => {
+    const selection = createRectangleSelection(0, 0, 8, 8, 16, 16);
+    if (!selection.ok || !selection.value) throw new Error("selection");
+    const mask = createSpatialMask(selection.value, 16, 16);
+    if (!mask.ok) throw new Error(mask.error.message);
+    const operation = {
+      kind: "coefficients",
+      mask: mask.value,
+      componentIndex: 0,
+      domain: "ac",
+      mode: "ringing-boost",
+      frequencyBand: "all",
+      strength: 4,
+      seed: 1,
+    };
+    for (const strength of [1, 2.5, 8]) {
+      expect(
+        isCoefficientGlitchParameters({ ...operation, strength }, inspection),
+      ).toBe(true);
+    }
+    for (const strength of [0, 8.1, NaN, Infinity]) {
+      expect(
+        isCoefficientGlitchParameters({ ...operation, strength }, inspection),
+      ).toBe(false);
+    }
+    expect(
+      isCoefficientGlitchParameters({ ...operation, domain: "dc" }, inspection),
+    ).toBe(false);
+    expect(
+      isCoefficientGlitchParameters(
+        { ...operation, frequencyBand: "low" },
+        inspection,
+      ),
+    ).toBe(false);
+  });
+  it("accepts only whole AC low-pass cutoffs from 1 to 14", () => {
+    const selection = createRectangleSelection(0, 0, 8, 8, 16, 16);
+    if (!selection.ok || !selection.value) throw new Error("selection");
+    const mask = createSpatialMask(selection.value, 16, 16);
+    if (!mask.ok) throw new Error(mask.error.message);
+    const operation = {
+      kind: "coefficients",
+      mask: mask.value,
+      componentIndex: 0,
+      domain: "ac",
+      mode: "low-pass",
+      frequencyBand: "all",
+      strength: 4,
+      seed: 1,
+    };
+    for (const strength of [1, 4, 14]) {
+      expect(
+        isCoefficientGlitchParameters({ ...operation, strength }, inspection),
+      ).toBe(true);
+    }
+    for (const strength of [0, 15, 2.5, -1]) {
+      expect(
+        isCoefficientGlitchParameters({ ...operation, strength }, inspection),
+      ).toBe(false);
+    }
+    expect(
+      isCoefficientGlitchParameters({ ...operation, domain: "dc" }, inspection),
+    ).toBe(false);
+    expect(
+      isCoefficientGlitchParameters(
+        { ...operation, frequencyBand: "low" },
+        inspection,
+      ),
+    ).toBe(false);
+  });
+  it("accepts only whole DC steps from 1 to 512", () => {
+    const selection = createRectangleSelection(0, 0, 8, 8, 16, 16);
+    if (!selection.ok || !selection.value) throw new Error("selection");
+    const mask = createSpatialMask(selection.value, 16, 16);
+    if (!mask.ok) throw new Error(mask.error.message);
+    const operation = {
+      kind: "coefficients",
+      mask: mask.value,
+      componentIndex: 0,
+      domain: "dc",
+      mode: "dc-steps",
+      frequencyBand: "all",
+      strength: 32,
+      seed: 1,
+    };
+    expect(isCoefficientGlitchParameters(operation, inspection)).toBe(true);
+    for (const strength of [0, 513, 1.5, -1]) {
+      expect(
+        isCoefficientGlitchParameters({ ...operation, strength }, inspection),
+      ).toBe(false);
+    }
+    expect(
+      isCoefficientGlitchParameters({ ...operation, domain: "ac" }, inspection),
+    ).toBe(false);
+    expect(
+      isCoefficientGlitchParameters(
+        { ...operation, frequencyBand: "low" },
+        inspection,
+      ),
+    ).toBe(false);
+  });
+  it("validates masked block shift offsets and component", () => {
+    const selection = createRectangleSelection(0, 0, 8, 8, 16, 16);
+    if (!selection.ok || !selection.value) throw new Error("selection");
+    const mask = createSpatialMask(selection.value, 16, 16);
+    if (!mask.ok) throw new Error(mask.error.message);
+    const operation = {
+      kind: "block-shift",
+      componentIndex: 1,
+      mask: mask.value,
+      offsetX: 1,
+      offsetY: 0,
+    };
+    expect(isBlockShiftParameters(operation, inspection)).toBe(true);
+    expect(
+      isBlockShiftParameters({ ...operation, offsetX: 0 }, inspection),
+    ).toBe(false);
+    expect(
+      isBlockShiftParameters({ ...operation, offsetX: 257 }, inspection),
+    ).toBe(false);
+    expect(
+      isBlockShiftParameters({ ...operation, offsetX: 1.5 }, inspection),
+    ).toBe(false);
+    expect(
+      isBlockShiftParameters({ ...operation, componentIndex: 3 }, inspection),
+    ).toBe(false);
+  });
   it("accepts masked AC randomization with a deterministic seed", () => {
     const selection = createRectangleSelection(0, 0, 8, 8, 16, 16);
     expect(selection.ok).toBe(true);

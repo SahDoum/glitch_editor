@@ -22,7 +22,15 @@ export type CoefficientRangeChoice = "dc" | `ac:${GlitchFrequencyBand}`;
 export function getCoefficientRangeOptions(
   mode: CoefficientGlitchMode,
 ): ChoiceOption<CoefficientRangeChoice>[] {
-  if (mode === "offset") return [];
+  if (
+    mode === "offset" ||
+    mode === "dc-steps" ||
+    mode === "low-pass" ||
+    mode === "ringing-boost" ||
+    mode === "engrave-horizontal" ||
+    mode === "engrave-vertical"
+  )
+    return [];
 
   return [
     ...(mode !== "invert" && mode !== "isolate"
