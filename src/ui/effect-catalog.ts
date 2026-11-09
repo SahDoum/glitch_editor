@@ -1,13 +1,12 @@
 export type EffectId =
   | "pixelate"
-  | "ac-scale"
-  | "coefficient-randomize"
-  | "dc-offset"
   | "posterization"
-  | "ac-low-pass"
   | "ringing"
   | "engraving"
-  | "engraving-vertical"
+  | "coefficient-randomize"
+  | "ac-scale"
+  | "dc-offset"
+  | "ac-low-pass"
   | "ac-invert"
   | "ac-isolate"
   | "block-transfer"
@@ -37,40 +36,9 @@ export const EFFECT_CATALOG: readonly EffectCatalogItem[] = [
     applicationMode: "selection",
   },
   {
-    id: "ac-scale",
-    label: "Coefficient Scale",
-    description:
-      "Scale selected quantized DCT coefficients; choose DC or AC in the matrix.",
-    category: "Coefficients",
-    applicationMode: "selection",
-  },
-  {
-    id: "coefficient-randomize",
-    label: "Randomize Coefficients",
-    description:
-      "Replace selected quantized DCT coefficients with seeded values.",
-    category: "Coefficients",
-    applicationMode: "selection",
-  },
-  {
-    id: "dc-offset",
-    label: "DC Offset",
-    description: "Add an offset to selected blocks' quantized DC coefficients.",
-    category: "Coefficients",
-    applicationMode: "selection",
-  },
-  {
     id: "posterization",
     label: "Posterization",
     description: "Round selected blocks' DC coefficients to steps.",
-    category: "Coefficients",
-    applicationMode: "selection",
-  },
-  {
-    id: "ac-low-pass",
-    label: "AC Low-pass",
-    description:
-      "Keep DC and AC below a configurable u+v cutoff; remove higher AC.",
     category: "Coefficients",
     applicationMode: "selection",
   },
@@ -84,15 +52,39 @@ export const EFFECT_CATALOG: readonly EffectCatalogItem[] = [
   },
   {
     id: "engraving",
-    label: "Engraving · Horizontal",
-    description: "Keep DC and AC on the u=0 frequency axis; remove other AC.",
+    label: "Engraving",
+    description: "Keep DC and AC on a chosen frequency axis; remove other AC.",
     category: "Coefficients",
     applicationMode: "selection",
   },
   {
-    id: "engraving-vertical",
-    label: "Engraving · Vertical",
-    description: "Keep DC and AC on the v=0 frequency axis; remove other AC.",
+    id: "coefficient-randomize",
+    label: "Randomize Coefficients",
+    description:
+      "Replace selected quantized DCT coefficients with seeded values.",
+    category: "Coefficients",
+    applicationMode: "selection",
+  },
+  {
+    id: "ac-scale",
+    label: "Coefficient Scale",
+    description:
+      "Scale selected quantized DCT coefficients; choose DC or AC in the matrix.",
+    category: "Coefficients",
+    applicationMode: "selection",
+  },
+  {
+    id: "dc-offset",
+    label: "DC Offset",
+    description: "Add an offset to selected blocks' quantized DC coefficients.",
+    category: "Coefficients",
+    applicationMode: "selection",
+  },
+  {
+    id: "ac-low-pass",
+    label: "AC Low-pass",
+    description:
+      "Keep DC and AC below a configurable u+v cutoff; remove higher AC.",
     category: "Coefficients",
     applicationMode: "selection",
   },

@@ -123,6 +123,7 @@ import {
 } from "./jpeg/scan-decode-diagnostic";
 import {
   ComponentChoiceGroup,
+  EngravingDirectionChoice,
   getCoefficientRangeOptions,
   RadioChoiceGroup,
   SeedField,
@@ -154,14 +155,13 @@ const EMPTY_JPEG_OPERATIONS: JpegEditableState["jpegOperations"] =
 type CoefficientCatalogEffectId = Extract<
   EffectId,
   | "pixelate"
-  | "ac-scale"
-  | "coefficient-randomize"
-  | "dc-offset"
   | "posterization"
-  | "ac-low-pass"
   | "ringing"
   | "engraving"
-  | "engraving-vertical"
+  | "coefficient-randomize"
+  | "ac-scale"
+  | "dc-offset"
+  | "ac-low-pass"
   | "ac-invert"
   | "ac-isolate"
 >;
@@ -169,14 +169,13 @@ const COEFFICIENT_EFFECT_BRUSH_IDS: Readonly<
   Record<CoefficientCatalogEffectId, string>
 > = {
   pixelate: "pixelate",
+  posterization: "dc-steps",
+  ringing: "ringing",
   "ac-scale": "chroma-scale",
   "coefficient-randomize": "coefficient-randomize",
   "dc-offset": "dc-offset",
-  posterization: "dc-steps",
   "ac-low-pass": "ac-low-pass",
-  ringing: "ringing",
   engraving: "engraving",
-  "engraving-vertical": "engraving-vertical",
   "ac-invert": "ac-invert",
   "ac-isolate": "ac-isolate",
 };
@@ -241,14 +240,7 @@ function getToolIconPaths(tool: CanvasTool): readonly string[] {
         "M4 14.7h16",
       ];
     case "scan-corrupt":
-      return [
-        "M4 6h16",
-        "M4 12h5",
-        "M15 12h5",
-        "M4 18h16",
-        "m10 9 4 6",
-        "m14 9-4 6",
-      ];
+      return ["M6 4h12v8h3v8H9v-8H6z"];
   }
 }
 
@@ -793,7 +785,7 @@ const PREVIEW_TOOL_BUTTONS: readonly {
 function getEffectIconPaths(effectId: EffectId): readonly string[] {
   switch (effectId) {
     case "pixelate":
-      return ["M4 4h16v16H4z", "M9 4v16", "M15 4v16", "M4 9h16", "M4 15h16"];
+      return ["M3 3h8v8H3z", "M13 3h8v8h-8z", "M3 13h8v8H3z", "M13 13h8v8h-8z"];
     case "ac-scale":
       return ["M4 18h16", "M6 15V9", "M10 15V5", "M14 15V8", "M18 15V3"];
     case "coefficient-randomize":
@@ -806,27 +798,46 @@ function getEffectIconPaths(effectId: EffectId): readonly string[] {
     case "dc-offset":
       return ["M4 12h6", "M14 12h6", "M12 5v14", "M9 8l3-3 3 3"];
     case "posterization":
-      return ["M5 5h14", "M5 10h10", "M5 15h6", "M5 20h14"];
+      return [
+        "M4 3h16v13l-4 4H4z",
+        "M16 16h4l-4 4z",
+        "M10 6h4v4h-4z",
+        "M8 14v-1.5l2-1.5h4l2 1.5V14z",
+      ];
     case "ac-low-pass":
       return ["M3 17h4l3-7 3 4 3-9 5 2", "M3 21h18"];
     case "ringing":
       return [
-        "M3 12h4",
-        "M17 12h4",
-        "M12 3v4",
-        "M12 17v4",
-        "M8 8a5.7 5.7 0 0 1 8 0",
+        "M12 3a9 9 0 1 0 9 9",
+
+        "M8 1q2-1 4-1",
+        "M10 22q2 1 4 1",
+        "M3 14q-1-1-1 2",
+        "M4.5 7q1.5-1 3-1.5",
+
+        "M16 3l1 1",
+        "M2 18l1 1",
+        "M18 20.5l-1-1.5",
+        "M6 3.5l1 1",
       ];
     case "engraving":
-      return ["M4 6h16", "M4 10h16", "M4 14h16", "M4 18h16"];
-    case "engraving-vertical":
-      return ["M6 4v16", "M10 4v16", "M14 4v16", "M18 4v16"];
+      return [
+        "M9 1h6v4H9z",
+        "M8 3h8v2H8z",
+        "M9 6l3 3 3-3",
+        "M12 8v10",
+        "M3 23h6l3 2 3-2h6",
+        "M5 12l3 5",
+        "M19 12l-3 5",
+        "M3 18l4 2",
+        "M22 18l-5 1",
+      ];
     case "ac-invert":
       return ["M4 7h6l4 10h6", "m17 14 3 3-3 3", "m7 4-3 3 3 3"];
     case "ac-isolate":
       return ["M3 12h4", "M9 12h6", "M17 12h4", "M9 7v10", "M15 7v10"];
     case "block-transfer":
-      return ["M3 5h6v6H3z", "M15 13h6v6h-6z", "M9 8l6 6", "m11 14 4 0 0-4"];
+      return ["M14 6v-2H2v16h12v-2", "M9 10h8V7l6 5-6 5v-3H9z"];
     case "block-repeat":
       return ["M4 4h6v6H4z", "M14 4h6v6h-6z", "M4 14h6v6H4z", "M14 14h6v6h-6z"];
     case "block-shuffle":
@@ -4857,6 +4868,12 @@ function App() {
                       {(coefficientMode === "engrave-horizontal" ||
                         coefficientMode === "engrave-vertical") && (
                         <div className="coefficient-field tool-field range-field">
+                          <EngravingDirectionChoice
+                            value={coefficientMode}
+                            onChange={(mode) =>
+                              updateCoefficientSettings({ mode })
+                            }
+                          />
                           <span id="engraving-strength-label">
                             Directional AC gain · {coefficientStrength}×
                           </span>

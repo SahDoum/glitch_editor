@@ -114,6 +114,35 @@ export function RadioChoiceGroup<T extends ChoiceValue>({
   );
 }
 
+export function EngravingDirectionChoice({
+  value,
+  onChange,
+}: {
+  value: "engrave-horizontal" | "engrave-vertical";
+  onChange(value: "engrave-horizontal" | "engrave-vertical"): void;
+}) {
+  return (
+    <RadioChoiceGroup
+      name="engraving-direction"
+      legend="Line direction"
+      value={value}
+      options={[
+        {
+          value: "engrave-horizontal",
+          label: "Horizontal",
+          hint: "Keep AC on the u=0 axis",
+        },
+        {
+          value: "engrave-vertical",
+          label: "Vertical",
+          hint: "Keep AC on the v=0 axis",
+        },
+      ]}
+      onChange={onChange}
+    />
+  );
+}
+
 export function getComponentChoiceOptions(
   components: readonly JpegComponent[],
   componentLabels?: readonly JpegComponentLabel[],

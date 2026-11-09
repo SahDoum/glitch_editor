@@ -29,5 +29,23 @@ describe("DCT frequency selector", () => {
         direction: "horizontal",
       }),
     ).toBe(true);
+    expect(
+      isDctCoefficientTargeted(0, 4, {
+        kind: "engraving",
+        direction: "vertical",
+      }),
+    ).toBe(false);
+    expect(
+      isDctCoefficientTargeted(4, 0, {
+        kind: "engraving",
+        direction: "vertical",
+      }),
+    ).toBe(true);
+    expect(
+      isDctCoefficientTargeted(4, 0, {
+        kind: "engraving",
+        direction: "horizontal",
+      }),
+    ).toBe(false);
   });
 });

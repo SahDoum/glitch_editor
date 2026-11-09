@@ -57,4 +57,26 @@ describe("coefficient effect settings persistence", () => {
       ).ok,
     ).toBe(false);
   });
+
+  it.each(["engrave-horizontal", "engrave-vertical"] as const)(
+    "persists the selected engraving direction %s with the effect settings",
+    (mode) => {
+      const storage = createStorage();
+      const settings = {
+        engraving: {
+          domain: "ac" as const,
+          mode,
+          frequencyBand: "all" as const,
+          strength: 5,
+          seed: 1,
+        },
+      };
+
+      expect(writeCoefficientEffectSettings(storage, settings).ok).toBe(true);
+      expect(readCoefficientEffectSettings(storage)).toEqual({
+        ok: true,
+        value: settings,
+      });
+    },
+  );
 });

@@ -81,7 +81,7 @@ Priorities:
 
 **Acceptance criteria:**
 
-- [x] Coefficient operations are selected from Effects; every supported coefficient mode has a catalog entry, including Posterization/Poster, Randomize, DC Offset, AC Low-pass, both Engraving directions, Invert AC, and Isolate AC Band.
+- [x] Coefficient operations are selected from Effects, including Posterization/Poster, Randomize, DC Offset, AC Low-pass, Engraving, Invert AC, and Isolate AC Band. Engraving uses one catalog entry with a Horizontal/Vertical radio choice in its settings.
 - [x] Frequency range selector (Coefficient Glitch): The interactive DCT matrix combines DC and AC ranges and disables zones unsupported by the selected operation.
 - [x] Component selector: Shared labeled Y/Cb/Cr-style choices show JPEG component ID and sampling factors.
 - [x] Brush/Select component scope: Mask tools have no component picker; component targets belong to effect operations.
@@ -111,7 +111,7 @@ Milestone 2.
 - [x] Categorized effect catalog with selection, full-image, and gesture
   application modes, each effect with an icon; contextual settings remain
   separate from the catalog.
-- [x] All supported coefficient modes are available in Effects; custom User
+- [x] All supported coefficient modes are available through Effects; custom User
   brush selection and authoring are absent from the interface.
 - [x] A single canvas toolbar contains Hand, Brush, Select, Inspector, and
   contextual Brush/Select controls; mask tools are enabled only when relevant.

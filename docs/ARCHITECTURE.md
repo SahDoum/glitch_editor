@@ -118,8 +118,10 @@ Other UI settings are not guaranteed to persist across reloads.
 Coefficient effects use single-operation presets without a component index.
 The effect's current component selection is applied when the operation is
 committed, and the resulting JPEG operation records that component index.
-Every supported coefficient mode is selected through the Effects catalog;
-custom User brush creation and selection are not exposed. Previously stored
+Every supported coefficient mode is available through the Effects catalog;
+Engraving selects horizontal or vertical mode in its settings while retaining
+the existing typed operation modes and per-effect settings storage.
+Custom User brush creation and selection are not exposed. Previously stored
 custom-brush data is left untouched in browser storage but is not loaded by the
 interface. Per-effect automatic-apply toggles continue to use the existing
 browser-storage key for compatibility: when enabled, a completed Brush or
