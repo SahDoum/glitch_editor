@@ -687,6 +687,12 @@ h1 {
   accent-color: var(--accent);
 }
 
+.overlay-checkboxes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .zoom-readout,
 .encoding-indicator {
   color: #aeb4b0;
@@ -1060,7 +1066,7 @@ h1 {
 }
 
 .radio-choice-group--components .radio-choice-options {
-  grid-template-columns: repeat(auto-fit, minmax(74px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(38px, 1fr));
 }
 
 .radio-choice-group--bands .radio-choice-options {

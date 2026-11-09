@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createFullImageMask,
   createRectangleSelection,
   createSpatialMask,
   createBrushMask,
@@ -56,6 +57,31 @@ describe("spatial selections and masks", () => {
     expect(
       createSpatialMask({ ...selection.value, width: 30 }, 20, 16),
     ).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_INPUT" },
+    });
+  });
+
+  it("creates a full-image mask for the All tool", () => {
+    const mask = createFullImageMask(20, 16);
+    expect(mask).toMatchObject({
+      ok: true,
+      value: {
+        width: 20,
+        height: 16,
+        shapes: [
+          {
+            kind: "rectangle",
+            mode: "add",
+            x: 0,
+            y: 0,
+            width: 20,
+            height: 16,
+          },
+        ],
+      },
+    });
+    expect(createFullImageMask(0, 16)).toMatchObject({
       ok: false,
       error: { code: "INVALID_INPUT" },
     });

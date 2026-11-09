@@ -70,7 +70,10 @@ Coordinates import, document lifecycle, selection, operation dispatch, preview r
 
 Owns immutable source assets, document metadata, current editable representation, masks/selections, operation stack, and revision identifiers.
 
-Brush and Select author a draft spatial mask in image-pixel coordinates.
+All selects the full image as the current spatial mask by default; choosing it
+again restores full-image coverage. Brush and Select author a draft spatial
+mask in image-pixel coordinates. Opening a project with a saved draft mask
+preserves that mask and activates Select instead of replacing it with All.
 The interface uses the current draft for mask-consuming JPEG effects and no
 longer exposes named masks. The underlying named-mask operation remains
 available for compatibility with existing operation data. Effects embed an

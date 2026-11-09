@@ -11,6 +11,7 @@ export type CanvasTool =
   | "hand"
   | "inspector"
   | "info"
+  | "all"
   | "brush"
   | "select"
   | "coefficient-glitch"
@@ -41,6 +42,7 @@ export const TOOL_GROUPS: readonly {
     label: "Effects and masks",
     tools: [
       { id: "coefficient-glitch", label: "Coefficient Glitch", shortcut: "G" },
+      { id: "all", label: "All", shortcut: "A" },
       { id: "brush", label: "Brush", shortcut: "B" },
       { id: "select", label: "Select", shortcut: "M" },
     ],
@@ -131,6 +133,7 @@ export function getWorkspaceOverlayVisibility(
     mask:
       tool === "brush" ||
       tool === "select" ||
+      tool === "all" ||
       tool === "coefficient-glitch" ||
       tool === "block-transform",
     inspectedBlock: tool === "inspector",
@@ -166,7 +169,7 @@ export type WorkspaceAction =
   | { readonly type: "reset-document" };
 
 export const initialWorkspaceState: WorkspaceState = Object.freeze({
-  activeTool: "hand",
+  activeTool: "all",
   panelTool: "hand",
   selectionMask: null,
   activeMaskId: null,
@@ -188,9 +191,11 @@ export function workspaceReducer(
       return {
         ...state,
         activeTool:
-          state.activeTool === "brush" || state.activeTool === "select"
+          state.activeTool === "all" ||
+          state.activeTool === "brush" ||
+          state.activeTool === "select"
             ? state.activeTool
-            : "brush",
+            : "all",
         panelTool: action.tool,
       };
     case "set-selection":

@@ -81,6 +81,7 @@ describe("workspace state", () => {
     expect(getCanvasToolShortcut("v")).toBe("hand");
     expect(getCanvasToolShortcut("I")).toBe("inspector");
     expect(getCanvasToolShortcut("f")).toBe("info");
+    expect(getCanvasToolShortcut("a")).toBe("all");
     expect(getCanvasToolShortcut("b")).toBe("brush");
     expect(getCanvasToolShortcut("m")).toBe("select");
     expect(getCanvasToolShortcut("g")).toBe("coefficient-glitch");
@@ -99,6 +100,7 @@ describe("workspace state", () => {
     expect(isCanvasToolEnabled("brush", "quantization", true)).toBe(false);
     expect(isCanvasToolEnabled("select", "info", true)).toBe(false);
     expect(isCanvasToolEnabled("select", "info")).toBe(false);
+    expect(isCanvasToolEnabled("all", "info")).toBe(true);
     expect(isCanvasToolEnabled("hand", "info")).toBe(true);
   });
 
@@ -132,6 +134,7 @@ describe("workspace state", () => {
         "Effects and masks",
         [
           ["coefficient-glitch", "G"],
+          ["all", "A"],
           ["brush", "B"],
           ["select", "M"],
         ],
@@ -210,8 +213,22 @@ describe("workspace state", () => {
     }
   });
 
-  it("defaults to the brush when entering a mask effect from a non-mask tool", () => {
-    expect(initialWorkspaceState.activeTool).toBe("hand");
+  it("defaults to All and keeps it selected for a mask effect", () => {
+    expect(initialWorkspaceState.activeTool).toBe("all");
+    const effect = workspaceReducer(initialWorkspaceState, {
+      type: "activate-mask-effect",
+      tool: "coefficient-glitch",
+    });
+    expect(effect.activeTool).toBe("all");
+    expect(effect.panelTool).toBe("coefficient-glitch");
+    expect(getWorkspaceOverlayVisibility("all")).toEqual({
+      mask: true,
+      inspectedBlock: false,
+    });
+  });
+
+  it("keeps All selected when entering a mask effect from Hand", () => {
+    expect(initialWorkspaceState.activeTool).toBe("all");
     const hand = workspaceReducer(initialWorkspaceState, {
       type: "activate-tool",
       tool: "hand",
@@ -220,7 +237,7 @@ describe("workspace state", () => {
       type: "activate-mask-effect",
       tool: "coefficient-glitch",
     });
-    expect(effect.activeTool).toBe("brush");
+    expect(effect.activeTool).toBe("all");
     expect(effect.panelTool).toBe("coefficient-glitch");
     const transform = workspaceReducer(effect, {
       type: "activate-tool",

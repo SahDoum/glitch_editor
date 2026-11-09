@@ -151,6 +151,24 @@ export function createSpatialMask(
   );
 }
 
+export function createFullImageMask(
+  imageWidth: number,
+  imageHeight: number,
+): Result<SpatialMask> {
+  return createSpatialMask(
+    {
+      kind: "rectangle",
+      coordinateSpace: "image-pixel",
+      x: 0,
+      y: 0,
+      width: imageWidth,
+      height: imageHeight,
+    },
+    imageWidth,
+    imageHeight,
+  );
+}
+
 export function createBrushMask(
   points: readonly { readonly x: number; readonly y: number }[],
   radius: number,

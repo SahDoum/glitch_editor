@@ -61,6 +61,7 @@ import {
 } from "./jpeg/block-geometry";
 import type { JpegInspection } from "./jpeg/inspect";
 import {
+  createFullImageMask,
   createBrushMaskFromStrokes,
   copySpatialMask,
   createRectangleSelection,
@@ -217,6 +218,8 @@ function getToolIconPaths(tool: CanvasTool): readonly string[] {
         "M12 7h.01",
         "M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0Z",
       ];
+    case "all":
+      return ["M5 3h10l4 4v14H5z", "M15 3v5h4"];
     case "brush":
       return ["m4 16 9-9 4 4-9 9H4v-4Z", "m12 8 3-3 4 4-3 3", "M4 21h7"];
     case "select":
@@ -794,10 +797,11 @@ function MetadataInspector({
 }
 
 const PREVIEW_TOOL_BUTTONS: readonly {
-  readonly id: "brush" | "select";
+  readonly id: "brush" | "select" | "all";
   readonly label: string;
   readonly shortcut: string;
 }[] = [
+  { id: "all", label: "All", shortcut: "A" },
   { id: "brush", label: "Brush", shortcut: "B" },
   { id: "select", label: "Select", shortcut: "M" },
 ];
@@ -1836,6 +1840,19 @@ function App() {
       setErrorMessage(history.error.message);
       return;
     }
+    let initialSelectionMask = projectData?.draftMask ?? null;
+    if (!initialSelectionMask) {
+      const mask = createFullImageMask(
+        result.value.inspection.width,
+        result.value.inspection.height,
+      );
+      if (!mask.ok) {
+        URL.revokeObjectURL(result.value.previewUrl);
+        setErrorMessage(mask.error.message);
+        return;
+      }
+      initialSelectionMask = mask.value;
+    }
     if (projectData) {
       const restored = history.value.restoreOperations(projectData.operations);
       if (!restored.ok) {
@@ -1889,9 +1906,16 @@ function App() {
     });
     setSelection(null);
     dispatchWorkspace({ type: "reset-document" });
+    if (projectData?.draftMask) {
+      dispatchWorkspace({
+        type: "activate-tool",
+        tool: "select",
+        preservePanel: true,
+      });
+    }
     dispatchWorkspace({
       type: "set-selection",
-      selection: projectData?.draftMask ?? null,
+      selection: initialSelectionMask,
     });
     setBrushDraft([]);
     setComponentIndex(0);
@@ -2081,34 +2105,17 @@ function App() {
 
   const selectAllImage = useCallback(() => {
     if (!document) return;
-    const result = createRectangleSelection(
-      0,
-      0,
-      document.inspection.width,
-      document.inspection.height,
+    const result = createFullImageMask(
       document.inspection.width,
       document.inspection.height,
     );
-    if (!result.ok || !result.value) {
-      setErrorMessage(
-        result.ok
-          ? "The whole-image selection could not be created."
-          : result.error.message,
-      );
-      return;
-    }
-    const mask = createSpatialMask(
-      result.value,
-      document.inspection.width,
-      document.inspection.height,
-    );
-    if (!mask.ok) {
-      setErrorMessage(mask.error.message);
+    if (!result.ok) {
+      setErrorMessage(result.error.message);
       return;
     }
     keyboardSelectionAnchor.current = null;
     setSelection(null);
-    dispatchWorkspace({ type: "set-selection", selection: mask.value });
+    dispatchWorkspace({ type: "set-selection", selection: result.value });
     setCanvasKeyboardAnnouncement("Selected the entire image.");
     setErrorMessage("");
   }, [document]);
@@ -2795,11 +2802,12 @@ function App() {
       (tool === "block-transform" &&
         (blockTransformMode === "shuffle" || blockTransformMode === "shift"));
     const preservePanel =
-      (tool === "brush" || tool === "select") &&
-      (panelTool === "coefficient-glitch" ||
-        (panelTool === "block-transform" &&
-          (blockTransformMode === "shuffle" ||
-            blockTransformMode === "shift")));
+      tool === "all" ||
+      ((tool === "brush" || tool === "select") &&
+        (panelTool === "coefficient-glitch" ||
+          (panelTool === "block-transform" &&
+            (blockTransformMode === "shuffle" ||
+              blockTransformMode === "shift"))));
     if (
       maskEffect &&
       (tool === "coefficient-glitch" || tool === "block-transform")
@@ -2807,6 +2815,7 @@ function App() {
       dispatchWorkspace({ type: "activate-mask-effect", tool });
     } else {
       dispatchWorkspace({ type: "activate-tool", tool, preservePanel });
+      if (tool === "all") selectAllImage();
     }
     if (activeToolPanel.current) activeToolPanel.current.open = true;
   }
@@ -3732,7 +3741,8 @@ function App() {
   }
 
   const overlayVisibility = getWorkspaceOverlayVisibility(toolMode);
-  const isMaskAuthoring = toolMode === "brush" || toolMode === "select";
+  const isMaskAuthoring =
+    toolMode === "all" || toolMode === "brush" || toolMode === "select";
   const activeMaskForOverlay = overlayVisibility.mask
     ? isMaskAuthoring
       ? globalSelectionMask
@@ -3868,15 +3878,17 @@ function App() {
           return;
         event.preventDefault();
         keyboardSelectionAnchor.current = null;
+        if (tool === "all") selectAllImage();
         dispatchWorkspace({
           type: "activate-tool",
           tool,
           preservePanel:
-            (tool === "brush" || tool === "select") &&
-            (panelTool === "coefficient-glitch" ||
-              (panelTool === "block-transform" &&
-                (blockTransformMode === "shuffle" ||
-                  blockTransformMode === "shift"))),
+            tool === "all" ||
+            ((tool === "brush" || tool === "select") &&
+              (panelTool === "coefficient-glitch" ||
+                (panelTool === "block-transform" &&
+                  (blockTransformMode === "shuffle" ||
+                    blockTransformMode === "shift")))),
         });
         setKeyboardCursor(null);
         setCanvasKeyboardAnnouncement(`${tool} tool selected.`);
@@ -4230,7 +4242,9 @@ function App() {
                               blockTransformMode === "shift")));
                       const isSuggested =
                         needsMask &&
-                        (tool.id === "brush" || tool.id === "select");
+                        (tool.id === "all" ||
+                          tool.id === "brush" ||
+                          tool.id === "select");
                       return (
                         <button
                           className={`tool-button ${toolMode === tool.id ? "is-active" : ""} ${isSuggested ? "is-suggested" : ""}`}
@@ -4385,26 +4399,28 @@ function App() {
                         {isScanCorrupting ? "Corrupting scan…" : "Re-encoding…"}
                       </span>
                     )}
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={showBlocks}
-                        onChange={(event) =>
-                          setShowBlocks(event.currentTarget.checked)
-                        }
-                      />
-                      <span>8×8 DCT</span>
-                    </label>
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={showMcus}
-                        onChange={(event) =>
-                          setShowMcus(event.currentTarget.checked)
-                        }
-                      />
-                      <span>MCUs</span>
-                    </label>
+                    <div className="overlay-checkboxes">
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={showBlocks}
+                          onChange={(event) =>
+                            setShowBlocks(event.currentTarget.checked)
+                          }
+                        />
+                        <span>8×8 DCT</span>
+                      </label>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={showMcus}
+                          onChange={(event) =>
+                            setShowMcus(event.currentTarget.checked)
+                          }
+                        />
+                        <span>MCUs</span>
+                      </label>
+                    </div>
                   </div>
                 </div>
                 <div
