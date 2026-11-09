@@ -330,6 +330,112 @@ describe("JPEG inspector", () => {
     });
   });
 
+  it("counts restart markers separately while preserving every entropy boundary", async () => {
+    const bytes = await fixtureBytes("synthetic-grayscale.jpg");
+    const parsed = inspectJpeg(bytes);
+    if (!parsed.ok) throw new Error(parsed.error.message);
+    const scanStart = parsed.value.markers.find(
+      (marker) => marker.name === "SOS",
+    )!.startOffset;
+    const withInterval = insertBytes(
+      bytes,
+      scanStart,
+      Uint8Array.of(0xff, 0xdd, 0x00, 0x04, 0x00, 0x01),
+    );
+    const restartMarkers = new Uint8Array(50_699 * 2);
+    for (let index = 0; index < restartMarkers.length / 2; index += 1) {
+      restartMarkers[index * 2] = 0xff;
+      restartMarkers[index * 2 + 1] = 0xd0 + (index % 8);
+    }
+    const input = insertBytes(
+      withInterval,
+      withInterval.length - 2,
+      restartMarkers,
+    );
+    const original = input.slice();
+    const result = inspectJpeg(input);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error.message);
+    const restarts = result.value.markers.filter(
+      (marker) => marker.kind === "restart",
+    );
+    expect(restarts).toHaveLength(50_699);
+    const ranges = result.value.scans[0]!.entropyRanges;
+    expect(ranges).toHaveLength(50_700);
+    for (let index = 0; index < restarts.length; index += 1) {
+      expect(ranges[index]!.endOffset).toBe(restarts[index]!.startOffset);
+      expect(ranges[index + 1]!.startOffset).toBe(restarts[index]!.endOffset);
+    }
+    expect(input).toEqual(original);
+  });
+
+  it("accepts exactly 250,000 restart markers and rejects the next", async () => {
+    const bytes = await fixtureBytes("synthetic-grayscale.jpg");
+    const parsed = inspectJpeg(bytes);
+    if (!parsed.ok) throw new Error(parsed.error.message);
+    const scanStart = parsed.value.markers.find(
+      (marker) => marker.name === "SOS",
+    )!.startOffset;
+    const withInterval = insertBytes(
+      bytes,
+      scanStart,
+      Uint8Array.of(0xff, 0xdd, 0x00, 0x04, 0x00, 0x01),
+    );
+    const restartMarkers = new Uint8Array(250_001 * 2);
+    for (let index = 0; index < restartMarkers.length / 2; index += 1) {
+      restartMarkers[index * 2] = 0xff;
+      restartMarkers[index * 2 + 1] = 0xd0 + (index % 8);
+    }
+    const atLimit = insertBytes(
+      withInterval,
+      withInterval.length - 2,
+      restartMarkers.subarray(0, 500_000),
+    );
+    expect(inspectJpeg(atLimit).ok).toBe(true);
+    const aboveLimit = insertBytes(
+      withInterval,
+      withInterval.length - 2,
+      restartMarkers,
+    );
+    expect(inspectJpeg(aboveLimit)).toMatchObject({
+      ok: false,
+      error: {
+        code: "UNSUPPORTED_FORMAT",
+        message:
+          "JPEG files with more than 250,000 restart markers are not supported.",
+      },
+    });
+  });
+
+    it("accepts exactly 10,000 non-restart markers and rejects the next", async () => {
+      const bytes = await fixtureBytes("synthetic-grayscale.jpg");
+      const parsed = inspectJpeg(bytes);
+      if (!parsed.ok) throw new Error(parsed.error.message);
+      const scanStart = parsed.value.markers.find(
+        (marker) => marker.name === "SOS",
+      )!.startOffset;
+      const additional = 10_000 - parsed.value.markers.length;
+      const comments = new Uint8Array((additional + 1) * 4);
+      for (let offset = 0; offset < comments.length; offset += 4) {
+        comments.set([0xff, 0xfe, 0x00, 0x02], offset);
+      }
+      expect(
+        inspectJpeg(
+          insertBytes(bytes, scanStart, comments.subarray(0, additional * 4)),
+        ).ok,
+      ).toBe(true);
+      expect(
+        inspectJpeg(insertBytes(bytes, scanStart, comments)),
+      ).toMatchObject({
+        ok: false,
+        error: {
+          code: "UNSUPPORTED_FORMAT",
+          message:
+            "JPEG files with more than 10,000 non-restart markers are not supported.",
+        },
+      });
+  });
+
   it("rejects a truncated scan as malformed without modifying source bytes", async () => {
     const source = await fixtureBytes("synthetic-color-420.jpg");
     const original = source.slice();

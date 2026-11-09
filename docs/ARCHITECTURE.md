@@ -308,7 +308,9 @@ editing.
 Unknown operation versions are rejected explicitly; no migration is claimed
 yet.
 
-Built-in operations include masked coefficient zero/scale/seeded randomize,
+Built-in operations include masked coefficient zero/scale/seeded randomize.
+Pixelate is a fixed `zero` preset that targets all AC coefficients; the
+separate Zero effect exposes DC and AC frequency selection.
 DC offset, DC coefficient step rounding, AC inversion, frequency isolation,
 AC low-pass, ringing boost and directional engraving, block duplicate/repeat and
 seeded whole-block permutation within one component, and DQT table edits.

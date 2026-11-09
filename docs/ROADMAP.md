@@ -81,7 +81,11 @@ Priorities:
 
 **Acceptance criteria:**
 
-- [x] Coefficient operations are selected from Effects, including Posterization/Poster, Randomize, DC Offset, AC Low-pass, Engraving, Invert AC, and Isolate AC Band. Engraving uses one catalog entry with a Horizontal/Vertical radio choice in its settings.
+- [x] Coefficient Effects entries include separate Pixelate (fixed Zero-all-AC)
+  and Zero (selectable DC/AC frequencies), plus Posterization/Poster,
+  Randomize, DC Offset, AC Low-pass, Engraving, Invert AC, and Isolate AC Band.
+  Engraving uses one catalog entry with a Horizontal/Vertical radio choice in
+  its settings.
 - [x] Frequency range selector (Coefficient Glitch): The interactive DCT matrix combines DC and AC ranges and disables zones unsupported by the selected operation.
 - [x] Component selector: Shared labeled Y/Cb/Cr-style choices show JPEG component ID and sampling factors.
 - [x] Brush/Select component scope: Mask tools have no component picker; component targets belong to effect operations.

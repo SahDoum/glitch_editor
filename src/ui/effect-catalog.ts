@@ -1,5 +1,6 @@
 export type EffectId =
   | "pixelate"
+  | "zero"
   | "posterization"
   | "ringing"
   | "engraving"
@@ -31,7 +32,7 @@ export const EFFECT_CATALOG: readonly EffectCatalogItem[] = [
     id: "pixelate",
     label: "Pixelate",
     description:
-      "Zero selected quantized DCT coefficients in affected blocks; this is not a pixel filter.",
+      "Zero all AC coefficients in affected blocks; a fixed preset of the Zero operation.",
     category: "Coefficients",
     applicationMode: "selection",
   },
@@ -70,6 +71,14 @@ export const EFFECT_CATALOG: readonly EffectCatalogItem[] = [
     label: "Coefficient Scale",
     description:
       "Scale selected quantized DCT coefficients; choose DC or AC in the matrix.",
+    category: "Coefficients",
+    applicationMode: "selection",
+  },
+  {
+    id: "zero",
+    label: "Zero",
+    description:
+      "Set selected quantized DCT coefficients to zero; choose DC or an AC frequency zone.",
     category: "Coefficients",
     applicationMode: "selection",
   },

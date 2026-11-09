@@ -23,6 +23,17 @@ export const BUILT_IN_COEFFICIENT_BRUSHES: readonly CoefficientBrush[] = [
     },
   },
   {
+    id: "zero",
+    name: "Zero",
+    step: {
+      domain: "ac",
+      mode: "zero",
+      frequencyBand: "all",
+      strength: 0,
+      seed: 1,
+    },
+  },
+  {
     id: "chroma-scale",
     name: "AC scale",
     step: {

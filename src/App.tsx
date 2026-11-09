@@ -162,6 +162,7 @@ const EMPTY_JPEG_OPERATIONS: JpegEditableState["jpegOperations"] =
 type CoefficientCatalogEffectId = Extract<
   EffectId,
   | "pixelate"
+  | "zero"
   | "posterization"
   | "ringing"
   | "engraving"
@@ -176,6 +177,7 @@ const COEFFICIENT_EFFECT_BRUSH_IDS: Readonly<
   Record<CoefficientCatalogEffectId, string>
 > = {
   pixelate: "pixelate",
+  zero: "zero",
   posterization: "dc-steps",
   ringing: "ringing",
   "ac-scale": "chroma-scale",
@@ -804,6 +806,19 @@ function getEffectIconPaths(effectId: EffectId): readonly string[] {
   switch (effectId) {
     case "pixelate":
       return ["M3 3h8v8H3z", "M13 3h8v8h-8z", "M3 13h8v8H3z", "M13 13h8v8h-8z"];
+    case "zero":
+      return [
+        "M5 2h4v4H5z",
+        "M10 2h4v4h-4z",
+        "M15 2h4v4h-4z",
+        "M5 7h4v4H5z",
+        "M5 12h4v4H5z",
+        "M15 7h4v4h-4z",
+        "M15 12h4v4h-4z",
+        "M5 17h4v4H5z",
+        "M10 17h4v4h-4z",
+        "M15 17h4v4h-4z",
+      ];
     case "ac-scale":
       return ["M4 18h16", "M6 15V9", "M10 15V5", "M14 15V8", "M18 15V3"];
     case "coefficient-randomize":
@@ -1374,9 +1389,9 @@ function App() {
   );
   const [coefficientEffectSettingsError, setCoefficientEffectSettingsError] =
     useState(initialCoefficientSettings.error);
-  const initialPixelateSettings =
-    initialCoefficientSettings.settings.pixelate ??
-    BUILT_IN_COEFFICIENT_BRUSHES[0]!.step;
+  const initialPixelateSettings = BUILT_IN_COEFFICIENT_BRUSHES.find(
+    (brush) => brush.id === "pixelate",
+  )!.step;
   const [frequencyBand, setFrequencyBand] = useState<GlitchFrequencyBand>(
     initialPixelateSettings.frequencyBand,
   );
@@ -1496,34 +1511,40 @@ function App() {
             ? "scan-corrupt"
             : null;
   const dctMatrixTarget: DctMatrixTarget =
-    coefficientMode === "offset" || coefficientMode === "dc-steps"
-      ? { kind: "dc" }
-      : coefficientMode === "low-pass"
-        ? { kind: "low-pass", cutoff: coefficientStrength }
-        : coefficientMode === "ringing-boost"
-          ? { kind: "ringing" }
-          : coefficientMode === "engrave-horizontal" ||
-              coefficientMode === "engrave-vertical"
-            ? {
-                kind: "engraving",
-                direction:
-                  coefficientMode === "engrave-horizontal"
-                    ? "horizontal"
-                    : "vertical",
-              }
-            : coefficientDomain === "dc"
-              ? { kind: "dc" }
-              : { kind: "band", band: frequencyBand };
+    selectedBrushId === "pixelate"
+      ? { kind: "band", band: "all" }
+      : coefficientMode === "offset" || coefficientMode === "dc-steps"
+        ? { kind: "dc" }
+        : coefficientMode === "low-pass"
+          ? { kind: "low-pass", cutoff: coefficientStrength }
+          : coefficientMode === "ringing-boost"
+            ? { kind: "ringing" }
+            : coefficientMode === "engrave-horizontal" ||
+                coefficientMode === "engrave-vertical"
+              ? {
+                  kind: "engraving",
+                  direction:
+                    coefficientMode === "engrave-horizontal"
+                      ? "horizontal"
+                      : "vertical",
+                }
+              : coefficientDomain === "dc"
+                ? { kind: "dc" }
+                : { kind: "band", band: frequencyBand };
   const availableDctChoices: readonly DctFrequencyChoice[] =
-    getCoefficientRangeOptions(coefficientMode).map(({ value }) =>
-      value === "dc" ? "dc" : (value.slice(3) as DctFrequencyChoice),
-    );
+    selectedBrushId === "pixelate"
+      ? []
+      : getCoefficientRangeOptions(coefficientMode).map(({ value }) =>
+          value === "dc" ? "dc" : (value.slice(3) as DctFrequencyChoice),
+        );
   const selectedDctChoice: DctFrequencyChoice | null =
-    availableDctChoices.length === 0
-      ? null
-      : coefficientDomain === "dc"
-        ? "dc"
-        : frequencyBand;
+    selectedBrushId === "pixelate"
+      ? "all"
+      : availableDctChoices.length === 0
+        ? null
+        : coefficientDomain === "dc"
+          ? "dc"
+          : frequencyBand;
   const componentCount = document?.inspection.components.length ?? 0;
   const documentHash = document?.originalAsset.sha256;
   const orientation = useMemo(() => {
@@ -2841,18 +2862,28 @@ function App() {
       );
       return false;
     }
+    if (!selectedBrush) {
+      setErrorMessage("The selected coefficient effect is unavailable.");
+      return false;
+    }
+    const operationStep =
+      selectedBrushId === "pixelate"
+        ? selectedBrush.step
+        : {
+            domain: coefficientDomain,
+            mode: coefficientMode,
+            frequencyBand,
+            strength:
+              coefficientMode === "invert" || coefficientMode === "isolate"
+                ? 0
+                : coefficientStrength,
+            seed: coefficientSeed,
+          };
     const result = applyCoefficientGlitchOperation(history, {
       kind: "coefficients",
       mask,
       componentIndex,
-      domain: coefficientDomain,
-      mode: coefficientMode,
-      frequencyBand,
-      strength:
-        coefficientMode === "invert" || coefficientMode === "isolate"
-          ? 0
-          : coefficientStrength,
-      seed: coefficientSeed,
+      ...operationStep,
     });
     updateHistory(result);
     return result.ok;
@@ -2866,7 +2897,10 @@ function App() {
       setErrorMessage("The selected brush is unavailable.");
       return;
     }
-    const step = coefficientEffectSettings[id] ?? brush.step;
+    const step =
+      id === "pixelate"
+        ? brush.step
+        : (coefficientEffectSettings[id] ?? brush.step);
     setSelectedBrushId(id);
     setCoefficientDomain(step.domain);
     setCoefficientMode(step.mode);
@@ -2877,6 +2911,8 @@ function App() {
   }
 
   function updateCoefficientSettings(update: CoefficientStepUpdate) {
+    if (selectedBrushId === "pixelate") return;
+
     const current: CoefficientBrush["step"] = {
       domain: coefficientDomain,
       mode: coefficientMode,
@@ -4669,16 +4705,19 @@ function App() {
                           target={dctMatrixTarget}
                           selectedChoice={selectedDctChoice}
                           availableChoices={availableDctChoices}
-                          onSelect={(choice) =>
-                            choice === "dc"
-                              ? updateCoefficientSettings({
-                                  domain: "dc",
-                                  frequencyBand: "all",
-                                })
-                              : updateCoefficientSettings({
-                                  domain: "ac",
-                                  frequencyBand: choice,
-                                })
+                          onSelect={
+                            selectedBrushId === "pixelate"
+                              ? undefined
+                              : (choice) =>
+                                  choice === "dc"
+                                    ? updateCoefficientSettings({
+                                        domain: "dc",
+                                        frequencyBand: "all",
+                                      })
+                                    : updateCoefficientSettings({
+                                        domain: "ac",
+                                        frequencyBand: choice,
+                                      })
                           }
                         />
                       )}

@@ -22,11 +22,38 @@ function memoryStorage() {
 }
 
 describe("coefficient brushes", () => {
+  it("keeps Pixelate as fixed AC-all Zero while exposing Zero separately", () => {
+    const pixelate = BUILT_IN_COEFFICIENT_BRUSHES.find(
+      ({ id }) => id === "pixelate",
+    );
+    const zero = BUILT_IN_COEFFICIENT_BRUSHES.find(({ id }) => id === "zero");
+
+    expect(pixelate?.step).toEqual({
+      domain: "ac",
+      mode: "zero",
+      frequencyBand: "all",
+      strength: 0,
+      seed: 1,
+    });
+    expect(zero?.step).toEqual(pixelate?.step);
+  });
+
   it("defines component-independent built-in brush settings", () => {
     expect(BUILT_IN_COEFFICIENT_BRUSHES).toEqual([
       {
         id: "pixelate",
         name: "Pixelate",
+        step: {
+          domain: "ac",
+          mode: "zero",
+          frequencyBand: "all",
+          strength: 0,
+          seed: 1,
+        },
+      },
+      {
+        id: "zero",
+        name: "Zero",
         step: {
           domain: "ac",
           mode: "zero",

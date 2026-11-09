@@ -321,15 +321,14 @@ in the browser. Applying a multi-step recipe is one undoable history
 action. Each recipe step is labeled as a quantized-coefficient edit that
 produces a re-encoded JPEG; it is not raw-byte or entropy-stream damage.
 
-Coefficient brush presets expose one component and coefficient operation at
-a time. Built-in Pixelate zeros all AC coefficients in component 0; Chroma
-scale scales all AC coefficients in component 2 by two, with an adjustable
-multiplier. Users can save additional parameterized brushes locally. A
-persisted setting for each brush selects whether a completed mask is
-applied immediately or using the apply button. Successful automatic
-operation creation clears the draft mask; failed validation leaves it intact.
-A brush requiring a missing
-component is unavailable until a valid component is selected.
+Coefficient effects expose one component and coefficient operation at
+a time. Pixelate is a fixed preset of Zero that clears all AC coefficients in
+the selected component. The separate Zero effect lets users target DC or a
+chosen AC frequency zone through the DCT matrix. Chroma Scale scales all AC
+coefficients by two by default, with an adjustable multiplier. A persisted
+setting for each effect selects whether a completed mask is applied immediately
+or using the Apply button. Successful automatic operation creation clears the
+draft mask; failed validation leaves it intact.
 
 Reduce redundant canvas/tool spacing and show toolbar icons with
 accessible names and tooltips at constrained widths. Keep original/result

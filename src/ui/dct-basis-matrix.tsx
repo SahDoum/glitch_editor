@@ -76,7 +76,11 @@ export function DctBasisMatrix({
       <div className="dct-basis-heading">
         <div>
           <h3>8×8 DCT basis</h3>
-          <p>Click a cell to select its DC / AC frequency zone.</p>
+          <p>
+            {interactive
+              ? "Click a cell to select its DC / AC frequency zone."
+              : "The highlighted cells show the operation's frequency target."}
+          </p>
         </div>
         <span className="dct-target-label" aria-live="polite">
           {targetLabel}
@@ -91,9 +95,7 @@ export function DctBasisMatrix({
           const u = index % 8;
           const v = Math.floor(index / 8);
           const choice = getDctFrequencyChoice(u, v);
-          const isAvailable = interactive
-            ? availableChoices.includes(choice)
-            : true;
+          const isAvailable = availableChoices.includes(choice);
           const isSelected =
             selectedChoice === choice ||
             (selectedChoice === "all" && choice !== "dc");

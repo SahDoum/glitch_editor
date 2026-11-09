@@ -134,13 +134,16 @@ Select можно начать за границей изображения: и�
 ## 3. Текущая панель Coefficient Glitch
 
 Режимы коэффициентных операций выбираются в каталоге **Effects**, а не во
-вложенном переключателе или списке User brush: Pixelate, Coefficient Scale,
-Randomize Coefficients, DC Offset, Posterization, AC Low-pass, Ringing,
-Engraving, Invert AC и Isolate AC Band. Каждый пункт
+вложенном переключателе или списке User brush: Pixelate, Zero,
+Coefficient Scale, Randomize Coefficients, DC Offset, Posterization, AC
+Low-pass, Ringing, Engraving, Invert AC и Isolate AC Band. Pixelate —
+фиксированный Zero по всем AC-коэффициентам; Zero позволяет выбрать DC или
+частотную зону в матрице DCT. Каждый пункт
 открывает соответствующий типизированный коэффициентный режим. Матрица DCT
-показывает только допустимые для выбранного режима диапазоны; например,
-DC Offset и Posterization действуют на DC, а Isolate AC Band — на AC Low,
-Mid или High. Случайный seed отображается только для Randomize Coefficients.
+показывает только допустимые для выбранного режима диапазоны. Pixelate
+фиксирован на AC All; Zero позволяет выбрать DC или одну из AC-зон. DC Offset
+и Posterization действуют на DC, а Isolate AC Band — на AC Low, Mid или High.
+Случайный seed отображается только для Randomize Coefficients.
 
 User brush, добавление и сохранение пользовательских эффектов удалены из
 интерфейса. Ранее сохранённые данные кистей в localStorage не удаляются, но
