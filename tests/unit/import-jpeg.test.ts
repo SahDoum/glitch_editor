@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { importJpeg } from "../../src/application/import-jpeg";
 import type { InspectWorkerRequest } from "../../src/jpeg/inspect-worker-protocol";
 import { inspectJpeg } from "../../src/jpeg/inspect";
+import { fixtureWithExif } from "../helpers/oriented-fixture";
 
 class FixtureWorker {
   static instance: FixtureWorker | null = null;
@@ -39,6 +40,7 @@ class FixtureImage {
 describe("JPEG import", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     FixtureWorker.instance = null;
   });
 
@@ -70,6 +72,22 @@ describe("JPEG import", () => {
     URL.revokeObjectURL(result.value.previewUrl);
   });
 
+  it("imports a rotated EXIF preview without changing original bytes", async () => {
+    class RotatedImage extends FixtureImage {
+      override naturalWidth = 9;
+      override naturalHeight = 17;
+    }
+    vi.stubGlobal("Image", RotatedImage);
+    vi.stubGlobal("Worker", FixtureWorker);
+    const source = await fixtureWithExif(6);
+    const result = await importJpeg(new File([source], "rotated.jpg"));
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error.message);
+    expect(result.value.inspection).toMatchObject({ width: 17, height: 9 });
+    expect(result.value.originalAsset.readBytes()).toEqual(source);
+    URL.revokeObjectURL(result.value.previewUrl);
+  });
+
   it("returns a visible processing error when the browser cannot decode the preview", async () => {
     class BrokenImage extends FixtureImage {
       override async decode(): Promise<void> {
@@ -91,6 +109,27 @@ describe("JPEG import", () => {
     expect(result).toMatchObject({
       ok: false,
       error: { code: "PROCESSING_FAILED" },
+    });
+    expect(revoke).toHaveBeenCalledOnce();
+  });
+
+  it("reports both actual and expected dimensions on a preview mismatch", async () => {
+    class WrongSizeImage extends FixtureImage {
+      override naturalWidth = 8;
+    }
+    vi.stubGlobal("Image", WrongSizeImage);
+    vi.stubGlobal("Worker", FixtureWorker);
+    const revoke = vi.spyOn(URL, "revokeObjectURL");
+    const source = await readFile(
+      new URL("../fixtures/synthetic-color-420.jpg", import.meta.url),
+    );
+    const result = await importJpeg(new File([source], "mismatch.jpg"));
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "PROCESSING_FAILED",
+        message: expect.stringContaining("(8 × 16)"),
+      },
     });
     expect(revoke).toHaveBeenCalledOnce();
   });

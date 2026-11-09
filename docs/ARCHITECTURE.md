@@ -172,6 +172,12 @@ Do not collapse these into one generic `image` object.
 
 The original bytes are authoritative for reset and original export. A preview is never the authoritative JPEG representation.
 
+Browser previews honor EXIF orientation. Overlay geometry and pointer positions
+are transformed between the oriented preview and the unrotated JPEG frame;
+masks and coefficient operations remain in frame coordinates. EXIF orientation
+is also expected on re-encoded previews. Invalid or ambiguous EXIF orientation
+metadata is rejected rather than risking edits in the wrong location.
+
 `OriginalAsset` keeps private byte storage and exposes copy-returning reads.
 The immutable editable document tracks its monotonic revision, named
 image-pixel masks, and versioned operation history separately from the source

@@ -5,6 +5,7 @@ import {
 } from "../jpeg/inspect-worker-protocol";
 import type { JpegInspection } from "../jpeg/inspect";
 import { OriginalAsset } from "../document/model";
+import { previewDimensions, readJpegOrientation } from "./preview-orientation";
 
 const MAX_JPEG_FILE_BYTES = 50 * 1024 * 1024;
 
@@ -146,6 +147,12 @@ export async function importJpeg(
 
   const inspection = await inspectInWorker(bytes, signal);
   if (!inspection.ok) return inspection;
+  const orientation = readJpegOrientation(bytes, inspection.value);
+  if (!orientation.ok) return orientation;
+  const expectedPreview = previewDimensions(
+    inspection.value,
+    orientation.value,
+  );
 
   let digest: ArrayBuffer;
   try {
@@ -209,13 +216,13 @@ export async function importJpeg(
       return cancelled();
     }
     if (
-      preview.naturalWidth !== inspection.value.width ||
-      preview.naturalHeight !== inspection.value.height
+      preview.naturalWidth !== expectedPreview.width ||
+      preview.naturalHeight !== expectedPreview.height
     ) {
       URL.revokeObjectURL(previewUrl);
       return failure({
         code: "PROCESSING_FAILED",
-        message: "The browser preview dimensions do not match the JPEG frame.",
+        message: `The browser preview dimensions (${preview.naturalWidth} × ${preview.naturalHeight}) do not match the expected oriented JPEG dimensions (${expectedPreview.width} × ${expectedPreview.height}).`,
       });
     }
   } catch {

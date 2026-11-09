@@ -30,6 +30,13 @@ import {
 } from "./application/jpeg-document";
 import { importJpeg, type ImportedJpeg } from "./application/import-jpeg";
 import {
+  previewDimensions,
+  previewOrientationTransform,
+  previewPointToFrame,
+  readJpegOrientation,
+} from "./application/preview-orientation";
+import type { JpegOrientation } from "./jpeg/orientation";
+import {
   createJgeProjectFile,
   readJgeProjectFile,
   type JgeProjectData,
@@ -328,6 +335,7 @@ function getBlockRegionSelection(
 
 function ImageOverlays({
   inspection,
+  orientation,
   showBlocks,
   showMcus,
   selection,
@@ -344,6 +352,7 @@ function ImageOverlays({
   blockTransferDestinationInvalid,
 }: {
   inspection: JpegInspection;
+  orientation: JpegOrientation;
   showBlocks: boolean;
   showMcus: boolean;
   selection: SpatialSelection | null;
@@ -395,124 +404,133 @@ function ImageOverlays({
     ? getMaskBlockCoveragePath(draftBrushMask, inspection, componentId)
     : null;
 
+  const dimensions = previewDimensions(inspection, orientation);
   return (
     <svg
       className="image-overlays"
-      viewBox={`0 0 ${inspection.width} ${inspection.height}`}
+      viewBox={`0 0 ${dimensions.width} ${dimensions.height}`}
       preserveAspectRatio="none"
       aria-hidden="true"
     >
-      <defs>
-        <pattern
-          id="block-grid"
-          width={blockPatternWidth}
-          height={blockPatternHeight}
-          patternUnits="userSpaceOnUse"
-        >
-          <path
-            d={`M ${blockPatternWidth} 0 V ${blockPatternHeight} M 0 ${blockPatternHeight} H ${blockPatternWidth}`}
-            fill="none"
-            stroke="#c8f169"
-            strokeOpacity="0.62"
-            strokeWidth="0.45"
+      <g
+        transform={previewOrientationTransform(
+          inspection.width,
+          inspection.height,
+          orientation,
+        )}
+      >
+        <defs>
+          <pattern
+            id="block-grid"
+            width={blockPatternWidth}
+            height={blockPatternHeight}
+            patternUnits="userSpaceOnUse"
+          >
+            <path
+              d={`M ${blockPatternWidth} 0 V ${blockPatternHeight} M 0 ${blockPatternHeight} H ${blockPatternWidth}`}
+              fill="none"
+              stroke="#c8f169"
+              strokeOpacity="0.62"
+              strokeWidth="0.45"
+            />
+          </pattern>
+          <pattern
+            id="mcu-grid"
+            width={inspection.mcuWidth}
+            height={inspection.mcuHeight}
+            patternUnits="userSpaceOnUse"
+          >
+            <path
+              d={`M ${inspection.mcuWidth} 0 V ${inspection.mcuHeight} M 0 ${inspection.mcuHeight} H ${inspection.mcuWidth}`}
+              fill="none"
+              stroke="#ff9b72"
+              strokeOpacity="0.9"
+              strokeWidth="0.9"
+            />
+          </pattern>
+        </defs>
+        {showBlocks && (
+          <rect
+            width={inspection.width}
+            height={inspection.height}
+            fill="url(#block-grid)"
           />
-        </pattern>
-        <pattern
-          id="mcu-grid"
-          width={inspection.mcuWidth}
-          height={inspection.mcuHeight}
-          patternUnits="userSpaceOnUse"
-        >
-          <path
-            d={`M ${inspection.mcuWidth} 0 V ${inspection.mcuHeight} M 0 ${inspection.mcuHeight} H ${inspection.mcuWidth}`}
-            fill="none"
-            stroke="#ff9b72"
-            strokeOpacity="0.9"
-            strokeWidth="0.9"
+        )}
+        {showMcus && (
+          <rect
+            width={inspection.width}
+            height={inspection.height}
+            fill="url(#mcu-grid)"
           />
-        </pattern>
-      </defs>
-      {showBlocks && (
-        <rect
-          width={inspection.width}
-          height={inspection.height}
-          fill="url(#block-grid)"
-        />
-      )}
-      {showMcus && (
-        <rect
-          width={inspection.width}
-          height={inspection.height}
-          fill="url(#mcu-grid)"
-        />
-      )}
-      {activeBrushCoverage?.ok && (
-        <path className="active-mask-cells" d={activeBrushCoverage.value} />
-      )}
-      {selection && (
-        <rect
-          className="selection-overlay"
-          x={selection.x}
-          y={selection.y}
-          width={selection.width}
-          height={selection.height}
-        />
-      )}
-      {blockTransferSource && (
-        <rect
-          className={`block-transfer-source-overlay ${blockTransferSourceInvalid ? "is-invalid" : ""}`}
-          x={blockTransferSource.x}
-          y={blockTransferSource.y}
-          width={blockTransferSource.width}
-          height={blockTransferSource.height}
-        />
-      )}
-      {blockTransferDestination && (
-        <rect
-          className={`block-transfer-target-overlay ${blockTransferDestinationInvalid ? "is-invalid" : ""}`}
-          x={blockTransferDestination.x}
-          y={blockTransferDestination.y}
-          width={blockTransferDestination.width}
-          height={blockTransferDestination.height}
-        />
-      )}
-      {draftBrushCoverage?.ok && (
-        <path className="brush-draft-cells" d={draftBrushCoverage.value} />
-      )}
-      {brushCursorPoint && (
-        <>
-          <circle
-            className="brush-cursor-outline"
-            cx={brushCursorPoint.x}
-            cy={brushCursorPoint.y}
-            r={brushRadius}
+        )}
+        {activeBrushCoverage?.ok && (
+          <path className="active-mask-cells" d={activeBrushCoverage.value} />
+        )}
+        {selection && (
+          <rect
+            className="selection-overlay"
+            x={selection.x}
+            y={selection.y}
+            width={selection.width}
+            height={selection.height}
           />
-          <circle
-            className="brush-cursor"
-            cx={brushCursorPoint.x}
-            cy={brushCursorPoint.y}
-            r={brushRadius}
+        )}
+        {blockTransferSource && (
+          <rect
+            className={`block-transfer-source-overlay ${blockTransferSourceInvalid ? "is-invalid" : ""}`}
+            x={blockTransferSource.x}
+            y={blockTransferSource.y}
+            width={blockTransferSource.width}
+            height={blockTransferSource.height}
           />
-        </>
-      )}
-      {selectedBlock && (
-        <rect
-          className="selected-block-overlay"
-          x={selectedBlock.imageX}
-          y={selectedBlock.imageY}
-          width={selectedBlock.imageWidth}
-          height={selectedBlock.imageHeight}
-        />
-      )}
-      {keyboardCursor && (
-        <rect
-          className="keyboard-cursor-overlay"
-          x={keyboardCursor.imageX}
-          y={keyboardCursor.imageY}
-          width={keyboardCursor.imageWidth}
-          height={keyboardCursor.imageHeight}
-        />
-      )}
+        )}
+        {blockTransferDestination && (
+          <rect
+            className={`block-transfer-target-overlay ${blockTransferDestinationInvalid ? "is-invalid" : ""}`}
+            x={blockTransferDestination.x}
+            y={blockTransferDestination.y}
+            width={blockTransferDestination.width}
+            height={blockTransferDestination.height}
+          />
+        )}
+        {draftBrushCoverage?.ok && (
+          <path className="brush-draft-cells" d={draftBrushCoverage.value} />
+        )}
+        {brushCursorPoint && (
+          <>
+            <circle
+              className="brush-cursor-outline"
+              cx={brushCursorPoint.x}
+              cy={brushCursorPoint.y}
+              r={brushRadius}
+            />
+            <circle
+              className="brush-cursor"
+              cx={brushCursorPoint.x}
+              cy={brushCursorPoint.y}
+              r={brushRadius}
+            />
+          </>
+        )}
+        {selectedBlock && (
+          <rect
+            className="selected-block-overlay"
+            x={selectedBlock.imageX}
+            y={selectedBlock.imageY}
+            width={selectedBlock.imageWidth}
+            height={selectedBlock.imageHeight}
+          />
+        )}
+        {keyboardCursor && (
+          <rect
+            className="keyboard-cursor-overlay"
+            x={keyboardCursor.imageX}
+            y={keyboardCursor.imageY}
+            width={keyboardCursor.imageWidth}
+            height={keyboardCursor.imageHeight}
+          />
+        )}
+      </g>
     </svg>
   );
 }
@@ -1508,6 +1526,15 @@ function App() {
         : frequencyBand;
   const componentCount = document?.inspection.components.length ?? 0;
   const documentHash = document?.originalAsset.sha256;
+  const orientation = useMemo(() => {
+    if (!document) return 1;
+    const result = readJpegOrientation(
+      document.originalAsset.readBytes(),
+      document.inspection,
+    );
+    if (!result.ok) throw new Error(result.error.message);
+    return result.value;
+  }, [document]);
   const colorModel = useMemo(
     () =>
       document
@@ -1685,9 +1712,10 @@ function App() {
         const preview = new Image();
         preview.src = previewUrl;
         await preview.decode();
+        const expected = previewDimensions(document.inspection, orientation);
         if (
-          preview.naturalWidth !== document.inspection.width ||
-          preview.naturalHeight !== document.inspection.height
+          preview.naturalWidth !== expected.width ||
+          preview.naturalHeight !== expected.height
         ) {
           previewError =
             "The encoded output dimensions differ from the source image.";
@@ -1722,7 +1750,7 @@ function App() {
     })();
 
     return () => controller.abort();
-  }, [document, jpegOperations]);
+  }, [document, jpegOperations, orientation]);
 
   useEffect(
     () => () => {
@@ -1964,14 +1992,14 @@ function App() {
     const bounds = previewImageWrap.current?.getBoundingClientRect();
     if (!bounds) return null;
     if (bounds.width <= 0 || bounds.height <= 0) return null;
-    return {
-      x:
-        ((event.clientX - bounds.left) / bounds.width) *
-        document.inspection.width,
-      y:
-        ((event.clientY - bounds.top) / bounds.height) *
-        document.inspection.height,
-    };
+    const dimensions = previewDimensions(document.inspection, orientation);
+    return previewPointToFrame(
+      ((event.clientX - bounds.left) / bounds.width) * dimensions.width,
+      ((event.clientY - bounds.top) / bounds.height) * dimensions.height,
+      document.inspection.width,
+      document.inspection.height,
+      orientation,
+    );
   }
 
   function isImagePointInside(point: ImagePoint): boolean {
@@ -2122,25 +2150,20 @@ function App() {
       event.key === "ArrowDown"
     ) {
       event.preventDefault();
+      const direction = previewPointToFrame(
+        event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0,
+        event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0,
+        0,
+        0,
+        orientation,
+      );
       const blockX = Math.max(
         0,
-        Math.min(
-          grid.columns - 1,
-          cursor.blockX +
-            (event.key === "ArrowLeft"
-              ? -1
-              : event.key === "ArrowRight"
-                ? 1
-                : 0),
-        ),
+        Math.min(grid.columns - 1, cursor.blockX + direction.x),
       );
       const blockY = Math.max(
         0,
-        Math.min(
-          grid.rows - 1,
-          cursor.blockY +
-            (event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0),
-        ),
+        Math.min(grid.rows - 1, cursor.blockY + direction.y),
       );
       const moved = mapJpegBlockCoordinate(
         document.inspection,
@@ -3195,9 +3218,10 @@ function App() {
         URL.revokeObjectURL(previewUrl);
         return;
       }
+      const expected = previewDimensions(document.inspection, orientation);
       if (
-        preview.naturalWidth !== document.inspection.width ||
-        preview.naturalHeight !== document.inspection.height
+        preview.naturalWidth !== expected.width ||
+        preview.naturalHeight !== expected.height
       ) {
         URL.revokeObjectURL(previewUrl);
         setErrorMessage(
@@ -3315,10 +3339,14 @@ function App() {
         const preview = new Image();
         preview.src = previewUrl;
         await preview.decode();
+        const expected = document
+          ? previewDimensions(document.inspection, orientation)
+          : null;
         if (
           document &&
-          (preview.naturalWidth !== document.inspection.width ||
-            preview.naturalHeight !== document.inspection.height)
+          expected &&
+          (preview.naturalWidth !== expected.width ||
+            preview.naturalHeight !== expected.height)
         ) {
           previewError =
             "The corrupted JPEG preview dimensions differ from the source image.";
@@ -3354,7 +3382,7 @@ function App() {
           (history?.canRedo ?? false) || scanCorruptionHistory.current.canRedo,
       });
     },
-    [document],
+    [document, orientation],
   );
 
   const replayScanStages = useCallback(
@@ -4400,6 +4428,7 @@ function App() {
                     )}
                     <ImageOverlays
                       inspection={document.inspection}
+                      orientation={orientation}
                       showBlocks={showBlocks}
                       showMcus={showMcus}
                       selection={visibleSelection}

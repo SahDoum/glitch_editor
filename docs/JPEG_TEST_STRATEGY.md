@@ -136,6 +136,11 @@ are 50 MiB per JPEG file, 40 megapixels per frame, and 10,000 marker entries.
 Parser tests cover the pixel and marker limits; import tests verify oversized
 files are rejected before reading.
 
+Orientation tests synthesize EXIF in both TIFF byte orders, cover all eight
+orientations and their overlay/pointer coordinate transforms, reject malformed
+or ambiguous EXIF, and check preservation by baseline and progressive
+coefficient encoding. The original source bytes are not normalized or rotated.
+
 The libjpeg-turbo coefficient bridge accepts 8-bit baseline sequential
 Huffman JPEGs with one interleaved scan and 8-bit progressive Huffman JPEGs,
 with one or three components. Progressive files that libjpeg had to repair are
