@@ -1,7 +1,8 @@
 import { failure, success, type Result } from "../shared/result";
 
 const MAX_IMAGE_PIXELS = 40_000_000;
-const MAX_MARKER_COUNT = 10_000;
+const MAX_SEGMENT_MARKER_COUNT = 10_000;
+const MAX_RESTART_MARKER_COUNT = 250_000;
 
 export interface JpegComponent {
   id: number;
@@ -486,13 +487,15 @@ export function inspectJpeg(bytes: Uint8Array): Result<JpegInspection> {
   let frame: Frame | null = null;
   let progressive = false;
   let restartInterval = 0;
+  let segmentMarkerCount = 1;
+  let restartMarkerCount = 0;
   let offset = 2;
   let sawEnd = false;
 
   while (offset < bytes.byteLength) {
-    if (markers.length >= MAX_MARKER_COUNT) {
+    if (segmentMarkerCount >= MAX_SEGMENT_MARKER_COUNT) {
       return unsupported(
-        "JPEG files with more than 10,000 markers are not supported.",
+        "JPEG files with more than 10,000 non-restart markers are not supported.",
       );
     }
     const markerStart = offset;
@@ -515,6 +518,7 @@ export function inspectJpeg(bytes: Uint8Array): Result<JpegInspection> {
     }
     offset += 1;
     const name = markerName(code);
+    segmentMarkerCount += 1;
 
     if (code === 0xd9) {
       markers.push({
@@ -656,9 +660,9 @@ export function inspectJpeg(bytes: Uint8Array): Result<JpegInspection> {
         continue;
       }
       if (scanCode >= 0xd0 && scanCode <= 0xd7) {
-        if (markers.length >= MAX_MARKER_COUNT) {
+        if (restartMarkerCount >= MAX_RESTART_MARKER_COUNT) {
           return unsupported(
-            "JPEG files with more than 10,000 markers are not supported.",
+            "JPEG files with more than 250,000 restart markers are not supported.",
           );
         }
         if (restartInterval === 0) {
@@ -677,6 +681,7 @@ export function inspectJpeg(bytes: Uint8Array): Result<JpegInspection> {
           segmentLength: null,
           kind: "restart",
         });
+        restartMarkerCount += 1;
         entropyRanges.push({
           startOffset: entropyRangeStartOffset,
           endOffset: restartStart,

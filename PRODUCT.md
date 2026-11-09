@@ -784,7 +784,8 @@ duplicated in browser storage.
 - Handle browser memory pressure and release temporary buffers.
 
 The Milestone 1 inspector accepts JPEG files up to 50 MiB, frame dimensions
-up to 40 megapixels, and at most 10,000 markers. The marker parser runs in a
+up to 40 megapixels, at most 10,000 non-restart markers, and at most 250,000
+restart markers. The marker parser runs in a
 cancellable Web Worker; oversized inputs are rejected before preview decoding.
 
 ## 12. Error handling and safety

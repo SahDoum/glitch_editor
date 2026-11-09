@@ -132,8 +132,9 @@ not entropy-decode or expose quantized DCT coefficients. The pixel preview is
 decoded separately by the browser and must not be used as evidence of
 coefficient correctness. Arithmetic-coded, non-8-bit, other SOF processes, and
 multiple-scan sequential files are unsupported and must fail visibly. The import limits
-are 50 MiB per JPEG file, 40 megapixels per frame, and 10,000 marker entries.
-Parser tests cover the pixel and marker limits; import tests verify oversized
+are 50 MiB per JPEG file, 40 megapixels per frame, 10,000 non-restart markers,
+and 250,000 restart markers. Parser tests cover the pixel and both marker limits,
+including large restart sequences; import tests verify oversized
 files are rejected before reading.
 
 Orientation tests synthesize EXIF in both TIFF byte orders, cover all eight

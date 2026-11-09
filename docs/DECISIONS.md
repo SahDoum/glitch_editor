@@ -18,6 +18,11 @@
 - **Consequences:** No codec or parser dependency is introduced. Progressive, arithmetic-coded, non-8-bit, multi-scan, and over-limit JPEGs are rejected with a user-facing diagnostic. A successful browser preview is not treated as coefficient access or proof that the JPEG structure is supported by this application.
 - **Alternatives considered:** Select and integrate a coefficient-capable codec during Milestone 1. This would conflict with the roadmap's codec evaluation gate and require a dependency/architecture decision before the evaluation work.
 
+The current marker limits supersede ADR-002's original combined limit:
+10,000 non-restart markers and 250,000 restart markers. Restart markers are
+retained along with their entropy-range boundaries, so legitimate short restart
+intervals do not exhaust the non-restart marker budget. Both limits bound memory.
+
 ## ADR-003: Milestone 2 coefficient-access prototype
 
 - **Status:** Accepted for prototype; not a production codec decision

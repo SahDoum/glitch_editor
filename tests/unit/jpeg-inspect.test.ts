@@ -407,33 +407,31 @@ describe("JPEG inspector", () => {
     });
   });
 
-    it("accepts exactly 10,000 non-restart markers and rejects the next", async () => {
-      const bytes = await fixtureBytes("synthetic-grayscale.jpg");
-      const parsed = inspectJpeg(bytes);
-      if (!parsed.ok) throw new Error(parsed.error.message);
-      const scanStart = parsed.value.markers.find(
-        (marker) => marker.name === "SOS",
-      )!.startOffset;
-      const additional = 10_000 - parsed.value.markers.length;
-      const comments = new Uint8Array((additional + 1) * 4);
-      for (let offset = 0; offset < comments.length; offset += 4) {
-        comments.set([0xff, 0xfe, 0x00, 0x02], offset);
-      }
-      expect(
-        inspectJpeg(
-          insertBytes(bytes, scanStart, comments.subarray(0, additional * 4)),
-        ).ok,
-      ).toBe(true);
-      expect(
-        inspectJpeg(insertBytes(bytes, scanStart, comments)),
-      ).toMatchObject({
-        ok: false,
-        error: {
-          code: "UNSUPPORTED_FORMAT",
-          message:
-            "JPEG files with more than 10,000 non-restart markers are not supported.",
-        },
-      });
+  it("accepts exactly 10,000 non-restart markers and rejects the next", async () => {
+    const bytes = await fixtureBytes("synthetic-grayscale.jpg");
+    const parsed = inspectJpeg(bytes);
+    if (!parsed.ok) throw new Error(parsed.error.message);
+    const scanStart = parsed.value.markers.find(
+      (marker) => marker.name === "SOS",
+    )!.startOffset;
+    const additional = 10_000 - parsed.value.markers.length;
+    const comments = new Uint8Array((additional + 1) * 4);
+    for (let offset = 0; offset < comments.length; offset += 4) {
+      comments.set([0xff, 0xfe, 0x00, 0x02], offset);
+    }
+    expect(
+      inspectJpeg(
+        insertBytes(bytes, scanStart, comments.subarray(0, additional * 4)),
+      ).ok,
+    ).toBe(true);
+    expect(inspectJpeg(insertBytes(bytes, scanStart, comments))).toMatchObject({
+      ok: false,
+      error: {
+        code: "UNSUPPORTED_FORMAT",
+        message:
+          "JPEG files with more than 10,000 non-restart markers are not supported.",
+      },
+    });
   });
 
   it("rejects a truncated scan as malformed without modifying source bytes", async () => {
