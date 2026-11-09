@@ -66,7 +66,6 @@ import {
   copySpatialMask,
   createRectangleSelection,
   createSpatialMask,
-  getMaskFromParameters,
   type SpatialMask,
   type SpatialSelection,
 } from "./document/masks";
@@ -104,7 +103,6 @@ import {
 } from "./application/coefficient-effect-settings";
 import {
   initialWorkspaceState,
-  getHistoryDisplayEntries,
   getWorkspaceOverlayVisibility,
   getWorkspaceShortcut,
   getCanvasToolShortcut,
@@ -143,6 +141,7 @@ import {
   type DctMatrixTarget,
 } from "./ui/dct-basis-matrix";
 import { ComponentPreview } from "./ui/component-preview";
+import { OperationHistoryPanel } from "./ui/operation-history";
 import {
   getJpegComponentLabels,
   getQuantizationTableLabel,
@@ -538,15 +537,6 @@ function ImageOverlays({
       </g>
     </svg>
   );
-}
-
-function describeMask(mask: SpatialMask): string {
-  const shape = mask.shapes[0];
-  if (!shape) return "Empty image-space mask";
-  if (shape.kind === "rectangle") {
-    return `Image-pixel rectangle · ${shape.width.toFixed(1)} × ${shape.height.toFixed(1)}`;
-  }
-  return `Image-pixel brush · radius ${shape.radius.toFixed(1)} px · ${shape.points.length} samples`;
 }
 
 function loadInitialEffectAutoApply(): {
@@ -3301,6 +3291,33 @@ function App() {
     dispatchWorkspace({ type: "set-selection", selection: null });
   }
 
+  function resetHistory() {
+    if (
+      !window.confirm(
+        "Reset all operations and clear the current mask? Undo can restore operations, but not the cleared mask.",
+      )
+    ) {
+      return;
+    }
+    scanCorruptionController.current?.abort();
+    scanCorruptionController.current = null;
+    scanCorruptionHistory.current.clear();
+    cleanEncodedBytes.current = null;
+    setScanCorruptionReports([]);
+    setScanDecodeDiagnostic(null);
+    setEditedBytes(null);
+    setEditedPreviewUrl(null);
+    setEditedPreviewError("");
+    setCleanEncodedPreviewUrl(null);
+    setCleanEncodedPreviewError("");
+    setIsEncoding(false);
+    setIsScanCorrupting(false);
+    setShowCleanEncoded(false);
+    const history = operationHistory.current;
+    if (history) updateHistory(history.resetToOriginal());
+    clearSelection();
+  }
+
   function restoreHistoryMask(mask: SpatialMask) {
     if (
       !document ||
@@ -5475,286 +5492,26 @@ function App() {
                   className="history-panel"
                   initiallyOpen={false}
                 >
-                  <section className="inspector-section operation-stack">
-                    <p className="operation-description">
-                      New operations appear at the top. Enabled operations
-                      replay from the bottom up; reordering recomputes later
-                      state.
-                    </p>
-                    {hasScanCorruption && (
-                      <p className="scan-terminal-notice" role="status">
-                        Entropy corruption is a terminal byte-domain phase. Undo
-                        every Scan Corrupt stage before changing coefficient or
-                        DQT operations.
-                      </p>
-                    )}
-                    {scanCorruptionReports.length > 0 && (
-                      <ol className="scan-corruption-history">
-                        {scanCorruptionReports.map((report, index) => (
-                          <li key={`${index}-${report.seed}`}>
-                            Scan Corrupt · {report.mode} · seed {report.seed} ·{" "}
-                            {report.changedBytes} bytes / {report.changedBits}{" "}
-                            bits
-                          </li>
-                        ))}
-                      </ol>
-                    )}
-                    {historyDocument?.operations.length ? (
-                      <ol className="operation-list">
-                        {getHistoryDisplayEntries(
-                          historyDocument.operations,
-                        ).map(({ operation, index }) => {
-                          const mask = getMaskFromParameters(
-                            operation.parameters,
-                          );
-                          const parameters =
-                            typeof operation.parameters === "object" &&
-                            operation.parameters !== null &&
-                            !Array.isArray(operation.parameters)
-                              ? operation.parameters
-                              : null;
-                          const operationKind = parameters
-                            ? Reflect.get(parameters, "kind")
-                            : undefined;
-                          const recipeSteps = parameters
-                            ? Reflect.get(parameters, "steps")
-                            : null;
-                          return (
-                            <li
-                              className="operation-entry"
-                              key={operation.id}
-                              data-enabled={operation.enabled}
-                            >
-                              <div className="operation-entry-heading">
-                                <label className="operation-enabled">
-                                  <input
-                                    type="checkbox"
-                                    checked={operation.enabled}
-                                    disabled={hasScanCorruption}
-                                    onChange={(event) =>
-                                      mutateHistory((history) =>
-                                        history.setEnabled(
-                                          operation.id,
-                                          event.currentTarget.checked,
-                                        ),
-                                      )
-                                    }
-                                  />
-                                  <span>
-                                    {operation.type === "spatial/apply-mask"
-                                      ? `Saved mask · ${Reflect.get(parameters ?? {}, "name")}`
-                                      : operation.type ===
-                                          "jpeg/glitch/coefficient-recipe"
-                                        ? `Recipe · ${Reflect.get(parameters ?? {}, "name")}`
-                                        : operationKind === "coefficients"
-                                          ? "Coefficient glitch"
-                                          : operationKind === "block-repeat"
-                                            ? "Block copy / repeat"
-                                            : operationKind ===
-                                                "block-permutation"
-                                              ? "Block shuffle"
-                                              : operationKind === "block-shift"
-                                                ? "Local block shift"
-                                                : operationKind ===
-                                                    "block-transfer"
-                                                  ? "Block region transfer"
-                                                  : operationKind ===
-                                                      "quantization"
-                                                    ? "DQT matrix edit"
-                                                    : operation.type}
-                                  </span>
-                                </label>
-                                <span className="operation-status">
-                                  {operation.status}
-                                </span>
-                              </div>
-                              {mask && (
-                                <p className="operation-parameters">
-                                  {describeMask(mask)}
-                                </p>
-                              )}
-                              {parameters &&
-                                operationKind === "coefficients" && (
-                                  <p className="operation-parameters">
-                                    Component{" "}
-                                    {Reflect.get(parameters, "componentIndex")}{" "}
-                                    · {Reflect.get(parameters, "mode")}{" "}
-                                    {Reflect.get(parameters, "domain")} ·{" "}
-                                    {Reflect.get(parameters, "frequencyBand")} ·{" "}
-                                    strength{" "}
-                                    {Reflect.get(parameters, "strength")} · seed{" "}
-                                    {Reflect.get(parameters, "seed")}
-                                  </p>
-                                )}
-                              {parameters &&
-                                operation.type ===
-                                  "jpeg/glitch/coefficient-recipe" &&
-                                Array.isArray(recipeSteps) && (
-                                  <p className="operation-parameters">
-                                    {recipeSteps.length} ordered coefficient
-                                    steps · mask snapshot {mask?.id.slice(0, 8)}
-                                  </p>
-                                )}
-                              {parameters &&
-                                operationKind === "block-repeat" && (
-                                  <p className="operation-parameters">
-                                    Component{" "}
-                                    {Reflect.get(parameters, "componentIndex")}{" "}
-                                    · source (
-                                    {Reflect.get(parameters, "sourceX")},{" "}
-                                    {Reflect.get(parameters, "sourceY")}) ·
-                                    offset ({Reflect.get(parameters, "offsetX")}
-                                    , {Reflect.get(parameters, "offsetY")}) ·{" "}
-                                    {Reflect.get(parameters, "repetitions")}{" "}
-                                    copies
-                                  </p>
-                                )}
-                              {parameters &&
-                                operationKind === "block-permutation" && (
-                                  <p className="operation-parameters">
-                                    Component{" "}
-                                    {Reflect.get(parameters, "componentIndex")}{" "}
-                                    · seed {Reflect.get(parameters, "seed")} ·
-                                    Fisher–Yates
-                                  </p>
-                                )}
-                              {parameters &&
-                                operationKind === "block-shift" && (
-                                  <p className="operation-parameters">
-                                    Component{" "}
-                                    {Reflect.get(parameters, "componentIndex")}{" "}
-                                    · offset (
-                                    {Reflect.get(parameters, "offsetX")},{" "}
-                                    {Reflect.get(parameters, "offsetY")}) blocks
-                                  </p>
-                                )}
-                              {parameters &&
-                                operationKind === "block-transfer" && (
-                                  <p className="operation-parameters">
-                                    Component{" "}
-                                    {Reflect.get(parameters, "componentIndex")}{" "}
-                                    · {Reflect.get(parameters, "action")}{" "}
-                                    {Reflect.get(parameters, "mode")} · source (
-                                    {Reflect.get(parameters, "sourceX")},{" "}
-                                    {Reflect.get(parameters, "sourceY")}) ·{" "}
-                                    {Reflect.get(parameters, "width")} ×{" "}
-                                    {Reflect.get(parameters, "height")} blocks ·
-                                    destination (
-                                    {Reflect.get(parameters, "destinationX")},{" "}
-                                    {Reflect.get(parameters, "destinationY")})
-                                  </p>
-                                )}
-                              {parameters &&
-                                operationKind === "quantization" && (
-                                  <p className="operation-parameters">
-                                    DQT {Reflect.get(parameters, "tableId")} ·{" "}
-                                    {Reflect.get(parameters, "semantics")} ·{" "}
-                                    {Reflect.get(parameters, "pattern")} · seed{" "}
-                                    {Reflect.get(parameters, "seed")}
-                                  </p>
-                                )}
-                              <div className="operation-actions">
-                                {mask && (
-                                  <button
-                                    className="operation-button secondary"
-                                    type="button"
-                                    disabled={hasScanCorruption}
-                                    title="Replace the current draft with a copy of this mask"
-                                    onClick={() => restoreHistoryMask(mask)}
-                                  >
-                                    Restore mask
-                                  </button>
-                                )}
-                                <button
-                                  className="operation-button secondary"
-                                  type="button"
-                                  disabled={
-                                    hasScanCorruption ||
-                                    index ===
-                                      historyDocument.operations.length - 1
-                                  }
-                                  aria-label="Move operation up"
-                                  onClick={() =>
-                                    mutateHistory((history) =>
-                                      history.move(operation.id, index + 1),
-                                    )
-                                  }
-                                >
-                                  ↑
-                                </button>
-                                <button
-                                  className="operation-button secondary"
-                                  type="button"
-                                  disabled={hasScanCorruption || index === 0}
-                                  aria-label="Move operation down"
-                                  onClick={() =>
-                                    mutateHistory((history) =>
-                                      history.move(operation.id, index - 1),
-                                    )
-                                  }
-                                >
-                                  ↓
-                                </button>
-                                <button
-                                  className="operation-button danger"
-                                  type="button"
-                                  disabled={hasScanCorruption}
-                                  aria-label="Delete operation"
-                                  onClick={() =>
-                                    mutateHistory((history) =>
-                                      history.delete(operation.id),
-                                    )
-                                  }
-                                >
-                                  Delete
-                                </button>
-                              </div>
-                            </li>
-                          );
-                        })}
-                      </ol>
-                    ) : (
-                      <p className="operation-empty">
-                        Apply an effect to start history.
-                      </p>
-                    )}
-                    <button
-                      className="operation-reset"
-                      type="button"
-                      disabled={
-                        !historyDocument?.operations.length &&
-                        !hasScanCorruption
-                      }
-                      onClick={() => {
-                        if (
-                          !window.confirm(
-                            "Reset all operations and clear the current mask? Undo can restore operations, but not the cleared mask.",
-                          )
-                        ) {
-                          return;
-                        }
-                        scanCorruptionController.current?.abort();
-                        scanCorruptionController.current = null;
-                        scanCorruptionHistory.current.clear();
-                        cleanEncodedBytes.current = null;
-                        setScanCorruptionReports([]);
-                        setScanDecodeDiagnostic(null);
-                        setEditedBytes(null);
-                        setEditedPreviewUrl(null);
-                        setEditedPreviewError("");
-                        setCleanEncodedPreviewUrl(null);
-                        setCleanEncodedPreviewError("");
-                        setIsEncoding(false);
-                        setIsScanCorrupting(false);
-                        setShowCleanEncoded(false);
-                        const history = operationHistory.current;
-                        if (history) updateHistory(history.resetToOriginal());
-                        clearSelection();
-                      }}
-                    >
-                      Reset to original
-                    </button>
-                  </section>
+                  <OperationHistoryPanel
+                    operations={historyDocument?.operations ?? []}
+                    scanCorruptionReports={scanCorruptionReports}
+                    hasScanCorruption={hasScanCorruption}
+                    onSetEnabled={(operationId, enabled) =>
+                      mutateHistory((history) =>
+                        history.setEnabled(operationId, enabled),
+                      )
+                    }
+                    onMove={(operationId, index) =>
+                      mutateHistory((history) =>
+                        history.move(operationId, index),
+                      )
+                    }
+                    onDelete={(operationId) =>
+                      mutateHistory((history) => history.delete(operationId))
+                    }
+                    onRestoreMask={restoreHistoryMask}
+                    onReset={resetHistory}
+                  />
                 </CollapsibleSection>
               </>
             ) : (
