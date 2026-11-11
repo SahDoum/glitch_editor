@@ -9,7 +9,6 @@ import { AcScaleEffect } from "../coefficient-glitch/effects/ac-scale.controller
 import { CoefficientRandomizeEffect } from "../coefficient-glitch/effects/coefficient-randomize.controller";
 import { DcOffsetEffect } from "../coefficient-glitch/effects/dc-offset.controller";
 import { EngravingEffect } from "../coefficient-glitch/effects/engraving.controller";
-import { EngravingVerticalEffect } from "../coefficient-glitch/effects/engraving-vertical.controller";
 import { PixelateEffect } from "../coefficient-glitch/effects/pixelate.controller";
 import { PosterizationEffect } from "../coefficient-glitch/effects/posterization.controller";
 import { RingingEffect } from "../coefficient-glitch/effects/ringing.controller";
@@ -57,7 +56,6 @@ export const EFFECT_REGISTRY: readonly RegisteredEffect[] = Object.freeze([
   defineEffect(PosterizationEffect),
   defineEffect(RingingEffect),
   defineEffect(EngravingEffect),
-  defineEffect(EngravingVerticalEffect),
   defineEffect(CoefficientRandomizeEffect),
   defineEffect(AcScaleEffect),
   defineEffect(DcOffsetEffect),

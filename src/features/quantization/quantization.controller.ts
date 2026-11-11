@@ -8,6 +8,7 @@ import {
 } from "../../operations/jpeg-glitch";
 import type { OperationHistory } from "../../operations/history";
 import type { JpegInspection } from "../../jpeg/inspect";
+import { quantizationOperation } from "../../jpeg/codec-controllers/operations";
 import type { ProjectDocument } from "../../document/model";
 import { failure, success, type Result } from "../../shared/result";
 import type {
@@ -22,13 +23,14 @@ import {
 export class QuantizationController implements JpegOperationController<QuantizationSettings> {
   declare readonly execute_corrupt?: never;
   readonly view = QuantizationView;
+  readonly operation = quantizationOperation;
 
   buildOperation({
     settings,
     inspection,
   }: EffectOperationContext<QuantizationSettings>): Result<QuantizationOperation> {
     const operation: QuantizationOperation = {
-      kind: "quantization",
+      kind: this.operation.kind,
       tableId: settings.tableId,
       values: settings.values,
       semantics: settings.semantics,
@@ -43,7 +45,7 @@ export class QuantizationController implements JpegOperationController<Quantizat
         });
   }
 
-  execute(
+  apply(
     history: OperationHistory<JpegEditableState>,
     rawParameters: unknown,
     inspection: JpegInspection,

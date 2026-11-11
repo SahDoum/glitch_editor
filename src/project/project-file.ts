@@ -10,9 +10,10 @@ import {
   type OperationStatus,
 } from "../operations/schema";
 import { failure, success, type Result } from "../shared/result";
+import { getOperationController } from "../jpeg/codec-controllers/registry";
 
 export const JGE_PROJECT_FORMAT = "jpeg-glitch-editor-project";
-export const JGE_PROJECT_SCHEMA_VERSION = 1;
+export const JGE_PROJECT_SCHEMA_VERSION = 2;
 export const MAX_PROJECT_SOURCE_BYTES = 50 * 1024 * 1024;
 export const MAX_PROJECT_FILE_BYTES =
   Math.ceil(MAX_PROJECT_SOURCE_BYTES / 3) * 4 + 1024 * 1024;
@@ -86,6 +87,20 @@ function isOperationRecord(value: unknown): value is OperationRecord {
     value.inputRevision < 0 ||
     !isOperationStatus(value.status) ||
     !isJsonValue(value.parameters)
+  ) {
+    return false;
+  }
+  const controller = getOperationController(value.type);
+  if (controller) {
+    if (
+      !isRecord(value.parameters) ||
+      value.parameters.kind !== controller.kind
+    ) {
+      return false;
+    }
+  } else if (
+    value.type !== "spatial/apply-mask" &&
+    value.type !== "jpeg/glitch/coefficient-recipe"
   ) {
     return false;
   }

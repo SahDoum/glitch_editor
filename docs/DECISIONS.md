@@ -188,7 +188,8 @@ intervals do not exhaust the non-restart marker budget. Both limits bound memory
   reopen the same editable operation stack. `PRODUCT.md` left embedded bytes
   versus relinking unresolved; a relink would make a project dependent on an
   external file.
-- **Decision:** Save a portable `.jpglitch` JSON file with schema version 1.
+- **Decision:** Save a portable `.jpglitch` JSON file (originally schema
+  version 1; superseded by version 2 in ADR-014).
   Embed the exact original JPEG bytes as Base64, plus the filename, byte
   length, SHA-256, application/codec versions, enabled operation records,
   draft mask, and terminal Scan Corrupt stages. Enforce the existing 50 MiB
@@ -205,7 +206,7 @@ intervals do not exhaust the non-restart marker budget. Both limits bound memory
   third. Project loading validates and decodes in a worker; project saving
   yields every 16 bounded Base64 chunks. Reopening re-encodes JPEG-domain
   operations, so exact output may differ across codec versions. No project
-  compatibility migration beyond schema version 1 is claimed. Projects use
+  compatibility migration from schema version 1 is provided. Projects use
   the `.jpglitch` filename extension.
 - **Validation:** Unit tests cover exact source-byte round-trip, operation
   stack restoration/replay, digest rejection, unsupported schemas, unsafe
@@ -227,5 +228,16 @@ intervals do not exhaust the non-restart marker budget. Both limits bound memory
 
 ## Effect registry, View/Controller split, and removal of Hand/Inspector/Info
 
-- **Decision:** All effects live in one registry (`effectId → { controller, view }`); the effect menu is a separate registry of IDs. Views own presentation (icon, text, panel, top bar, shortcuts, settings, History description); controllers own `buildOperation`/`execute` (JPEG-domain) or `execute_corrupt` (Scan Corrupt, no `execute`). Hand, Inspector, and Info were removed. Block Transfer/Repeat expose a top-bar "New source" action (R) and gesture controllers.
+- **Decision:** All effects live in one registry (`effectId → { controller, view }`); the effect menu is a separate registry of IDs. Views own presentation (icon, text, panel, top bar, shortcuts, settings, History description); controllers own `buildOperation`/`apply` (JPEG-domain) or `execute_corrupt` (Scan Corrupt, no `apply`). Hand, Inspector, and Info were removed. Block Transfer/Repeat expose a top-bar "New source" action (R) and gesture controllers.
 - **Consequences:** No effect-specific branching in `App`, `ui/`, or the workspace reducer. Persisted settings keep their keys (`storageKey` on the View). History does not record effect IDs, so identical operations from different effects show the family title. Writing effect IDs into operations would be a project-format change and is deferred to a separate decision.
+
+## ADR-014: Share operation controllers with the JPEG worker
+
+- **Decision:** Each ordinary effect references its JPEG operation controller.
+  History records the controller kind and parameters; the coefficient worker
+  receives operation data and resolves the kind in its own registry. Each
+  controller validates and bounds its work and calls the codec directly.
+  Scan Corrupt retains its separate byte worker and history.
+- **Compatibility:** Project schema version 2 rejects older project files;
+  no migration is provided. Original JPEG bytes and supported coding processes
+  are unchanged.

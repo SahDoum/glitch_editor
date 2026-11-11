@@ -77,15 +77,27 @@ behavior.
   its operations appear in History (`operation.describe`).
 - The **Controller** holds a pointer to its View and owns behavior only:
   `buildOperation` (the single source of Preview and Apply parameters) and
-  `execute`, which validates parameters and dispatches into the existing
+  `apply`, which validates parameters and dispatches into the existing
   document operations. Gesture effects add a `gestures` controller (pointer
   begin/move/end/cancel and an overlay description).
+- Each concrete JPEG effect controller names its `OperationController` and
+  constructs its own operation parameters. Coefficient effects share the
+  codec operation, not a View-selected mode: fixed modes and preset values
+  belong to the controller, while editable bands, strength, seed, component
+  and mask are mapped explicitly. Engraving accepts only its two directional
+  modes; Pixelate fixes its entire coefficient preset. Shared validation and
+  history machinery do not select an effect's behavior.
+- Transfer assembles its clipped source and destination DCT-block coordinates
+  in its own controller, shared by its gestures and `buildOperation`.
+  Quantization records the chosen DQT values and reinterpret/requantize
+  semantics explicitly. Scan Corrupt maps its byte-experiment parameters
+  separately and never enters the coefficient worker's operation registry.
 - `App` is generic: it looks up the active effect by ID and calls the View and
   Controller contracts. There are no per-effect conditionals, and nothing in
   `App`, `ui/`, or the workspace reducer names an effect.
 - Scan Corrupt is a different kind of controller. It implements
   `execute_corrupt` (clean encoded bytes plus typed stages in, corrupted bytes
-  and reports out) and has no `execute`. The type guards
+  and reports out) and has no `apply`. The type guards
   `isJpegOperationController` / `isScanCorruptionController` let each worker
   boundary accept only its own kind, so entropy-stream work can never enter
   coefficient history. Its history, workers, and original bytes stay separate.
@@ -202,7 +214,7 @@ Worker entry points and message protocol. CPU-heavy work must not block pointer 
 
 Project serialization, schema migration, local persistence, and asset packaging.
 
-The current `.jpglitch` version 1 format is JSON with an embedded Base64 copy
+The current `.jpglitch` version 2 format is JSON with an embedded Base64 copy
 of the immutable original JPEG, its SHA-256 digest and byte length, versioned
 operation records, the current draft mask, and terminal Scan Corrupt
 parameters. Project input is size-bounded and parsed, decoded, and integrity
@@ -269,14 +281,13 @@ supports only the process subset below and bounds coefficient storage to
 selected codec path for the current editing slice; it is
 not a claim of broad JPEG process support.
 
-Before encoding, the JPEG facade compiles persisted operations into typed,
-structured-cloneable codec commands. A command strategy maps any image-pixel
-mask to its component's DCT-block mask and owns the corresponding WASM call,
-including temporary-memory allocation and cleanup. The worker validates the
-command list and runs it in order; it does not branch on persisted operation
-kinds. Commands contain data only: JavaScript handlers cannot cross the
-`postMessage` boundary, so the worker uses the same imported strategy table
-to dispatch each command locally.
+Before encoding, the JPEG facade sends typed, structured-cloneable operations
+to the coefficient worker. Each effect references its operation controller;
+the controller's `kind` identifies the recorded operation and the worker
+registry entry. The worker validates operations and work limits, then resolves
+each `kind` to that controller in order. The controller maps image-pixel masks
+to component DCT-block masks and owns the WASM call and temporary-memory
+cleanup. Functions and controller instances do not cross `postMessage`.
 
 The Scan Corrupt worker reuses the pinned codec to decode the corrupted output
 one scanline at a time. It reports rows returned, decoder warnings, and
@@ -482,7 +493,14 @@ and raw-byte operations remain separately identified.
 
 Use typed request/response messages with request IDs and document revisions. Transfer large `ArrayBuffer`s where ownership transfer is safe. Support cancellation or superseding of obsolete preview jobs. Worker failures must return structured errors, not leave the UI in a permanent loading state.
 
-Coefficient operations cross the worker boundary as structured-cloneable commands; executable functions and controller instances are never posted. The worker resolves each command kind through `jpeg/codec-controllers/registry.ts`; each controller owns command validation, work sizing, codec memory preparation, mask mapping, and its corresponding WASM call. Effect controllers extend a shared base and implement `handleOperation()`; the Worker-side registry independently dispatches validated codec commands.
+JPEG operations cross the worker boundary as structured-cloneable data;
+executable functions and controller instances are never posted. The worker
+resolves each operation kind through `jpeg/codec-controllers/registry.ts`.
+The shared operation controller owns validation, work sizing, codec memory
+preparation, mask mapping, and its corresponding WASM call. Effect controllers
+reference it directly and use `apply` to record operations in history.
+Project schema version 2 records the operation kind as its type; version 1
+projects are rejected rather than migrated.
 
 ## 8. Suggested source layout
 

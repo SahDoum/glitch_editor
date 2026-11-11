@@ -23,6 +23,38 @@ interface CodecModule {
     strength: number,
     seed: number,
   ): number;
+  _coefficient_repeat_block(
+    component: number,
+    x: number,
+    y: number,
+    offsetX: number,
+    offsetY: number,
+    repetitions: number,
+  ): number;
+  _coefficient_permute_blocks(
+    component: number,
+    mask: number,
+    maskSize: number,
+    seed: number,
+  ): number;
+  _coefficient_shift_blocks(
+    component: number,
+    mask: number,
+    maskSize: number,
+    offsetX: number,
+    offsetY: number,
+  ): number;
+  _coefficient_transfer_blocks(
+    component: number,
+    sourceX: number,
+    sourceY: number,
+    width: number,
+    height: number,
+    destinationX: number,
+    destinationY: number,
+    mode: number,
+    action: number,
+  ): number;
   _coefficient_set_quantization(
     tableId: number,
     semantics: number,

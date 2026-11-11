@@ -1,5 +1,10 @@
 import { applyBlockTransferOperation } from "../../../application/jpeg-document";
-import { clipJpegBlockRegionToGrid } from "../../../jpeg/block-geometry";
+import { blockTransferOperation } from "../../../jpeg/codec-controllers/operations";
+import {
+  clipJpegBlockRegionToGrid,
+  getJpegComponentBlockGrid,
+} from "../../../jpeg/block-geometry";
+import type { JpegInspection } from "../../../jpeg/inspect";
 import {
   isBlockTransferParameters,
   MAX_BLOCK_TRANSFER_BLOCKS,
@@ -18,8 +23,8 @@ import { BlockEffectController } from "../block-effect-controller";
 import {
   getBlockRegionFromDrag,
   getBlockRegionSelection,
-  getBlockTransferOperation,
   getComponentBlockPoint,
+  type BlockPoint,
 } from "../block-geometry-helpers";
 import {
   BlockTransferView,
@@ -28,6 +33,38 @@ import {
 
 type Context = GestureContext<BlockTransferSettings>;
 type Outcome = GestureOutcome<BlockTransferSettings>;
+
+/** Copy clips to the destination grid; swap keeps the exact region size. */
+function getBlockTransferOperation(
+  inspection: JpegInspection,
+  componentIndex: number,
+  settings: BlockTransferSettings,
+  destination: BlockPoint,
+): BlockTransferOperation | null {
+  const component = inspection.components[componentIndex];
+  const source = settings.source;
+  if (!component || !source) return null;
+  let { width, height } = source;
+  if (settings.action === "copy") {
+    const grid = getJpegComponentBlockGrid(inspection, component.id);
+    if (!grid) return null;
+    width = Math.min(width, grid.columns - destination.x);
+    height = Math.min(height, grid.rows - destination.y);
+  }
+  if (width <= 0 || height <= 0) return null;
+  return {
+    kind: blockTransferOperation.kind,
+    componentIndex,
+    sourceX: source.x,
+    sourceY: source.y,
+    width,
+    height,
+    destinationX: destination.x,
+    destinationY: destination.y,
+    mode: settings.mode,
+    action: settings.action,
+  };
+}
 
 function sourceGesture(start: {
   x: number;
@@ -193,6 +230,7 @@ export class BlockTransferController extends BlockEffectController<
   constructor() {
     super(
       BlockTransferView,
+      blockTransferOperation,
       isBlockTransferParameters,
       applyBlockTransferOperation,
       "The block transfer must use equal-size, in-bounds regions in one component.",

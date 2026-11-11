@@ -1,4 +1,5 @@
 import { applyBlockRepeatOperation } from "../../../application/jpeg-document";
+import { blockRepeatOperation } from "../../../jpeg/codec-controllers/operations";
 import { mapJpegBlockDragToDestination } from "../../../jpeg/block-geometry";
 import {
   isBlockRepeatParameters,
@@ -162,6 +163,7 @@ export class BlockRepeatController extends BlockEffectController<
   constructor() {
     super(
       BlockRepeatView,
+      blockRepeatOperation,
       isBlockRepeatParameters,
       applyBlockRepeatOperation,
       "The block repeat parameters, component, source, or repetition count are invalid.",
@@ -182,7 +184,7 @@ export class BlockRepeatController extends BlockEffectController<
       });
     }
     const operation: BlockRepeatOperation = {
-      kind: "block-repeat",
+      kind: this.operation.kind,
       componentIndex,
       sourceX: source.x,
       sourceY: source.y,

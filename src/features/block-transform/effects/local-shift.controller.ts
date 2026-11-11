@@ -1,4 +1,5 @@
 import { applyBlockShiftOperation } from "../../../application/jpeg-document";
+import { blockShiftOperation } from "../../../jpeg/codec-controllers/operations";
 import {
   isBlockShiftParameters,
   type BlockShiftOperation,
@@ -15,6 +16,7 @@ export class LocalShiftController extends BlockEffectController<
   constructor() {
     super(
       LocalShiftView,
+      blockShiftOperation,
       isBlockShiftParameters,
       applyBlockShiftOperation,
       "The block shift parameters, component, or mask are invalid.",
@@ -34,7 +36,7 @@ export class LocalShiftController extends BlockEffectController<
       });
     }
     const operation: BlockShiftOperation = {
-      kind: "block-shift",
+      kind: this.operation.kind,
       componentIndex,
       mask,
       offsetX: settings.x,

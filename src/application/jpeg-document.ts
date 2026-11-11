@@ -38,6 +38,14 @@ import {
   type QuantizationOperation,
 } from "../operations/jpeg-glitch";
 import type { ProjectDocument } from "../document/model";
+import {
+  blockPermutationOperation,
+  blockRepeatOperation,
+  blockShiftOperation,
+  blockTransferOperation,
+  coefficientOperation,
+  quantizationOperation,
+} from "../jpeg/codec-controllers/operations";
 
 export interface JpegEditableState {
   readonly masks: readonly NamedSpatialMask[];
@@ -95,7 +103,7 @@ function isApplyCoefficientRecipeParameters(
       if (!isCoefficientRecipeStep(step)) return false;
       return isCoefficientGlitchParameters(
         {
-          kind: "coefficients",
+          kind: coefficientOperation.kind,
           mask,
           componentIndex,
           ...step,
@@ -138,6 +146,12 @@ function registerGlitchOperation(
       }
       const operation = convert(parameters);
       if (!operation.ok) return operation;
+      if (state.jpegOperations.length >= MAX_GLITCH_OPERATIONS) {
+        return failure({
+          code: "INVALID_INPUT",
+          message: `A document supports at most ${MAX_GLITCH_OPERATIONS} JPEG glitch operations.`,
+        });
+      }
       return success(appendOperation(state, operation.value));
     },
   };
@@ -188,7 +202,7 @@ export function createJpegDocumentSession(
   const operations: Result<undefined>[] = [
     registerGlitchOperation(
       registry,
-      "jpeg/glitch/coefficients",
+      coefficientOperation.kind,
       "jpeg-coefficients",
       (value) => isCoefficientGlitchParameters(value, imported.inspection),
       (parameters) =>
@@ -201,7 +215,7 @@ export function createJpegDocumentSession(
     ),
     registerGlitchOperation(
       registry,
-      "jpeg/glitch/block-repeat",
+      blockRepeatOperation.kind,
       "jpeg-coefficients",
       (value) => isBlockRepeatParameters(value, imported.inspection),
       (parameters) =>
@@ -214,7 +228,7 @@ export function createJpegDocumentSession(
     ),
     registerGlitchOperation(
       registry,
-      "jpeg/glitch/block-permutation",
+      blockPermutationOperation.kind,
       "jpeg-coefficients",
       (value) => isBlockPermutationParameters(value, imported.inspection),
       (parameters) =>
@@ -227,7 +241,7 @@ export function createJpegDocumentSession(
     ),
     registerGlitchOperation(
       registry,
-      "jpeg/glitch/block-shift",
+      blockShiftOperation.kind,
       "jpeg-coefficients",
       (value) => isBlockShiftParameters(value, imported.inspection),
       (parameters) =>
@@ -240,7 +254,7 @@ export function createJpegDocumentSession(
     ),
     registerGlitchOperation(
       registry,
-      "jpeg/glitch/block-transfer",
+      blockTransferOperation.kind,
       "jpeg-coefficients",
       (value) => isBlockTransferParameters(value, imported.inspection),
       (parameters) =>
@@ -253,7 +267,7 @@ export function createJpegDocumentSession(
     ),
     registerGlitchOperation(
       registry,
-      "jpeg/glitch/quantization",
+      quantizationOperation.kind,
       "jpeg-structure",
       (value) => isQuantizationParameters(value, imported.inspection),
       (parameters) =>
@@ -311,7 +325,7 @@ export function createJpegDocumentSession(
             });
           }
           recipeOperations.push({
-            kind: "coefficients",
+            kind: coefficientOperation.kind,
             mask,
             componentIndex: parameters.componentIndex,
             domain: step.domain,
@@ -464,7 +478,7 @@ export function applyCoefficientGlitchOperation(
     });
   }
   return history.add(
-    "jpeg/glitch/coefficients",
+    input.kind,
     1,
     {
       kind: input.kind,
@@ -496,7 +510,7 @@ export function applyBlockRepeatOperation(
         "The block repeat is outside the selected component. Check the source, direction, distance, and repeat count.",
     });
   }
-  return history.add("jpeg/glitch/block-repeat", 1, {
+  return history.add(input.kind, 1, {
     kind: input.kind,
     componentIndex: input.componentIndex,
     sourceX: input.sourceX,
@@ -527,7 +541,7 @@ export function applyBlockPermutationOperation(
     });
   }
   return history.add(
-    "jpeg/glitch/block-permutation",
+    input.kind,
     1,
     {
       kind: input.kind,
@@ -552,7 +566,7 @@ export function applyBlockTransferOperation(
         "The block transfer must use equal-size, in-bounds regions in one component.",
     });
   }
-  return history.add("jpeg/glitch/block-transfer", 1, { ...input });
+  return history.add(input.kind, 1, { ...input });
 }
 
 export function applyBlockShiftOperation(
@@ -569,7 +583,7 @@ export function applyBlockShiftOperation(
     });
   }
   return history.add(
-    "jpeg/glitch/block-shift",
+    input.kind,
     1,
     {
       kind: input.kind,
@@ -595,7 +609,7 @@ export function applyQuantizationOperation(
         "The quantization edit must select an existing table and contain 64 integer values from 1 to 255.",
     });
   }
-  return history.add("jpeg/glitch/quantization", 1, {
+  return history.add(input.kind, 1, {
     ...input,
     values: [...input.values],
   });

@@ -1501,7 +1501,7 @@ function App() {
     if (!isJpegOperationController(controller)) return false;
     const operation = buildActiveOperation(patch, mask);
     if (!operation) return false;
-    const result = controller.execute(
+    const result = controller.apply(
       history,
       operation,
       history.snapshot.inspection,

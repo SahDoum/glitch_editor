@@ -10,6 +10,7 @@ import {
 } from "../../operations/jpeg-glitch";
 import type { OperationHistory } from "../../operations/history";
 import type { JpegInspection } from "../../jpeg/inspect";
+import type { OperationController } from "../../jpeg/codec-controllers/controller";
 import type { ProjectDocument } from "../../document/model";
 import { failure, success, type Result } from "../../shared/result";
 import type {
@@ -29,37 +30,25 @@ export function normalizeCoefficientStep(
 
 export abstract class CoefficientEffectController implements JpegOperationController<CoefficientRecipeStep> {
   declare readonly execute_corrupt?: never;
+  abstract readonly operation: OperationController<"coefficients">;
+  protected abstract readonly acceptedModes: readonly CoefficientGlitchMode[];
 
   constructor(readonly view: EffectView<CoefficientRecipeStep>) {}
 
-  /** Each effect owns which recorded modes it can execute. */
-  protected acceptsMode(mode: CoefficientGlitchMode): boolean {
-    return mode === this.view.defaultSettings.mode;
-  }
+  abstract buildOperation(
+    context: EffectOperationContext<CoefficientRecipeStep>,
+  ): Result<CoefficientGlitchOperation>;
 
-  /** Effects with fixed behavior (for example Pixelate) override this. */
-  protected getStep(settings: CoefficientRecipeStep): CoefficientRecipeStep {
-    return normalizeCoefficientStep(settings);
-  }
-
-  buildOperation({
-    settings,
-    inspection,
-    componentIndex,
-    mask,
-  }: EffectOperationContext<CoefficientRecipeStep>): Result<CoefficientGlitchOperation> {
+  protected validateOperation(
+    operation: unknown,
+    { inspection, mask }: EffectOperationContext<CoefficientRecipeStep>,
+  ): Result<CoefficientGlitchOperation> {
     if (!mask) {
       return failure({
         code: "INVALID_INPUT",
         message: `Select an area before using ${this.view.label}.`,
       });
     }
-    const operation = {
-      kind: "coefficients",
-      mask,
-      componentIndex,
-      ...this.getStep(settings),
-    };
     if (!isCoefficientGlitchParameters(operation, inspection)) {
       return failure({
         code: "INVALID_INPUT",
@@ -69,7 +58,7 @@ export abstract class CoefficientEffectController implements JpegOperationContro
     return success(operation);
   }
 
-  execute(
+  apply(
     history: OperationHistory<JpegEditableState>,
     rawParameters: unknown,
     inspection: JpegInspection,
@@ -80,12 +69,19 @@ export abstract class CoefficientEffectController implements JpegOperationContro
         message: "The coefficient glitch parameters or mask are invalid.",
       });
     }
-    if (!this.acceptsMode(rawParameters.mode)) {
+    if (
+      !this.acceptedModes.includes(rawParameters.mode) ||
+      !this.acceptsOperation(rawParameters)
+    ) {
       return failure({
         code: "INVALID_INPUT",
         message: `The ${this.view.label} controller received parameters for a different coefficient effect.`,
       });
     }
     return applyCoefficientGlitchOperation(history, rawParameters);
+  }
+
+  protected acceptsOperation(operation: CoefficientGlitchOperation): boolean {
+    return operation.kind === this.operation.kind;
   }
 }

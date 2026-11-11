@@ -4,12 +4,14 @@ import {
   EFFECT_REGISTRY,
   findOperationPresentation,
   getEffect,
+  getJpegOperationEffect,
   getScanCorruptionEffect,
 } from "../../src/features/effects/registry";
 import {
   isJpegOperationController,
   isScanCorruptionController,
 } from "../../src/features/effects/types";
+import { getOperationController } from "../../src/jpeg/codec-controllers/registry";
 
 describe("effect registry", () => {
   it("pairs one controller with one view under a unique effect ID", () => {
@@ -77,12 +79,22 @@ describe("effect registry", () => {
     const controller = scan!.controller;
     expect(isScanCorruptionController(controller)).toBe(true);
     expect(isJpegOperationController(controller)).toBe(false);
-    expect("execute" in controller).toBe(false);
+    expect("apply" in controller).toBe(false);
     for (const { controller: other } of EFFECT_REGISTRY) {
       if (other === controller) continue;
       expect(isScanCorruptionController(other)).toBe(false);
+      expect(isJpegOperationController(other)).toBe(true);
+      expect(typeof other.apply).toBe("function");
+      expect("execute" in other).toBe(false);
       expect("execute_corrupt" in other).toBe(false);
+      if (!isJpegOperationController(other)) throw new Error("JPEG effect");
+      expect(getOperationController(other.operation.kind)).toBe(
+        other.operation,
+      );
     }
+    expect(getJpegOperationEffect("pixelate")!.controller.operation).toBe(
+      getJpegOperationEffect("zero")!.controller.operation,
+    );
   });
 
   it("describes recorded operations by exact view or family title", () => {

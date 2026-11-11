@@ -7,12 +7,12 @@ import type { ScanCorruptionController } from "../effects/types";
 import { ScanCorruptView, type ScanCorruptSettings } from "./scan-corrupt.view";
 
 /**
- * Byte-domain controller: it exposes `execute_corrupt` and no `execute`, so it
+ * Byte-domain controller: it exposes `execute_corrupt` and no `apply`, so it
  * can never be driven through the coefficient operation history.
  */
 export class ScanCorruptController implements ScanCorruptionController<ScanCorruptSettings> {
   readonly view = ScanCorruptView;
-  declare readonly execute?: never;
+  declare readonly apply?: never;
   declare readonly gestures?: never;
 
   toParameters(settings: ScanCorruptSettings): ScanCorruptionParameters {

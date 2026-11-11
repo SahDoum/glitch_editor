@@ -67,7 +67,7 @@ describe("project file persistence", () => {
     ).join("");
     const operation = {
       id: "operation-1",
-      type: "jpeg/glitch/coefficients",
+      type: "coefficients",
       version: 1,
       parameters: {
         kind: "coefficients",
@@ -102,6 +102,30 @@ describe("project file persistence", () => {
     expect(project.value.draftMask).toEqual(draftMask.value);
     expect(project.value.applicationVersion).toBe("0.1.0");
     expect(project.value.codecVersion).toBe("libjpeg-turbo 3.2.0");
+
+    const raw = JSON.parse(await serialized.value.text());
+    expect(
+      await readJgeProjectText(JSON.stringify({ ...raw, schemaVersion: 1 })),
+    ).toMatchObject({
+      ok: false,
+      error: { code: "UNSUPPORTED_FORMAT" },
+    });
+    expect(
+      await readJgeProjectText(
+        JSON.stringify({
+          ...raw,
+          operations: [{ ...operation, type: "jpeg/glitch/coefficients" }],
+        }),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "UNSUPPORTED_FORMAT" } });
+    expect(
+      await readJgeProjectText(
+        JSON.stringify({
+          ...raw,
+          operations: [{ ...operation, type: "block-shift" }],
+        }),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "UNSUPPORTED_FORMAT" } });
   });
 
   it("rejects a project whose embedded JPEG fails the integrity check", async () => {

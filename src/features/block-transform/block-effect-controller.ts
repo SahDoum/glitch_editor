@@ -2,6 +2,7 @@ import type { JpegEditableState } from "../../application/jpeg-document";
 import type { JpegGlitchOperation } from "../../operations/jpeg-glitch";
 import type { OperationHistory } from "../../operations/history";
 import type { JpegInspection } from "../../jpeg/inspect";
+import type { OperationController } from "../../jpeg/codec-controllers/controller";
 import type { ProjectDocument } from "../../document/model";
 import { failure, type Result } from "../../shared/result";
 import type {
@@ -20,6 +21,7 @@ export abstract class BlockEffectController<
 
   constructor(
     readonly view: EffectView<Settings>,
+    readonly operation: OperationController<Operation["kind"]>,
     private readonly isValid: (
       value: unknown,
       inspection: JpegInspection,
@@ -35,7 +37,7 @@ export abstract class BlockEffectController<
     context: EffectOperationContext<Settings>,
   ): Result<Operation>;
 
-  execute(
+  apply(
     history: OperationHistory<JpegEditableState>,
     rawParameters: unknown,
     inspection: JpegInspection,

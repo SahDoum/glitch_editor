@@ -1,65 +1,47 @@
-import type {
-  CodecCommandModule,
-  CodecOperationCommand,
-} from "../codec-command-dispatcher";
+import type createLibjpegCoefficients from "../codec/libjpeg-coefficients.js";
+import type { JpegGlitchOperation } from "../../operations/jpeg-glitch";
 import {
   getMaskBlockCoverage,
   getMaskBlockCoverageAtLeastHalf,
-  getJpegComponentBlockGrid,
   type JpegBlockGeometry,
 } from "../block-geometry";
-import { isSpatialMask, type SpatialMask } from "../../document/masks";
+import type { SpatialMask } from "../../document/masks";
 import { failure, success, type Result } from "../../shared/result";
 
-export abstract class CodecOperationController {
-  abstract readonly kind: CodecOperationCommand["kind"];
+type Codec = Awaited<ReturnType<typeof createLibjpegCoefficients>>;
+export type CodecCommandModule = Pick<
+  Codec,
+  | "HEAPU8"
+  | "_malloc"
+  | "_free"
+  | "_coefficient_apply"
+  | "_coefficient_repeat_block"
+  | "_coefficient_permute_blocks"
+  | "_coefficient_shift_blocks"
+  | "_coefficient_transfer_blocks"
+  | "_coefficient_set_quantization"
+>;
 
-  abstract isCodecCommand(
+export abstract class OperationController<
+  Kind extends JpegGlitchOperation["kind"] = JpegGlitchOperation["kind"],
+> {
+  abstract readonly kind: Kind;
+
+  abstract isOperation(
     value: unknown,
     geometry: JpegBlockGeometry,
-  ): value is CodecOperationCommand;
+  ): value is JpegGlitchOperation;
 
   abstract getWorkSize(
     geometry: JpegBlockGeometry,
-    command: CodecOperationCommand,
+    operation: JpegGlitchOperation,
   ): number;
 
-  abstract handleOperation(
+  abstract apply(
     codec: CodecCommandModule,
-    command: CodecOperationCommand,
+    operation: JpegGlitchOperation,
     geometry: JpegBlockGeometry,
   ): Result<number>;
-
-  protected isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-  }
-
-  protected isInteger(value: unknown): value is number {
-    return typeof value === "number" && Number.isSafeInteger(value);
-  }
-
-  protected getGrid(geometry: JpegBlockGeometry, componentIndex: unknown) {
-    if (
-      !this.isInteger(componentIndex) ||
-      componentIndex < 0 ||
-      componentIndex >= geometry.components.length
-    ) {
-      return null;
-    }
-    const component = geometry.components[componentIndex];
-    return component ? getJpegComponentBlockGrid(geometry, component.id) : null;
-  }
-
-  protected isValidMask(
-    value: unknown,
-    geometry: JpegBlockGeometry,
-  ): value is SpatialMask {
-    return (
-      isSpatialMask(value) &&
-      value.width === geometry.width &&
-      value.height === geometry.height
-    );
-  }
 
   protected withWasmMemory(
     codec: CodecCommandModule,

@@ -15,6 +15,7 @@ import type { ProjectDocument } from "../../document/model";
 import type { SpatialMask, SpatialSelection } from "../../document/masks";
 import type { OperationHistory } from "../../operations/history";
 import type { JpegGlitchOperation } from "../../operations/jpeg-glitch";
+import type { OperationController } from "../../jpeg/codec-controllers/controller";
 import type { JsonValue } from "../../operations/schema";
 import type { Result } from "../../shared/result";
 
@@ -229,19 +230,20 @@ interface EffectControllerBase<Settings> {
 }
 
 /**
- * Coefficient, DQT and block effects. They only implement `execute`, so the
+ * Coefficient, DQT and block effects. They only implement `apply`, so the
  * coefficient worker and operation history never see byte-domain work.
  */
 export interface JpegOperationController<
   Settings,
 > extends EffectControllerBase<Settings> {
+  readonly operation: OperationController;
   readonly gestures?: EffectGestureController<Settings>;
   readonly execute_corrupt?: never;
   /** Single source of truth for Preview and Apply parameters. */
   buildOperation(
     context: EffectOperationContext<Settings>,
   ): Result<JpegGlitchOperation>;
-  execute(
+  apply(
     history: OperationHistory<JpegEditableState>,
     rawParameters: unknown,
     inspection: JpegInspection,
@@ -250,12 +252,12 @@ export interface JpegOperationController<
 
 /**
  * Scan Corrupt edits encoded bytes with its own history and worker. It
- * implements `execute_corrupt` and deliberately has no `execute`.
+ * implements `execute_corrupt` and deliberately has no `apply`.
  */
 export interface ScanCorruptionController<
   Settings,
 > extends EffectControllerBase<Settings> {
-  readonly execute?: never;
+  readonly apply?: never;
   readonly gestures?: never;
   toParameters(settings: Settings): ScanCorruptionParameters;
   settingsFromReport(report: ScanCorruptionReport): Settings;
@@ -272,7 +274,7 @@ export type EffectController<Settings> =
 export function isJpegOperationController<Settings>(
   controller: EffectController<Settings>,
 ): controller is JpegOperationController<Settings> {
-  return "execute" in controller && typeof controller.execute === "function";
+  return "apply" in controller && typeof controller.apply === "function";
 }
 
 export function isScanCorruptionController<Settings>(

@@ -317,7 +317,7 @@ describe("JPEG document operation session", () => {
             },
           ],
         },
-        operations: [{ type: "jpeg/glitch/coefficients", status: "applied" }],
+        operations: [{ type: "coefficients", status: "applied" }],
       },
     });
 
@@ -411,7 +411,7 @@ describe("JPEG document operation session", () => {
         operations: [
           { type: "spatial/apply-mask", status: "applied" },
           {
-            type: "jpeg/glitch/coefficients",
+            type: "coefficients",
             status: "applied",
             seed: 137,
           },
@@ -511,9 +511,7 @@ describe("JPEG document operation session", () => {
             },
           ],
         },
-        operations: [
-          { type: "jpeg/glitch/block-permutation", status: "applied" },
-        ],
+        operations: [{ type: "block-permutation", status: "applied" }],
       },
     });
 
@@ -580,7 +578,7 @@ describe("JPEG document operation session", () => {
             },
           ],
         },
-        operations: [{ type: "jpeg/glitch/block-transfer", status: "applied" }],
+        operations: [{ type: "block-transfer", status: "applied" }],
       },
     });
     expect(history.undo()).toMatchObject({
@@ -711,9 +709,9 @@ describe("JPEG document operation session", () => {
     const before = history.snapshot;
     expect(before.operations.map((operation) => operation.type)).toEqual([
       "spatial/apply-mask",
-      "jpeg/glitch/coefficients",
+      "coefficients",
       "jpeg/glitch/coefficient-recipe",
-      "jpeg/glitch/block-permutation",
+      "block-permutation",
     ]);
     expect(before.operations[3]!.enabled).toBe(false);
     for (const operation of before.operations) {

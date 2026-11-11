@@ -1,5 +1,8 @@
 import { failure, success, type Result } from "../shared/result";
-import { compileCodecCommands } from "../jpeg/codec-command-dispatcher";
+import {
+  isJpegBlockGeometry,
+  isOperationList,
+} from "../jpeg/codec-controllers/registry";
 import type {
   CoefficientWorkerResponse,
   CoefficientWorkerValue,
@@ -51,8 +54,16 @@ export async function encodeJpegCoefficients(
     });
   }
 
-  const compiledCommands = compileCodecCommands(operations, geometry);
-  if (!compiledCommands.ok) return compiledCommands;
+  if (
+    !isJpegBlockGeometry(geometry) ||
+    !isOperationList(operations, geometry)
+  ) {
+    return failure({
+      code: "INVALID_INPUT",
+      message:
+        "The JPEG operations or geometry are invalid or exceed the processing limit.",
+    });
+  }
 
   let worker: Worker;
   try {
@@ -138,7 +149,7 @@ export async function encodeJpegCoefficients(
           id: 0,
           bytes: inputBuffer,
           geometry,
-          commands: compiledCommands.value,
+          operations,
           options,
         },
         [inputBuffer],

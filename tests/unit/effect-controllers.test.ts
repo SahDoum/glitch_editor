@@ -39,7 +39,7 @@ describe("effect controllers", () => {
     if (!history.ok || !mask.ok) throw new Error("fixture session");
 
     const coefficientController = jpegController("pixelate");
-    const coefficientResult = coefficientController.execute(
+    const coefficientResult = coefficientController.apply(
       history.value,
       {
         kind: "coefficients",
@@ -55,7 +55,7 @@ describe("effect controllers", () => {
     );
     expect(coefficientResult.ok).toBe(true);
 
-    const blockResult = jpegController("local-shift").execute(
+    const blockResult = jpegController("local-shift").apply(
       history.value,
       {
         kind: "block-shift",
@@ -70,7 +70,7 @@ describe("effect controllers", () => {
 
     const table = inspection.value.quantizationTables[0];
     if (!table) throw new Error("fixture table");
-    const quantizationResult = jpegController("quantization").execute(
+    const quantizationResult = jpegController("quantization").apply(
       history.value,
       {
         kind: "quantization",
@@ -118,10 +118,10 @@ describe("effect controllers", () => {
     if (!mask.ok) throw new Error("fixture mask");
     const pixelateController = jpegController("pixelate");
     expect(
-      pixelateController.execute(history.value, {}, inspection.value).ok,
+      pixelateController.apply(history.value, {}, inspection.value).ok,
     ).toBe(false);
     expect(
-      pixelateController.execute(
+      pixelateController.apply(
         history.value,
         {
           kind: "coefficients",
@@ -137,14 +137,14 @@ describe("effect controllers", () => {
       ).ok,
     ).toBe(false);
     expect(
-      jpegController("block-repeat").execute(
+      jpegController("block-repeat").apply(
         history.value,
         { kind: "unsupported" },
         inspection.value,
       ).ok,
     ).toBe(false);
     expect(
-      jpegController("block-transfer").execute(
+      jpegController("block-transfer").apply(
         history.value,
         {
           kind: "block-shift",
@@ -157,11 +157,8 @@ describe("effect controllers", () => {
       ).ok,
     ).toBe(false);
     expect(
-      jpegController("quantization").execute(
-        history.value,
-        {},
-        inspection.value,
-      ).ok,
+      jpegController("quantization").apply(history.value, {}, inspection.value)
+        .ok,
     ).toBe(false);
     expect(history.value.snapshot.currentState.jpegOperations).toHaveLength(0);
   });

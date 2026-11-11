@@ -1,6 +1,6 @@
 import { isSpatialMask, type SpatialMask } from "../document/masks";
 import { getJpegComponentBlockGrid } from "../jpeg/block-geometry";
-import type { JpegInspection } from "../jpeg/inspect";
+import type { JpegBlockGeometry } from "../jpeg/block-geometry";
 import { createSeededRandom } from "../shared/random";
 import { failure, success, type Result } from "../shared/result";
 
@@ -117,7 +117,7 @@ export function isGlitchFrequencyBand(
 
 export function isCoefficientGlitchParameters(
   value: unknown,
-  inspection: JpegInspection,
+  inspection: JpegBlockGeometry,
 ): value is CoefficientGlitchOperation {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
@@ -149,7 +149,10 @@ export function isCoefficientGlitchParameters(
     Reflect.get(value, "seed") >= 0 &&
     Reflect.get(value, "seed") <= 0xffff_ffff &&
     ((mode === "scale" && strength >= -8 && strength <= 8) ||
-      (mode === "randomize" && strength >= 1 && strength <= 2047) ||
+      (mode === "randomize" &&
+        Number.isInteger(strength) &&
+        strength >= 1 &&
+        strength <= 2047) ||
       (mode === "offset" &&
         domain === "dc" &&
         Number.isInteger(strength) &&
@@ -188,7 +191,7 @@ export function isCoefficientGlitchParameters(
 
 export function isBlockRepeatParameters(
   value: unknown,
-  inspection: JpegInspection,
+  inspection: JpegBlockGeometry,
 ): value is BlockRepeatOperation {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
@@ -246,7 +249,7 @@ export function isBlockRepeatParameters(
 
 export function isBlockPermutationParameters(
   value: unknown,
-  inspection: JpegInspection,
+  inspection: JpegBlockGeometry,
 ): value is BlockPermutationOperation {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
@@ -272,7 +275,7 @@ export function isBlockPermutationParameters(
 
 export function isBlockShiftParameters(
   value: unknown,
-  inspection: JpegInspection,
+  inspection: JpegBlockGeometry,
 ): value is BlockShiftOperation {
   if (typeof value !== "object" || value === null || Array.isArray(value))
     return false;
@@ -301,7 +304,7 @@ export function isBlockShiftParameters(
 
 export function isBlockTransferParameters(
   value: unknown,
-  inspection: JpegInspection,
+  inspection: JpegBlockGeometry,
 ): value is BlockTransferOperation {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
@@ -361,7 +364,9 @@ export function isBlockTransferParameters(
 
 export function isQuantizationParameters(
   value: unknown,
-  inspection: JpegInspection,
+  inspection: {
+    readonly quantizationTables: readonly { readonly id: number }[];
+  },
 ): value is QuantizationOperation {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
@@ -378,7 +383,7 @@ export function isQuantizationParameters(
     inspection.quantizationTables.some((table) => table.id === tableId) &&
     Array.isArray(values) &&
     values.length === 64 &&
-    values.every(
+    Array.from(values).every(
       (entry: unknown) =>
         typeof entry === "number" &&
         Number.isInteger(entry) &&

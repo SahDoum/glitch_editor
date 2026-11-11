@@ -1,17 +1,12 @@
 import type createLibjpegCoefficients from "./codec/libjpeg-coefficients.js";
-import {
-  isBoundedCodecWork,
-  isCodecCommandList,
-  isJpegBlockGeometry,
-} from "./codec-command-dispatcher";
-import { handleCodecOperation } from "./codec-controllers/registry";
-import { MAX_GLITCH_OPERATIONS } from "../operations/jpeg-glitch";
+import { getOperationController } from "./codec-controllers/registry";
 import { failure, success } from "../shared/result";
-import type {
-  CoefficientWorkerRequest,
-  CoefficientWorkerResponse,
+import {
+  isCoefficientWorkerRequest,
+  MAX_JPEG_BYTES,
+  type CoefficientWorkerRequest,
+  type CoefficientWorkerResponse,
 } from "./coefficient-worker-protocol";
-import { isJpegOutputMode } from "./encode-options";
 
 const CODEC_ERRORS: Record<number, string> = {
   [-1]: "libjpeg-turbo could not decode coefficient data from this JPEG.",
@@ -24,7 +19,6 @@ const CODEC_ERRORS: Record<number, string> = {
   [-8]: "The local block shift exceeds 262,144 destination blocks. Use a smaller mask.",
   [-9]: "There was not enough memory to prepare the JPEG codec command.",
 };
-const MAX_JPEG_BYTES = 50 * 1024 * 1024;
 // Bump when the generated codec changes so older cached WASM cannot be reused.
 const CODEC_VERSION = "progressive-1";
 
@@ -78,52 +72,6 @@ function getCodec() {
   return codecPromise;
 }
 
-function isRequest(value: unknown): value is CoefficientWorkerRequest {
-  if (typeof value !== "object" || value === null || !("id" in value)) {
-    return false;
-  }
-  if (typeof value.id !== "number" || !Number.isInteger(value.id)) return false;
-  if (!("type" in value)) return false;
-  if (value.type === "open") {
-    return (
-      "bytes" in value &&
-      value.bytes instanceof ArrayBuffer &&
-      value.bytes.byteLength > 0 &&
-      value.bytes.byteLength <= MAX_JPEG_BYTES
-    );
-  }
-  if (value.type === "read-block") {
-    return (
-      "componentIndex" in value &&
-      Number.isInteger(value.componentIndex) &&
-      "blockX" in value &&
-      Number.isInteger(value.blockX) &&
-      "blockY" in value &&
-      Number.isInteger(value.blockY)
-    );
-  }
-  if (value.type !== "encode") return false;
-
-  const geometry: unknown = Reflect.get(value, "geometry");
-  const commands: unknown = Reflect.get(value, "commands");
-  const bytes: unknown = Reflect.get(value, "bytes");
-  const options: unknown = Reflect.get(value, "options");
-  if (
-    typeof options !== "object" ||
-    options === null ||
-    !isJpegOutputMode(Reflect.get(options, "mode")) ||
-    !(bytes instanceof ArrayBuffer) ||
-    bytes.byteLength === 0 ||
-    bytes.byteLength > MAX_JPEG_BYTES ||
-    !isJpegBlockGeometry(geometry) ||
-    !isCodecCommandList(commands, geometry) ||
-    commands.length > MAX_GLITCH_OPERATIONS
-  ) {
-    return false;
-  }
-  return isBoundedCodecWork(geometry, commands);
-}
-
 async function handleEncodeRequest(
   request: Extract<CoefficientWorkerRequest, { type: "encode" }>,
 ): Promise<CoefficientWorkerResponse> {
@@ -157,8 +105,18 @@ async function handleEncodeRequest(
       };
     }
 
-    for (const command of request.commands) {
-      const execution = handleCodecOperation(codec, command, request.geometry);
+    for (const operation of request.operations) {
+      const controller = getOperationController(operation.kind);
+      if (!controller) {
+        return {
+          id: request.id,
+          result: failure({
+            code: "INVALID_INPUT",
+            message: "Unknown JPEG operation.",
+          }),
+        };
+      }
+      const execution = controller.apply(codec, operation, request.geometry);
       if (!execution.ok) {
         return { id: request.id, result: execution };
       }
@@ -322,7 +280,7 @@ async function handleRequest(
 }
 
 self.addEventListener("message", (event: MessageEvent<unknown>) => {
-  if (!isRequest(event.data)) {
+  if (!isCoefficientWorkerRequest(event.data)) {
     self.postMessage({
       id:
         typeof event.data === "object" &&

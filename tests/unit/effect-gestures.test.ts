@@ -1,6 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { getEffect } from "../../src/features/effects/registry";
+import {
+  getEffect,
+  getJpegOperationEffect,
+} from "../../src/features/effects/registry";
 import type {
   EffectGestureController,
   GestureContext,
@@ -33,6 +36,68 @@ function gestureEffect(id: string) {
 
 describe("block transfer and repeat gestures", () => {
   for (const id of ["block-transfer", "block-repeat"]) {
+    it(`${id}: component 1 gestures produce the corresponding block coordinates`, async () => {
+      const { inspection: info } = await inspection();
+      const { effect, gestures } = gestureEffect(id);
+      let settings: Loose = { ...effect.view.defaultSettings };
+      const context = (): GestureContext<Loose> => ({
+        settings,
+        inspection: info,
+        componentIndex: 1,
+      });
+      const source = gestures.begin(context(), { x: 1, y: 1 });
+      settings = { ...settings, ...source.outcome.patch };
+      settings = {
+        ...settings,
+        ...source.gesture?.end(context(), { x: 2, y: 2 }, true).patch,
+      };
+      expect(settings.source).toEqual({ x: 0, y: 0, width: 1, height: 1 });
+      const destination = gestures.begin(
+        context(),
+        id === "block-repeat" ? { x: 1, y: 1 } : { x: 9, y: 1 },
+      );
+      settings = { ...settings, ...destination.outcome.patch };
+      const end = destination.gesture?.end(context(), { x: 9, y: 1 }, true);
+      settings = { ...settings, ...end?.patch };
+      expect(settings.destination).toEqual({ x: 1, y: 0 });
+      if (id === "block-transfer") expect(end?.apply).toBe(true);
+      const built = getJpegOperationEffect(id)!.controller.buildOperation({
+        settings,
+        inspection: info,
+        componentIndex: 1,
+        mask: null,
+      });
+      expect(built.ok).toBe(true);
+      if (!built.ok) throw new Error(built.error.message);
+      expect(built.value).toMatchObject(
+        id === "block-repeat"
+          ? {
+              kind: "block-repeat",
+              componentIndex: 1,
+              sourceX: 0,
+              sourceY: 0,
+              offsetX: 1,
+              offsetY: 0,
+            }
+          : {
+              kind: "block-transfer",
+              componentIndex: 1,
+              sourceX: 0,
+              sourceY: 0,
+              destinationX: 1,
+              destinationY: 0,
+              width: 1,
+              height: 1,
+            },
+      );
+      const reset = effect.view
+        .getTopBarActions?.(settings)
+        .find((action) => action.id === "reset-source");
+      settings = { ...settings, ...reset?.patch };
+      expect(settings.source).toBeNull();
+      expect(settings.destination).toBeNull();
+    });
+
     it(`${id}: drag selects a source, a second drag applies, reset clears it`, async () => {
       const { inspection: info } = await inspection();
       const { effect, gestures } = gestureEffect(id);
@@ -109,7 +174,7 @@ describe("Scan Corrupt controller", () => {
   it("exposes execute_corrupt only and never mutates the clean bytes", async () => {
     const { bytes } = await inspection();
     const original = bytes.slice();
-    expect("execute" in ScanCorruptEffect).toBe(false);
+    expect("apply" in ScanCorruptEffect).toBe(false);
     expect(typeof ScanCorruptEffect.execute_corrupt).toBe("function");
     const parameters = ScanCorruptEffect.toParameters({
       mode: "bit-flip",

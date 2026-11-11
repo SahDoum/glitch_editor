@@ -1,4 +1,5 @@
 import { applyBlockPermutationOperation } from "../../../application/jpeg-document";
+import { blockPermutationOperation } from "../../../jpeg/codec-controllers/operations";
 import {
   isBlockPermutationParameters,
   type BlockPermutationOperation,
@@ -18,6 +19,7 @@ export class BlockShuffleController extends BlockEffectController<
   constructor() {
     super(
       BlockShuffleView,
+      blockPermutationOperation,
       isBlockPermutationParameters,
       applyBlockPermutationOperation,
       "The block permutation parameters, component, mask, or seed are invalid.",
@@ -37,7 +39,7 @@ export class BlockShuffleController extends BlockEffectController<
       });
     }
     const operation: BlockPermutationOperation = {
-      kind: "block-permutation",
+      kind: this.operation.kind,
       componentIndex,
       mask,
       seed: settings.seed,
