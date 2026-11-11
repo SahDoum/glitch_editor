@@ -4,6 +4,11 @@ import { describe, expect, it } from "vitest";
 import { ScanCorruptionHistory } from "../../src/application/scan-corruption";
 import { inspectJpeg } from "../../src/jpeg/inspect";
 import {
+  encodeOpened,
+  readCoefficients,
+  withOpenCodec,
+} from "../helpers/codec-harness";
+import {
   corruptEntropyScan,
   MAX_SCAN_CORRUPTION_BYTES,
   MAX_SCAN_CORRUPTION_STAGES,
@@ -43,6 +48,33 @@ const baseParameters: ScanCorruptionParameters = {
 };
 
 describe("entropy-coded scan corruption", () => {
+  it.each(["synthetic-color-420.jpg", "synthetic-color-420-progressive.jpg"])(
+    "corrupts a baseline encoding of %s without prior coefficient edits",
+    async (fileName) => {
+      const source = await fixtureBytes(fileName);
+      const original = source.slice();
+      const encoded = await withOpenCodec(source, (session) => ({
+        coefficients: readCoefficients(session),
+        bytes: encodeOpened(session, "baseline"),
+      }));
+      expect(encoded.status).toBe(0);
+      if (!encoded.value) throw new Error("Baseline encoding failed.");
+      const clean = encoded.value.bytes;
+      const inspection = expectInspected(clean);
+      expect(inspection.process).toBe("Baseline sequential DCT Huffman");
+      expect(inspection.scans).toHaveLength(1);
+      const reopened = await withOpenCodec(clean, readCoefficients);
+      expect(reopened.status).toBe(0);
+      expect(reopened.value).toEqual(encoded.value.coefficients);
+      const result = corruptEntropyScan(clean, [baseParameters]);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.bytes).not.toEqual(clean);
+      expect(result.value.reports[0]?.changedBytes).toBe(baseParameters.count);
+      expect(source).toEqual(original);
+    },
+  );
+
   it("rejects Progressive JPEG input with an explanatory error", async () => {
     const source = await fixtureBytes("synthetic-color-420-progressive.jpg");
     const before = source.slice();

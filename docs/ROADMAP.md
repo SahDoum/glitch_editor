@@ -117,7 +117,7 @@ Milestone 2.
   separate from the catalog.
 - [x] All supported coefficient modes are available through Effects; custom User
   brush selection and authoring are absent from the interface.
-- [x] A single canvas toolbar contains Hand, Brush, Select, Inspector, and
+- [x] A single canvas toolbar contains All, Brush, Select, effect actions, and
   contextual Brush/Select controls; mask tools are enabled only when relevant.
 - [x] History is collapsed at the bottom of the settings panel and expands into
   the same scroll flow beneath the active effect.

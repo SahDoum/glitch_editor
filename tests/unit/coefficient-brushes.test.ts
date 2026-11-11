@@ -1,17 +1,104 @@
 import { describe, expect, it } from "vitest";
 import {
-  BUILT_IN_COEFFICIENT_BRUSHES,
   COEFFICIENT_BRUSH_STORAGE_KEY,
   LEGACY_COEFFICIENT_BRUSH_STORAGE_KEY,
   BRUSH_AUTO_APPLY_STORAGE_KEY,
   DEFAULT_USER_BRUSH,
-  readCoefficientBrushes,
+  readCoefficientBrushes as readStoredBrushes,
   readBrushAutoApply,
-  saveCoefficientBrush,
-  updateCoefficientBrush,
+  saveCoefficientBrush as saveStoredBrush,
+  updateCoefficientBrush as updateStoredBrush,
   writeBrushAutoApply,
   type CoefficientBrush,
 } from "../../src/application/coefficient-brushes";
+import type { CoefficientRecipeStep } from "../../src/application/experiment-recipes";
+import { EFFECT_REGISTRY } from "../../src/features/effects/registry";
+
+const LEGACY_BRUSH_NAMES: Readonly<Record<string, string>> = {
+  pixelate: "Pixelate",
+  zero: "Zero",
+  "chroma-scale": "AC scale",
+  "coefficient-randomize": "Randomize coefficients",
+  "dc-offset": "DC offset",
+  "dc-steps": "Poster",
+  "ac-low-pass": "AC low-pass",
+  ringing: "Ringing",
+  engraving: "Engraving",
+  "engraving-vertical": "Engraving vertical",
+  "ac-invert": "Invert AC",
+  "ac-isolate": "Isolate AC band",
+};
+const LEGACY_BRUSH_ORDER = [
+  "pixelate",
+  "zero",
+  "ac-scale",
+  "coefficient-randomize",
+  "dc-offset",
+  "posterization",
+  "ac-low-pass",
+  "ringing",
+  "engraving",
+  "engraving-vertical",
+  "ac-invert",
+  "ac-isolate",
+];
+const REGISTERED_COEFFICIENT_TOOLS = EFFECT_REGISTRY.flatMap(({ view }) =>
+  view.operation?.kinds.includes("coefficients")
+    ? [
+        {
+          id: view.id,
+          name: LEGACY_BRUSH_NAMES[view.id] ?? view.label,
+          step: view.defaultSettings as CoefficientRecipeStep,
+        },
+      ]
+    : [],
+).sort(
+  (first, second) =>
+    LEGACY_BRUSH_ORDER.indexOf(first.id) -
+    LEGACY_BRUSH_ORDER.indexOf(second.id),
+);
+const REGISTERED_BRUSH_IDS = REGISTERED_COEFFICIENT_TOOLS.map(({ id }) => id);
+const REGISTERED_BRUSH_NAMES = REGISTERED_COEFFICIENT_TOOLS.map(
+  ({ name }) => name,
+);
+
+function readCoefficientBrushes(
+  storage: Parameters<typeof readStoredBrushes>[0],
+) {
+  return readStoredBrushes(
+    storage,
+    REGISTERED_BRUSH_IDS,
+    REGISTERED_BRUSH_NAMES,
+  );
+}
+
+function saveCoefficientBrush(
+  storage: Parameters<typeof saveStoredBrush>[0],
+  existing: readonly CoefficientBrush[],
+  brush: CoefficientBrush,
+) {
+  return saveStoredBrush(
+    storage,
+    existing,
+    brush,
+    REGISTERED_BRUSH_IDS,
+    REGISTERED_BRUSH_NAMES,
+  );
+}
+
+function updateCoefficientBrush(
+  storage: Parameters<typeof updateStoredBrush>[0],
+  existing: readonly CoefficientBrush[],
+  brush: CoefficientBrush,
+) {
+  return updateStoredBrush(
+    storage,
+    existing,
+    brush,
+    REGISTERED_BRUSH_IDS,
+    REGISTERED_BRUSH_NAMES,
+  );
+}
 
 function memoryStorage() {
   const values = new Map<string, string>();
@@ -23,10 +110,10 @@ function memoryStorage() {
 
 describe("coefficient brushes", () => {
   it("keeps Pixelate as fixed AC-all Zero while exposing Zero separately", () => {
-    const pixelate = BUILT_IN_COEFFICIENT_BRUSHES.find(
+    const pixelate = REGISTERED_COEFFICIENT_TOOLS.find(
       ({ id }) => id === "pixelate",
     );
-    const zero = BUILT_IN_COEFFICIENT_BRUSHES.find(({ id }) => id === "zero");
+    const zero = REGISTERED_COEFFICIENT_TOOLS.find(({ id }) => id === "zero");
 
     expect(pixelate?.step).toEqual({
       domain: "ac",
@@ -39,7 +126,7 @@ describe("coefficient brushes", () => {
   });
 
   it("defines component-independent built-in brush settings", () => {
-    expect(BUILT_IN_COEFFICIENT_BRUSHES).toEqual([
+    expect(REGISTERED_COEFFICIENT_TOOLS).toEqual([
       {
         id: "pixelate",
         name: "Pixelate",
@@ -63,8 +150,8 @@ describe("coefficient brushes", () => {
         },
       },
       {
-        id: "chroma-scale",
-        name: "AC scale",
+        id: "ac-scale",
+        name: "Coefficient Scale",
         step: {
           domain: "ac",
           mode: "scale",
@@ -96,8 +183,8 @@ describe("coefficient brushes", () => {
         },
       },
       {
-        id: "dc-steps",
-        name: "Poster",
+        id: "posterization",
+        name: "Posterization",
         step: {
           domain: "dc",
           mode: "dc-steps",
@@ -242,7 +329,7 @@ describe("coefficient brushes", () => {
           },
         },
         [],
-        { ...BUILT_IN_COEFFICIENT_BRUSHES[0]!, id: "custom", name: "Custom" },
+        { ...REGISTERED_COEFFICIENT_TOOLS[0]!, id: "custom", name: "Custom" },
       ).ok,
     ).toBe(false);
   });
@@ -260,11 +347,11 @@ describe("coefficient brushes", () => {
     expect(changed).toEqual({ ok: true, value: [renamed] });
     expect(readCoefficientBrushes(storage)).toEqual(changed);
     expect(
-      updateCoefficientBrush(
-        storage,
-        [renamed],
-        BUILT_IN_COEFFICIENT_BRUSHES[0]!,
-      ).ok,
+      updateCoefficientBrush(storage, [renamed], {
+        ...REGISTERED_COEFFICIENT_TOOLS[0]!,
+        id: "pixelate",
+        name: "Pixelate",
+      }).ok,
     ).toBe(false);
     expect(
       updateCoefficientBrush(storage, [renamed], {

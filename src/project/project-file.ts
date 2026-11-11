@@ -244,14 +244,7 @@ function isProjectPayload(value: unknown): value is {
   }
 
   const ids = value.operations.map((operation) => operation.id);
-  return (
-    new Set(ids).size === ids.length &&
-    (value.scanCorruptionStages.length === 0 ||
-      value.operations.some(
-        (operation) =>
-          operation.enabled && operation.type.startsWith("jpeg/glitch/"),
-      ))
-  );
+  return new Set(ids).size === ids.length;
 }
 
 export async function createJgeProjectFile(
@@ -270,11 +263,6 @@ export async function createJgeProjectFile(
     (data.draftMask !== null && !isSpatialMask(data.draftMask)) ||
     data.scanCorruptionStages.length > MAX_SCAN_CORRUPTION_STAGES ||
     !data.scanCorruptionStages.every(isScanCorruptionParameters) ||
-    (data.scanCorruptionStages.length > 0 &&
-      !data.operations.some(
-        (operation) =>
-          operation.enabled && operation.type.startsWith("jpeg/glitch/"),
-      )) ||
     typeof versions.application !== "string" ||
     versions.application.length === 0 ||
     versions.application.length > 64 ||

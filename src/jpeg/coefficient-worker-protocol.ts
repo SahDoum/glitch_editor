@@ -1,5 +1,5 @@
 import type { Result } from "../shared/result";
-import type { JpegGlitchOperation } from "../operations/jpeg-glitch";
+import type { CodecOperationCommand } from "./codec-command-dispatcher";
 import type { JpegBlockGeometry } from "./block-geometry";
 import type { EncodeOptions } from "./encode-options";
 
@@ -21,7 +21,7 @@ export type CoefficientWorkerRequest =
       type: "encode";
       bytes: ArrayBuffer;
       geometry: JpegBlockGeometry;
-      operations: readonly JpegGlitchOperation[];
+      commands: readonly CodecOperationCommand[];
       options: EncodeOptions;
     };
 

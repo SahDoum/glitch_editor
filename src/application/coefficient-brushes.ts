@@ -10,141 +10,6 @@ export interface CoefficientBrush {
   readonly step: CoefficientRecipeStep;
 }
 
-export const BUILT_IN_COEFFICIENT_BRUSHES: readonly CoefficientBrush[] = [
-  {
-    id: "pixelate",
-    name: "Pixelate",
-    step: {
-      domain: "ac",
-      mode: "zero",
-      frequencyBand: "all",
-      strength: 0,
-      seed: 1,
-    },
-  },
-  {
-    id: "zero",
-    name: "Zero",
-    step: {
-      domain: "ac",
-      mode: "zero",
-      frequencyBand: "all",
-      strength: 0,
-      seed: 1,
-    },
-  },
-  {
-    id: "chroma-scale",
-    name: "AC scale",
-    step: {
-      domain: "ac",
-      mode: "scale",
-      frequencyBand: "all",
-      strength: 2,
-      seed: 1,
-    },
-  },
-  {
-    id: "coefficient-randomize",
-    name: "Randomize coefficients",
-    step: {
-      domain: "ac",
-      mode: "randomize",
-      frequencyBand: "all",
-      strength: 32,
-      seed: 1,
-    },
-  },
-  {
-    id: "dc-offset",
-    name: "DC offset",
-    step: {
-      domain: "dc",
-      mode: "offset",
-      frequencyBand: "all",
-      strength: 32,
-      seed: 1,
-    },
-  },
-  {
-    id: "dc-steps",
-    name: "Poster",
-    step: {
-      domain: "dc",
-      mode: "dc-steps",
-      frequencyBand: "all",
-      strength: 32,
-      seed: 1,
-    },
-  },
-  {
-    id: "ac-low-pass",
-    name: "AC low-pass",
-    step: {
-      domain: "ac",
-      mode: "low-pass",
-      frequencyBand: "all",
-      strength: 4,
-      seed: 1,
-    },
-  },
-  {
-    id: "ringing",
-    name: "Ringing",
-    step: {
-      domain: "ac",
-      mode: "ringing-boost",
-      frequencyBand: "all",
-      strength: 4,
-      seed: 1,
-    },
-  },
-  {
-    id: "engraving",
-    name: "Engraving",
-    step: {
-      domain: "ac",
-      mode: "engrave-horizontal",
-      frequencyBand: "all",
-      strength: 4,
-      seed: 1,
-    },
-  },
-  {
-    id: "engraving-vertical",
-    name: "Engraving vertical",
-    step: {
-      domain: "ac",
-      mode: "engrave-vertical",
-      frequencyBand: "all",
-      strength: 4,
-      seed: 1,
-    },
-  },
-  {
-    id: "ac-invert",
-    name: "Invert AC",
-    step: {
-      domain: "ac",
-      mode: "invert",
-      frequencyBand: "all",
-      strength: 0,
-      seed: 1,
-    },
-  },
-  {
-    id: "ac-isolate",
-    name: "Isolate AC band",
-    step: {
-      domain: "ac",
-      mode: "isolate",
-      frequencyBand: "low",
-      strength: 0,
-      seed: 1,
-    },
-  },
-];
-
 export const COEFFICIENT_BRUSH_STORAGE_KEY = "jpeg-glitch-editor.brushes.v2";
 export const LEGACY_COEFFICIENT_BRUSH_STORAGE_KEY =
   "jpeg-glitch-editor.brushes.v1";
@@ -227,10 +92,11 @@ function parseBrushes(serialized: string): Result<unknown[]> {
   return success(parsed);
 }
 
-function validateBrushIds(brushes: readonly CoefficientBrush[]): Result<void> {
-  const ids = [...BUILT_IN_COEFFICIENT_BRUSHES, ...brushes].map(
-    (brush) => brush.id,
-  );
+function validateBrushIds(
+  brushes: readonly CoefficientBrush[],
+  reservedBrushIds: readonly string[],
+): Result<void> {
+  const ids = [...reservedBrushIds, ...brushes.map((brush) => brush.id)];
   return new Set(ids).size === ids.length
     ? success(undefined)
     : failure({
@@ -239,8 +105,26 @@ function validateBrushIds(brushes: readonly CoefficientBrush[]): Result<void> {
       });
 }
 
+function validateBrushNames(
+  brushes: readonly CoefficientBrush[],
+  reservedBrushNames: readonly string[],
+): Result<void> {
+  const names = [
+    ...reservedBrushNames.map((name) => name.trim().toLowerCase()),
+    ...brushes.map((brush) => brush.name.trim().toLowerCase()),
+  ];
+  return new Set(names).size === names.length
+    ? success(undefined)
+    : failure({
+        code: "INVALID_INPUT",
+        message: "Saved brushes contain duplicate names.",
+      });
+}
+
 export function readCoefficientBrushes(
   storage: Pick<Storage, "getItem" | "setItem">,
+  reservedBrushIds: readonly string[] = [],
+  reservedBrushNames: readonly string[] = [],
 ): Result<readonly CoefficientBrush[]> {
   let serialized: string | null;
   let isLegacy = false;
@@ -270,8 +154,10 @@ export function readCoefficientBrushes(
       name,
       step,
     }));
-    const ids = validateBrushIds(migrated);
+    const ids = validateBrushIds(migrated, reservedBrushIds);
     if (!ids.ok) return ids;
+    const names = validateBrushNames(migrated, reservedBrushNames);
+    if (!names.ok) return names;
     try {
       storage.setItem(COEFFICIENT_BRUSH_STORAGE_KEY, JSON.stringify(migrated));
     } catch {
@@ -287,27 +173,34 @@ export function readCoefficientBrushes(
       code: "INVALID_INPUT",
       message: "Saved brushes do not match the supported schema.",
     });
-  const ids = validateBrushIds(parsed.value);
-  return ids.ok ? success(parsed.value) : ids;
+  const ids = validateBrushIds(parsed.value, reservedBrushIds);
+  if (!ids.ok) return ids;
+  const names = validateBrushNames(parsed.value, reservedBrushNames);
+  return names.ok ? success(parsed.value) : names;
 }
 
 export function saveCoefficientBrush(
   storage: Pick<Storage, "setItem">,
   existing: readonly CoefficientBrush[],
   brush: CoefficientBrush,
+  reservedBrushIds: readonly string[] = [],
+  reservedBrushNames: readonly string[] = [],
 ): Result<readonly CoefficientBrush[]> {
   if (!isCoefficientBrush(brush))
     return failure({
       code: "INVALID_INPUT",
       message: "The brush settings are invalid.",
     });
-  const all = [...BUILT_IN_COEFFICIENT_BRUSHES, ...existing];
+  const all = [...reservedBrushIds, ...existing.map((item) => item.id)];
   if (
     existing.length >= MAX_BRUSHES ||
-    all.some(
+    all.some((id) => id === brush.id) ||
+    existing.some(
       (item) =>
-        item.id === brush.id ||
         item.name.trim().toLowerCase() === brush.name.trim().toLowerCase(),
+    ) ||
+    reservedBrushNames.some(
+      (name) => name.trim().toLowerCase() === brush.name.trim().toLowerCase(),
     )
   ) {
     return failure({
@@ -337,20 +230,30 @@ export function updateCoefficientBrush(
   storage: Pick<Storage, "setItem">,
   existing: readonly CoefficientBrush[],
   brush: CoefficientBrush,
+  reservedBrushIds: readonly string[] = [],
+  reservedBrushNames: readonly string[] = [],
 ): Result<readonly CoefficientBrush[]> {
-  if (
-    !isCoefficientBrush(brush) ||
-    BUILT_IN_COEFFICIENT_BRUSHES.some((item) => item.id === brush.id)
-  ) {
+  if (!isCoefficientBrush(brush) || reservedBrushIds.includes(brush.id)) {
     return failure({
       code: "INVALID_INPUT",
       message: "The brush settings are invalid or cannot be edited.",
     });
   }
   const index = existing.findIndex((item) => item.id === brush.id);
-  if (index < 0) return saveCoefficientBrush(storage, existing, brush);
+  if (index < 0) {
+    return saveCoefficientBrush(
+      storage,
+      existing,
+      brush,
+      reservedBrushIds,
+      reservedBrushNames,
+    );
+  }
   if (
-    [...BUILT_IN_COEFFICIENT_BRUSHES, ...existing].some(
+    reservedBrushNames.some(
+      (name) => name.trim().toLowerCase() === brush.name.trim().toLowerCase(),
+    ) ||
+    existing.some(
       (item) =>
         item.id !== brush.id &&
         item.name.trim().toLowerCase() === brush.name.trim().toLowerCase(),

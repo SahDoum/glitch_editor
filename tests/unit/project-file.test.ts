@@ -23,6 +23,40 @@ async function digestBytes(bytes: Uint8Array): Promise<Uint8Array> {
 }
 
 describe("project file persistence", () => {
+  it("round-trips scan corruption without coefficient operations", async () => {
+    const bytes = await loadFixture();
+    const digest = await digestBytes(bytes);
+    const sha256 = Array.from(digest, (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+    const stages = [
+      {
+        mode: "bit-flip" as const,
+        count: 4,
+        rangeStart: 0,
+        rangeEnd: 1,
+        seed: 1,
+      },
+    ];
+    const saved = await createJgeProjectFile(
+      {
+        source: { fileName: "source.jpg", sha256, bytes },
+        operations: [],
+        draftMask: null,
+        scanCorruptionStages: stages,
+      },
+      { application: "0.1.0", codec: "libjpeg-turbo 3.2.0" },
+    );
+    expect(saved.ok).toBe(true);
+    if (!saved.ok) return;
+    const loaded = await readJgeProjectText(await saved.value.text());
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) return;
+    expect(loaded.value.source.bytes).toEqual(bytes);
+    expect(loaded.value.operations).toEqual([]);
+    expect(loaded.value.scanCorruptionStages).toEqual(stages);
+  });
+
   it("embeds and restores the exact original JPEG bytes and operation data", async () => {
     const bytes = await loadFixture();
     const draftMask = createBrushMask([{ x: 4, y: 4 }], 3, 16, 16);

@@ -573,6 +573,11 @@ a bounded scan-relative range, corruption mode, bounded count/strength, and
 a reproducible unsigned seed. Scan-relative position must not be presented
 as an image-space location or guaranteed visual location.
 
+Scan Corrupt can be applied immediately after import, without a prior edit.
+In that case, re-encode the source coefficients to a clean baseline JPEG first;
+keep the exact original bytes intact and explain the re-encoding in the UI.
+Projects containing only scan-corruption stages must save and replay normally.
+
 Keep stream corruption as a terminal phase in the operation pipeline:
 coefficient or DQT operations cannot be added after it without explicitly
 discarding the stream-corruption stage and regenerating the clean encoded

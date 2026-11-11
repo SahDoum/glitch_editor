@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  getComponentChoiceOptions,
-  type ChoiceOption,
-} from "../../src/ui/tool-controls";
+import type { ChoiceOption } from "../../src/ui/tool-controls";
+import { getComponentChoiceOptions } from "../../src/ui/component-choice-group";
 import type { JpegComponent } from "../../src/jpeg/inspect";
 import type { JpegComponentLabel } from "../../src/jpeg/color-model";
 

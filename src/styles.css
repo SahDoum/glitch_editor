@@ -234,6 +234,11 @@ textarea:focus-visible {
   opacity: 0.45;
 }
 
+.effect-top-bar-action {
+  margin-left: 4px;
+  border-color: #3a4136;
+}
+
 .tool-icon {
   width: 15px;
   height: 15px;
@@ -745,8 +750,7 @@ h1 {
 }
 
 .preview-image-wrap.is-selecting,
-.preview-image-wrap.is-brushing,
-.preview-image-wrap.is-inspecting {
+.preview-image-wrap.is-brushing {
   cursor: crosshair;
 }
 
@@ -816,14 +820,6 @@ h1 {
   stroke: #fff;
   stroke-dasharray: 2 2;
   stroke-width: 1;
-  vector-effect: non-scaling-stroke;
-}
-
-.selected-block-overlay {
-  fill: rgb(200 241 105 / 8%);
-  stroke: var(--accent);
-  stroke-dasharray: 3 2;
-  stroke-width: 2;
   vector-effect: non-scaling-stroke;
 }
 
@@ -1819,6 +1815,13 @@ h1 {
   gap: 7px;
   color: #d1d6d0;
   font-size: 10px;
+}
+
+.operation-effect-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: #a7b493;
 }
 
 .operation-enabled input {

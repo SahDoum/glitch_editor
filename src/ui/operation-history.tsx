@@ -1,10 +1,13 @@
-import type { ReactNode } from "react";
 import { getMaskFromParameters, type SpatialMask } from "../document/masks";
 import type { OperationRecord, JsonValue } from "../operations/schema";
 import type { ScanCorruptionReport } from "../jpeg/scan-corruption";
 import { getHistoryDisplayEntries } from "./workspace-state";
-
-type OperationParameters = Readonly<Record<string, JsonValue>>;
+import {
+  findOperationPresentation,
+  getScanCorruptionEffect,
+} from "../features/effects/registry";
+import type { OperationParameters } from "../features/effects/types";
+import { EffectIcon } from "./effect-icon";
 
 interface OperationHistoryProps {
   operations: readonly OperationRecord[];
@@ -48,77 +51,13 @@ function getOperationTitle(
     return namedTitle(parameters ? getParameterValue(parameters, "name") : "");
   }
 
-  const titlesByKind: Record<string, string> = {
-    coefficients: "Coefficient glitch",
-    "block-repeat": "Block copy / repeat",
-    "block-permutation": "Block shuffle",
-    "block-shift": "Local block shift",
-    "block-transfer": "Block region transfer",
-    quantization: "DQT matrix edit",
-  };
-  const kind = parameters ? getParameterValue(parameters, "kind") : undefined;
-  return kind && titlesByKind[kind] ? titlesByKind[kind] : operation.type;
+  const presentation = parameters
+    ? findOperationPresentation(parameters)
+    : null;
+  if (presentation) return presentation.title;
+  const mode = parameters ? getParameterValue(parameters, "mode") : "—";
+  return mode === "—" ? operation.type : mode;
 }
-
-const parameterRenderers: Record<
-  string,
-  (parameters: OperationParameters) => ReactNode
-> = {
-  coefficients: (parameters) => (
-    <>
-      Component {getParameterValue(parameters, "componentIndex")} ·{" "}
-      {getParameterValue(parameters, "mode")}{" "}
-      {getParameterValue(parameters, "domain")} ·{" "}
-      {getParameterValue(parameters, "frequencyBand")} · strength{" "}
-      {getParameterValue(parameters, "strength")} · seed{" "}
-      {getParameterValue(parameters, "seed")}
-    </>
-  ),
-  "block-repeat": (parameters) => (
-    <>
-      Component {getParameterValue(parameters, "componentIndex")} · source (
-      {getParameterValue(parameters, "sourceX")},{" "}
-      {getParameterValue(parameters, "sourceY")}) · offset (
-      {getParameterValue(parameters, "offsetX")},{" "}
-      {getParameterValue(parameters, "offsetY")}) ·{" "}
-      {getParameterValue(parameters, "repetitions")} copies
-    </>
-  ),
-  "block-permutation": (parameters) => (
-    <>
-      Component {getParameterValue(parameters, "componentIndex")} · seed{" "}
-      {getParameterValue(parameters, "seed")} · Fisher–Yates
-    </>
-  ),
-  "block-shift": (parameters) => (
-    <>
-      Component {getParameterValue(parameters, "componentIndex")} · offset (
-      {getParameterValue(parameters, "offsetX")},{" "}
-      {getParameterValue(parameters, "offsetY")}) blocks
-    </>
-  ),
-  "block-transfer": (parameters) => (
-    <>
-      Component {getParameterValue(parameters, "componentIndex")} ·{" "}
-      {getParameterValue(parameters, "action")}{" "}
-      {getParameterValue(parameters, "mode")} · source (
-      {getParameterValue(parameters, "sourceX")},{" "}
-      {getParameterValue(parameters, "sourceY")}) ·{" "}
-      {getParameterValue(parameters, "width")} ×{" "}
-      {getParameterValue(parameters, "height")} blocks · destination (
-      {getParameterValue(parameters, "destinationX")},{" "}
-      {getParameterValue(parameters, "destinationY")})
-    </>
-  ),
-  quantization: (parameters) => (
-    <>
-      DQT {getParameterValue(parameters, "tableId")} ·{" "}
-      {getParameterValue(parameters, "semantics")} ·{" "}
-      {getParameterValue(parameters, "pattern")} · seed{" "}
-      {getParameterValue(parameters, "seed")}
-    </>
-  ),
-};
 
 function describeMask(mask: SpatialMask): string {
   const shape = mask.shapes[0];
@@ -129,7 +68,7 @@ function describeMask(mask: SpatialMask): string {
   return `Image-pixel brush · radius ${shape.radius.toFixed(1)} px · ${shape.points.length} samples`;
 }
 
-function OperationParameters({
+function OperationDetails({
   operation,
   mask,
 }: {
@@ -137,7 +76,6 @@ function OperationParameters({
   mask: SpatialMask | null;
 }) {
   const parameters = getOperationParameters(operation);
-  const kind = parameters ? getParameterValue(parameters, "kind") : "";
   const recipeSteps =
     operation.type === "jpeg/glitch/coefficient-recipe"
       ? parameters?.steps
@@ -148,7 +86,7 @@ function OperationParameters({
       {mask?.id.slice(0, 8)}
     </>
   ) : parameters ? (
-    parameterRenderers[kind]?.(parameters)
+    findOperationPresentation(parameters)?.descriptor.describe(parameters)
   ) : null;
 
   return (
@@ -180,6 +118,10 @@ function OperationItem({
 }) {
   const mask = getMaskFromParameters(operation.parameters);
   const parameters = getOperationParameters(operation);
+  const presentation = parameters
+    ? findOperationPresentation(parameters)
+    : null;
+  const iconPaths = presentation?.view?.iconPaths;
 
   return (
     <li
@@ -197,12 +139,15 @@ function OperationItem({
               onSetEnabled(operation.id, event.currentTarget.checked)
             }
           />
+          {iconPaths && (
+            <EffectIcon className="operation-effect-icon" paths={iconPaths} />
+          )}
           <span>{getOperationTitle(operation, parameters)}</span>
         </label>
         <span className="operation-status">{operation.status}</span>
       </div>
 
-      <OperationParameters operation={operation} mask={mask} />
+      <OperationDetails operation={operation} mask={mask} />
 
       <div className="operation-actions">
         {mask && (
@@ -258,6 +203,7 @@ export function OperationHistoryPanel({
   onRestoreMask,
   onReset,
 }: OperationHistoryProps) {
+  const scanView = getScanCorruptionEffect()?.view;
   return (
     <section className="inspector-section operation-stack">
       <p className="operation-description">
@@ -274,7 +220,13 @@ export function OperationHistoryPanel({
         <ol className="scan-corruption-history">
           {scanCorruptionReports.map((report, index) => (
             <li key={`${index}-${report.seed}`}>
-              Scan Corrupt · {report.mode} · seed {report.seed} ·{" "}
+              {scanView && (
+                <EffectIcon
+                  className="operation-effect-icon"
+                  paths={scanView.iconPaths}
+                />
+              )}
+              {scanView?.label} · {report.mode} · seed {report.seed} ·{" "}
               {report.changedBytes} bytes / {report.changedBits} bits
             </li>
           ))}

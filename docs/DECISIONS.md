@@ -224,3 +224,8 @@ intervals do not exhaust the non-restart marker budget. Both limits bound memory
   Long Task entry, likely including the harness-driven file selection; this
   was not attributed to an application call stack. These measurements cover
   import/preview only, not coefficient editing or re-encoding.
+
+## Effect registry, View/Controller split, and removal of Hand/Inspector/Info
+
+- **Decision:** All effects live in one registry (`effectId → { controller, view }`); the effect menu is a separate registry of IDs. Views own presentation (icon, text, panel, top bar, shortcuts, settings, History description); controllers own `buildOperation`/`execute` (JPEG-domain) or `execute_corrupt` (Scan Corrupt, no `execute`). Hand, Inspector, and Info were removed. Block Transfer/Repeat expose a top-bar "New source" action (R) and gesture controllers.
+- **Consequences:** No effect-specific branching in `App`, `ui/`, or the workspace reducer. Persisted settings keep their keys (`storageKey` on the View). History does not record effect IDs, so identical operations from different effects show the family title. Writing effect IDs into operations would be a project-format change and is deferred to a separate decision.

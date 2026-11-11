@@ -96,12 +96,15 @@ Preserve existing functionality:
 
 Place canvas tools in a horizontal toolbar above the canvas.
 
-Tools include the existing equivalents of:
+Mask tools in the toolbar are:
 
-- Hand.
+- All.
 - Brush.
 - Select.
-- Inspector.
+
+Effects with their own canvas gestures (Block Transfer, Block Repeat) expose
+their actions, such as resetting the source region, in the same row. Hand,
+Inspector, and Info were removed.
 
 Context-sensitive tool controls must appear in the same horizontal toolbar row.
 

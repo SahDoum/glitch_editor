@@ -60,7 +60,61 @@ Document Model         Operation Engine
 
 ### `ui/`
 
-Canvas, panels, tool controls, dialogs, keyboard shortcuts, overlays. UI must not parse JPEG markers or mutate coefficient arrays directly.
+Canvas, panels, tool controls, dialogs, keyboard shortcuts, overlays, and the
+catalog rendering. UI must not parse JPEG markers or mutate coefficient arrays
+directly.
+
+### `features/effects/`
+
+Every effect is one entry in a single registry (`effects/registry.ts`):
+`effectId → { controller, view }`. The effect menu is a separate registry
+(`EFFECT_MENU`) that only lists effect IDs by category; it carries no effect
+behavior.
+
+- The **View** owns everything presented to the user: label, description,
+  icon, the settings panel, the canvas-toolbar configuration, the top-bar
+  actions and their shortcuts, default settings, the settings store, and how
+  its operations appear in History (`operation.describe`).
+- The **Controller** holds a pointer to its View and owns behavior only:
+  `buildOperation` (the single source of Preview and Apply parameters) and
+  `execute`, which validates parameters and dispatches into the existing
+  document operations. Gesture effects add a `gestures` controller (pointer
+  begin/move/end/cancel and an overlay description).
+- `App` is generic: it looks up the active effect by ID and calls the View and
+  Controller contracts. There are no per-effect conditionals, and nothing in
+  `App`, `ui/`, or the workspace reducer names an effect.
+- Scan Corrupt is a different kind of controller. It implements
+  `execute_corrupt` (clean encoded bytes plus typed stages in, corrupted bytes
+  and reports out) and has no `execute`. The type guards
+  `isJpegOperationController` / `isScanCorruptionController` let each worker
+  boundary accept only its own kind, so entropy-stream work can never enter
+  coefficient history. Its history, workers, and original bytes stay separate.
+
+Block Transfer and Block Repeat are `gesture` effects. They select and drag
+through the same hierarchy as the mask tools: the pointer is routed to the
+active effect's gesture controller instead of Brush/Select. Their top-bar
+"New source" action (shortcut R) resets the source region; it is disabled
+while no source is chosen, and changing the target component also discards the
+source because block coordinates are per component.
+
+Legacy persisted keys are preserved through the optional `storageKey` on a
+View (Posterization keeps `dc-steps`, Coefficient Scale keeps `chroma-scale`).
+History entries record operation kinds, not effect IDs, so Pixelate and Zero
+(and Engraving / Vertical Engraving) produce identical operations. Their
+History rows therefore show the family title instead of guessing a View.
+Recording the effect ID in new operations would be a project-format change and
+needs a separate decision.
+
+Mask-authoring tools (All, Brush, Select) can change without replacing the
+selected effect panel. Hand, Inspector, and Info no longer exist; Original
+asset and JPEG structure details are not part of the tool panels. The
+quantization View keys its editor by the original asset digest so a new JPEG
+resets its local draft. Handlers reach panels through a stable `EditorBridge`
+that always forwards to the latest application handlers.
+
+The right-panel JPEG component selector is shared through
+`ui/component-choice-group.tsx`; the DCT frequency matrix is a separate
+reusable component in `ui/dct-basis-matrix.tsx`.
 
 ### `application/`
 
@@ -82,9 +136,7 @@ alter an existing operation. History can restore a snapshot as a
 newly identified draft without modifying the operation or creating a history
 entry. Tool-specific overlays are presentation
 state: mask-authoring tools show the draft, while Coefficient Glitch and
-Shuffle show the exact mask they will use. The Inspector's selected 8×8 DCT
-block is visible only for Inspector. The block coordinate remains distinct
-from image-pixel coordinates.
+Shuffle show the exact mask they will use. The block coordinate remains distinct from image-pixel coordinates.
 
 Mask input snaps to the active Coefficient Glitch component's visible 8×8
 DCT-block footprints by default, accounting for sampling factors, or to the
@@ -106,10 +158,8 @@ encoded-data operations and stays visible while settings are shown. History is
 collapsed at the bottom of the right-side scrolling panel; when expanded, it
 follows the settings in that scroll flow. On narrow screens the catalog, canvas,
 and right panel reflow vertically. Brush and Select are enabled on the canvas
-toolbar only for Coefficient Glitch and mask-based block modes; block transfer
-and repeat use their own canvas gestures. Original asset and JPEG structure
-details are rendered inside the Info tool panel rather than persistently below
-History. History displays newer operations above older ones without changing
+toolbar only for effects whose View declares mask interaction; block transfer
+and repeat use their own canvas gestures. History displays newer operations above older ones without changing
 their bottom-to-top replay order. UI collapse and panel selection are
 presentation state, not document or operation data.
 
@@ -219,6 +269,15 @@ supports only the process subset below and bounds coefficient storage to
 selected codec path for the current editing slice; it is
 not a claim of broad JPEG process support.
 
+Before encoding, the JPEG facade compiles persisted operations into typed,
+structured-cloneable codec commands. A command strategy maps any image-pixel
+mask to its component's DCT-block mask and owns the corresponding WASM call,
+including temporary-memory allocation and cleanup. The worker validates the
+command list and runs it in order; it does not branch on persisted operation
+kinds. Commands contain data only: JavaScript handlers cannot cross the
+`postMessage` boundary, so the worker uses the same imported strategy table
+to dispatch each command locally.
+
 The Scan Corrupt worker reuses the pinned codec to decode the corrupted output
 one scanline at a time. It reports rows returned, decoder warnings, and
 decompression completion separately from the browser preview result. This
@@ -291,6 +350,10 @@ must not be replayed after it. A corrupted result may fail preview decoding
 and still remain available for export; that decode failure must not be
 converted into success-shaped preview data. Preserve structural boundaries
 and reject inputs whose scan boundaries cannot be validated.
+
+When there are no coefficient or DQT operations, the first Scan Corrupt stage
+encodes the original coefficients as baseline on demand. Undo restores that
+clean encoding, and projects with only scan stages replay the same preparation.
 
 The current Scan Corrupt implementation uses a dedicated worker and the
 inspector's verified single-scan entropy ranges. It explicitly rejects
@@ -418,6 +481,8 @@ and raw-byte operations remain separately identified.
 ## 7. Worker protocol
 
 Use typed request/response messages with request IDs and document revisions. Transfer large `ArrayBuffer`s where ownership transfer is safe. Support cancellation or superseding of obsolete preview jobs. Worker failures must return structured errors, not leave the UI in a permanent loading state.
+
+Coefficient operations cross the worker boundary as structured-cloneable commands; executable functions and controller instances are never posted. The worker resolves each command kind through `jpeg/codec-controllers/registry.ts`; each controller owns command validation, work sizing, codec memory preparation, mask mapping, and its corresponding WASM call. Effect controllers extend a shared base and implement `handleOperation()`; the Worker-side registry independently dispatches validated codec commands.
 
 ## 8. Suggested source layout
 
