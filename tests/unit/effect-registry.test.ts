@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MASK_TOOL_REGISTRY } from "../../src/features/canvas-tools/registry";
 import {
   EFFECT_MENU,
   EFFECT_REGISTRY,
@@ -43,7 +44,7 @@ describe("effect registry", () => {
     for (const { view } of EFFECT_REGISTRY) {
       expect(view.id).not.toMatch(/hand|inspector|info/i);
       for (const tool of view.toolbar.tools) {
-        expect(["all", "brush", "select"]).toContain(tool.id);
+        expect(MASK_TOOL_REGISTRY).toHaveProperty(tool);
       }
     }
   });

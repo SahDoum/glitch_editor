@@ -119,13 +119,15 @@ function destinationGesture(): EffectGesture<BlockTransferSettings> {
       return { patch: { destination: block.ok ? block.value : null } };
     },
     end(context, point): Outcome {
-      if (!point) return {};
+      if (!point) return { patch: { destination: null } };
       const block = getComponentBlockPoint(
         context.inspection,
         context.componentIndex,
         point,
       );
-      if (!block.ok) return { error: block.error.message };
+      if (!block.ok) {
+        return { patch: { destination: null }, error: block.error.message };
+      }
       const operation = getBlockTransferOperation(
         context.inspection,
         context.componentIndex,
@@ -139,7 +141,7 @@ function destinationGesture(): EffectGesture<BlockTransferSettings> {
           isBlockTransferParameters(operation, context.inspection),
       };
     },
-    cancel: () => ({}),
+    cancel: () => ({ destination: null }),
   };
 }
 
@@ -168,6 +170,14 @@ const gestures: EffectGestureController<BlockTransferSettings> = {
       gesture: destinationGesture(),
       outcome: { patch: { destination: block.value } },
     };
+  },
+  getHint({ settings }) {
+    return settings.source
+      ? {
+          text: "Drag to position the destination. Release over a valid area to apply.",
+          keyboard: "Press R to choose a new source.",
+        }
+      : { text: "Drag to select a source region on the DCT grid." };
   },
   getOverlay(context: Context): GestureOverlay | null {
     const { settings, inspection, componentIndex } = context;

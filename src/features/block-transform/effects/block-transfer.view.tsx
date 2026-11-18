@@ -73,11 +73,6 @@ export const BlockTransferView: EffectView<BlockTransferSettings> = {
   Panel({ settings, editor, onChangeSettings }) {
     return (
       <BlockTransformFrame editor={editor} requiresMask={false}>
-        <p className="coefficient-note">
-          {settings.source
-            ? "Source selected. Drag on the image to choose a same-size destination; drop applies one undoable transfer."
-            : "Drag on the image to select a rectangular source region snapped to this component's visible 8×8 DCT-block grid."}
-        </p>
         {settings.source && (
           <p className="selection-readout">
             Source blocks ({settings.source.x}, {settings.source.y}) ·{" "}

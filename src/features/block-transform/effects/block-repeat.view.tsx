@@ -59,11 +59,6 @@ export const BlockRepeatView: EffectView<BlockRepeatSettings> = {
     const { source, destination } = settings;
     return (
       <BlockTransformFrame editor={editor} requiresMask={false}>
-        <p className="coefficient-note">
-          Drag within one visible DCT block to select the source. Then drag from
-          that block to the first destination; copies continue in the same
-          block-grid direction and spacing.
-        </p>
         {source && (
           <p className="selection-readout">
             Source block ({source.x}, {source.y})

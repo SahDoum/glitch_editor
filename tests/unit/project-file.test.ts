@@ -6,7 +6,7 @@ import {
   JGE_PROJECT_SCHEMA_VERSION,
   readJgeProjectText,
 } from "../../src/project/project-file";
-import { createBrushMask } from "../../src/document/masks";
+import { createBrushMaskFromStrokes } from "../../src/document/masks";
 
 async function loadFixture(): Promise<Uint8Array> {
   return new Uint8Array(
@@ -59,7 +59,12 @@ describe("project file persistence", () => {
 
   it("embeds and restores the exact original JPEG bytes and operation data", async () => {
     const bytes = await loadFixture();
-    const draftMask = createBrushMask([{ x: 4, y: 4 }], 3, 16, 16);
+    const draftMask = createBrushMaskFromStrokes(
+      [[{ x: 2, y: 2 }], [{ x: 6, y: 6 }]],
+      1,
+      8,
+      8,
+    );
     if (!draftMask.ok) throw new Error(draftMask.error.message);
     const digest = await digestBytes(bytes);
     const sha256 = Array.from(digest, (byte) =>
@@ -104,6 +109,8 @@ describe("project file persistence", () => {
     expect(project.value.codecVersion).toBe("libjpeg-turbo 3.2.0");
 
     const raw = JSON.parse(await serialized.value.text());
+    expect(raw.schemaVersion).toBe(JGE_PROJECT_SCHEMA_VERSION);
+    expect(raw.draftMask.shapes).toHaveLength(1);
     expect(
       await readJgeProjectText(JSON.stringify({ ...raw, schemaVersion: 1 })),
     ).toMatchObject({

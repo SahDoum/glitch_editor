@@ -1,3 +1,4 @@
+import type { MaskTool } from "../features/canvas-tools/types";
 import type { NamedSpatialMask, SpatialMask } from "../document/masks";
 
 export function getHistoryDisplayEntries<T>(
@@ -6,7 +7,7 @@ export function getHistoryDisplayEntries<T>(
   return operations.map((operation, index) => ({ operation, index })).reverse();
 }
 
-export type MaskTool = "all" | "brush" | "select";
+export type { MaskTool } from "../features/canvas-tools/types";
 /** "effect" means the active effect owns pointer interaction (or none). */
 export type CanvasTool = MaskTool | "effect";
 

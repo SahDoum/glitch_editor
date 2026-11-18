@@ -56,20 +56,20 @@ const cases = [
   ["ac-low-pass", "low-pass", "ac", "all", 3, 73],
   ["ringing", "ringing-boost", "ac", "all", 3, 73],
   ["engraving", "engrave-vertical", "ac", "all", 3, 73],
-  ["engraving-vertical", "engrave-vertical", "ac", "all", 3, 73],
+  ["engraving", "engrave-horizontal", "ac", "all", 3, 73],
   ["ac-invert", "invert", "ac", "high", 0, 73],
   ["ac-isolate", "isolate", "ac", "high", 0, 73],
 ] as const;
 
 describe("effect-specific operation mapping", () => {
   it.each(cases)(
-    "%s explicitly maps its settings to the coefficient operation",
+    "%s maps its settings to the %s coefficient operation",
     async (id, mode, domain, frequencyBand, strength, seed) => {
       const { inspection, mask, history } = await fixture();
       const effect = getJpegOperationEffect(id)!;
       const settings = {
         ...effect.view.defaultSettings,
-        mode: id === "engraving" ? "engrave-vertical" : "offset",
+        mode: id === "engraving" ? mode : "offset",
         domain: "ac",
         frequencyBand: "high",
         strength: 3,

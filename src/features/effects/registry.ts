@@ -80,7 +80,6 @@ export const EFFECT_MENU: readonly EffectMenuGroup[] = Object.freeze([
       "posterization",
       "ringing",
       "engraving",
-      "engraving-vertical",
       "coefficient-randomize",
       "ac-scale",
       "dc-offset",

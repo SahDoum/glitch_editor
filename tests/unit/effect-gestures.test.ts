@@ -8,9 +8,15 @@ import type {
   EffectGestureController,
   GestureContext,
 } from "../../src/features/effects/types";
+import type {
+  CanvasContext,
+  CanvasFeedback,
+  CanvasPointerInput,
+} from "../../src/features/canvas-tools/types";
 import { ScanCorruptEffect } from "../../src/features/scan-corrupt/scan-corrupt.controller";
 import { inspectJpeg } from "../../src/jpeg/inspect";
 import { EFFECT_REGISTRY } from "../../src/features/effects/registry";
+import { EffectCanvasInteraction } from "../../src/ui/canvas-tool-gestures";
 
 async function inspection() {
   const bytes = new Uint8Array(
@@ -61,6 +67,7 @@ describe("block transfer and repeat gestures", () => {
       settings = { ...settings, ...end?.patch };
       expect(settings.destination).toEqual({ x: 1, y: 0 });
       if (id === "block-transfer") expect(end?.apply).toBe(true);
+      else expect(end?.apply).toBeUndefined();
       const built = getJpegOperationEffect(id)!.controller.buildOperation({
         settings,
         inspection: info,
@@ -109,6 +116,8 @@ describe("block transfer and repeat gestures", () => {
         componentIndex: 0,
       });
 
+      const initialHint = gestures.getHint(context());
+      expect(initialHint?.text).toContain("source");
       const first = gestures.begin(context(), { x: 8, y: 8 });
       expect(first.gesture).not.toBeNull();
       settings = { ...settings, ...first.outcome.patch };
@@ -119,6 +128,7 @@ describe("block transfer and repeat gestures", () => {
       settings = { ...settings, ...ended?.patch };
       expect(settings.source).not.toBeNull();
       expect(ended?.apply).toBeFalsy();
+      expect(gestures.getHint(context())?.text).toContain("destination");
 
       const reset = view
         .getTopBarActions?.(settings)
@@ -128,6 +138,7 @@ describe("block transfer and repeat gestures", () => {
       settings = { ...settings, ...reset?.patch };
       expect(settings.source).toBeNull();
       expect(settings.draft).toBeNull();
+      expect(gestures.getHint(context())).toEqual(initialHint);
       expect(
         view.getTopBarActions?.(settings).find((a) => a.id === "reset-source")
           ?.disabled,
@@ -157,6 +168,72 @@ describe("block transfer and repeat gestures", () => {
       { x: 8, y: 8 },
     );
     expect(start.gesture?.cancel()).toBeDefined();
+  });
+
+  it("Transfer cancels only the tentative destination after choosing a source", async () => {
+    const { inspection: info } = await inspection();
+    const { effect, gestures } = gestureEffect("block-transfer");
+    const source = { x: 0, y: 0, width: 1, height: 1 };
+    const settings: Loose = { ...effect.view.defaultSettings, source };
+    const context = { inspection: info, componentIndex: 0, settings };
+    const { gesture, outcome } = gestures.begin(context, { x: 9, y: 9 });
+    expect(outcome.patch?.destination).toEqual({ x: 1, y: 1 });
+    expect(gesture?.cancel()).toEqual({ destination: null });
+    const overlay = gestures.getOverlay({
+      ...context,
+      settings: { ...settings, ...outcome.patch, ...gesture?.cancel() },
+    });
+    expect(overlay?.source).toMatchObject({ x: 0, y: 0, width: 8, height: 8 });
+    expect(overlay?.destination).toBeNull();
+  });
+
+  it("publishes Transfer source and application through canvas feedback for the owning effect", async () => {
+    const { inspection: info } = await inspection();
+    const { effect, gestures } = gestureEffect("block-transfer");
+    let settings: Loose = { ...effect.view.defaultSettings };
+    const outcomes: NonNullable<CanvasFeedback["effect"]>[] = [];
+    const canvas: CanvasContext = {
+      inspection: info,
+      componentIndex: 0,
+      grid: "dct",
+      brushSize: 4,
+      orientation: 1,
+      keyboardCursor: null,
+      cancelGesture() {},
+      publish({ effect }) {
+        if (effect) {
+          settings = { ...settings, ...effect.patch };
+          outcomes.push(effect);
+        }
+      },
+    };
+    const interaction = () =>
+      new EffectCanvasInteraction(
+        gestures,
+        { inspection: info, componentIndex: 0, settings },
+        "block-transfer",
+      );
+    const sample = (x: number): CanvasPointerInput => ({
+      clientPoint: { x, y: 1 },
+      image: { point: { x, y: 1 }, inside: true },
+    });
+
+    const source = interaction().begin(sample(1), canvas);
+    source?.end(sample(2));
+    const destination = interaction().begin(sample(9), canvas);
+    destination?.move(sample(10));
+    destination?.end(sample(9));
+
+    expect(outcomes.every(({ ownerId }) => ownerId === "block-transfer")).toBe(
+      true,
+    );
+    expect(outcomes.filter(({ apply }) => apply)).toEqual([
+      {
+        ownerId: "block-transfer",
+        patch: { destination: { x: 1, y: 0 } },
+        apply: true,
+      },
+    ]);
   });
 });
 

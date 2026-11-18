@@ -1,3 +1,9 @@
+import type {
+  CanvasOverlay,
+  CanvasToolHint,
+  ImagePoint,
+  MaskTool,
+} from "../canvas-tools/types";
 import type { ComponentType, ReactNode } from "react";
 import type { JpegEditableState } from "../../application/jpeg-document";
 import type { CorruptedEncodedJpeg } from "../../application/scan-corruption";
@@ -12,7 +18,7 @@ import type {
 } from "../../jpeg/scan-corruption";
 import type { ScanDecodeDiagnostic } from "../../jpeg/scan-corruption-worker-protocol";
 import type { ProjectDocument } from "../../document/model";
-import type { SpatialMask, SpatialSelection } from "../../document/masks";
+import type { SpatialMask } from "../../document/masks";
 import type { OperationHistory } from "../../operations/history";
 import type { JpegGlitchOperation } from "../../operations/jpeg-glitch";
 import type { OperationController } from "../../jpeg/codec-controllers/controller";
@@ -25,7 +31,6 @@ export type EffectId =
   | "posterization"
   | "ringing"
   | "engraving"
-  | "engraving-vertical"
   | "coefficient-randomize"
   | "ac-scale"
   | "dc-offset"
@@ -39,10 +44,7 @@ export type EffectId =
   | "quantization"
   | "scan-corrupt";
 
-export type ImagePoint = { readonly x: number; readonly y: number };
-
-/** Canvas tools that author the shared mask. */
-export type MaskTool = "all" | "brush" | "select";
+export type { ImagePoint, MaskTool } from "../canvas-tools/types";
 
 /**
  * How an effect receives its target:
@@ -52,14 +54,11 @@ export type MaskTool = "all" | "brush" | "select";
  */
 export type EffectInteraction = "mask" | "gesture" | "panel";
 
-export interface MaskToolDeclaration {
-  readonly id: MaskTool;
-  readonly label: string;
-  readonly shortcut: string;
-}
-
+/** Toolbar configuration declared by the effect's view. */
 export interface EffectToolbarConfig {
-  readonly tools: readonly MaskToolDeclaration[];
+  /** Mask-tool buttons in display order. The editor enables them for mask effects. */
+  readonly tools: readonly MaskTool[];
+  /** Allow the shared DCT/MCU switch for tools whose view requests it. */
   readonly showSnapGrid: boolean;
 }
 
@@ -203,12 +202,7 @@ export interface EffectGesture<Settings> {
   cancel(): Partial<Settings>;
 }
 
-export interface GestureOverlay {
-  readonly source: SpatialSelection | null;
-  readonly sourceInvalid: boolean;
-  readonly destination: SpatialSelection | null;
-  readonly destinationInvalid: boolean;
-}
+export type GestureOverlay = CanvasOverlay;
 
 export interface GestureStart<Settings> {
   /** `null` when the press cannot start a gesture (see `outcome.error`). */
@@ -223,6 +217,7 @@ export interface EffectGestureController<Settings> {
     point: ImagePoint,
   ): GestureStart<Settings>;
   getOverlay(context: GestureContext<Settings>): GestureOverlay | null;
+  getHint(context: GestureContext<Settings>): CanvasToolHint | null;
 }
 
 interface EffectControllerBase<Settings> {

@@ -64,6 +64,27 @@ Canvas, panels, tool controls, dialogs, keyboard shortcuts, overlays, and the
 catalog rendering. UI must not parse JPEG markers or mutate coefficient arrays
 directly.
 
+### `features/canvas-tools/`
+
+The canvas-tool registry pairs `CanvasInteraction` constructors with their
+toolbar views and optional controls. Effects declare allowed tool IDs. The
+toolbar and keyboard shortcuts use the same activation path. The editor
+creates one instance of each registered controller per workspace.
+
+The UI normalizes pointer input to original JPEG frame coordinates and binds
+one captured pointer to the gesture from the active interaction. All, Brush,
+Select, pan and the effect adapter implement the same contract. It exposes
+activation, hints, overlays, keyboard input, and hover where the interaction
+supports them. Select owns its keyboard anchor, and Brush owns the sampled
+points of the current stroke. Cancellation discards the gesture draft and
+releases capture. The editor commits a completed mask once and applies the
+active effect when Auto Apply is enabled. All and keyboard Select All replace
+the mask directly.
+
+Block Transfer and Repeat supply phase-specific hints through their existing
+gesture controllers. Transfer applies at the end of a valid destination drag.
+Repeat keeps its explicit Apply button.
+
 ### `features/effects/`
 
 Every effect is one entry in a single registry (`effects/registry.ts`):

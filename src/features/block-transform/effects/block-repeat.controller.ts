@@ -134,6 +134,17 @@ const gestures: EffectGestureController<BlockRepeatSettings> = {
       outcome: { patch: { destination: null }, error: "" },
     };
   },
+  getHint({ settings }) {
+    if (!settings.source) {
+      return {
+        text: "Drag within one visible DCT block to select the source.",
+      };
+    }
+    return {
+      text: "Drag from the source block to the first destination, then apply block repeat.",
+      keyboard: "Press R to choose a new source.",
+    };
+  },
   getOverlay({ settings, inspection, componentIndex }) {
     return {
       source: getBlockRegionSelection(

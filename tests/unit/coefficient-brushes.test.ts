@@ -24,7 +24,6 @@ const LEGACY_BRUSH_NAMES: Readonly<Record<string, string>> = {
   "ac-low-pass": "AC low-pass",
   ringing: "Ringing",
   engraving: "Engraving",
-  "engraving-vertical": "Engraving vertical",
   "ac-invert": "Invert AC",
   "ac-isolate": "Isolate AC band",
 };
@@ -38,7 +37,6 @@ const LEGACY_BRUSH_ORDER = [
   "ac-low-pass",
   "ringing",
   "engraving",
-  "engraving-vertical",
   "ac-invert",
   "ac-isolate",
 ];
@@ -221,17 +219,6 @@ describe("coefficient brushes", () => {
         step: {
           domain: "ac",
           mode: "engrave-horizontal",
-          frequencyBand: "all",
-          strength: 4,
-          seed: 1,
-        },
-      },
-      {
-        id: "engraving-vertical",
-        name: "Engraving vertical",
-        step: {
-          domain: "ac",
-          mode: "engrave-vertical",
           frequencyBand: "all",
           strength: 4,
           seed: 1,
