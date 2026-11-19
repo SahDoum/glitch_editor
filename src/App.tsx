@@ -338,7 +338,7 @@ function App() {
   const awaitingPreview =
     isDraftPreviewing ||
     (needsAutomaticPreview && !currentPreview && !previewFailed);
-  const currentOperation = useMemo(() => {
+  const currentOperation = (() => {
     if (
       !document ||
       !activeEffect ||
@@ -354,14 +354,7 @@ function App() {
       componentIndex,
       mask: activeMask,
     });
-  }, [
-    document,
-    activeEffect,
-    activeSettings,
-    componentIndex,
-    activeMask,
-    isMaskEffect,
-  ]);
+  })();
   const canApply =
     draftRequest !== null &&
     !isBusy &&
