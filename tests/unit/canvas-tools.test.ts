@@ -1,322 +1,451 @@
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
-import { createJpegDocumentSession } from "../../src/application/jpeg-document";
-import {
-  copySpatialMask,
-  getMaskFromParameters,
-  isSpatialMask,
-} from "../../src/document/masks";
-import { OriginalAsset } from "../../src/document/model";
-import { MASK_TOOL_REGISTRY } from "../../src/features/canvas-tools/registry";
+import { createCanvasToolControllers } from "../../src/features/canvas-tools/registry";
 import type {
+  CanvasContext,
+  CanvasFeedback,
+  CanvasInteraction,
+  CanvasKeyInput,
   CanvasPointerInput,
-  ImageSample,
-  MaskToolContext,
 } from "../../src/features/canvas-tools/types";
-import { getJpegOperationEffect } from "../../src/features/effects/registry";
-import {
-  getMaskBlockCoverage,
-  getMaskBlockCoverageAtLeastHalf,
-  getMaskBlockCoveragePath,
-} from "../../src/jpeg/block-geometry";
-import { isOperationList } from "../../src/jpeg/codec-controllers/registry";
 import { inspectJpeg } from "../../src/jpeg/inspect";
 import {
-  createJgeProjectFile,
-  readJgeProjectText,
-  JGE_PROJECT_SCHEMA_VERSION,
-} from "../../src/project/project-file";
-import type { Result } from "../../src/shared/result";
-import { clientPointToImage } from "../../src/ui/canvas-interactions";
-import { CanvasPointerSession } from "../../src/ui/canvas-pointer-session";
+  CanvasPointer,
+  getCanvasPointerInput,
+} from "../../src/ui/canvas-pointer";
 
-function value<T>(result: Result<T>): T {
-  if (!result.ok) throw new Error(result.error.message);
-  return result.value;
-}
-
-function sample(x: number, y: number, inside = true): ImageSample {
-  return { point: { x, y }, inside };
-}
-
-async function loadFixture(fileName = "synthetic-color-odd-420.jpg") {
-  const bytes = new Uint8Array(
-    await readFile(new URL(`../fixtures/${fileName}`, import.meta.url)),
+async function canvasContext(options: Partial<CanvasContext> = {}) {
+  const bytes = await readFile(
+    new URL("../fixtures/synthetic-color-odd-420.jpg", import.meta.url),
   );
-  const context: MaskToolContext = {
-    inspection: value(inspectJpeg(bytes)),
+  const inspection = inspectJpeg(bytes);
+  if (!inspection.ok) throw new Error(inspection.error.message);
+  let keyboardCursor: CanvasContext["keyboardCursor"] = null;
+  const publish = vi.fn((feedback: CanvasFeedback) => {
+    if (feedback.keyboardCursor !== undefined)
+      keyboardCursor = feedback.keyboardCursor;
+  });
+  const context: CanvasContext = {
+    inspection: inspection.value,
     componentIndex: 0,
     grid: "dct",
     brushSize: 4,
+    orientation: 1,
+    get keyboardCursor() {
+      return keyboardCursor;
+    },
+    cancelGesture: vi.fn(),
+    publish,
+    ...options,
   };
-  return { bytes, fileName, context };
+  return { context, publish };
 }
 
-describe("canvas coordinates and pointer ownership", () => {
-  it("maps scaled, rotated image bounds back to JPEG pixels, including outside samples", () => {
-    const bounds = { left: 10, top: 20, width: 180, height: 340 };
-    const inspection = { width: 17, height: 9 };
-    expect(clientPointToImage({ x: 30, y: 80 }, bounds, inspection, 6)).toEqual(
-      sample(3, 8),
-    );
-    expect(
-      clientPointToImage({ x: 210, y: 80 }, bounds, inspection, 6),
-    ).toEqual(sample(3, -1, false));
-    expect(
-      clientPointToImage(
-        { x: 30, y: 80 },
-        { ...bounds, width: 0 },
-        inspection,
-        6,
-      ),
-    ).toBeNull();
-  });
+function pointer(x: number, y: number, inside = true): CanvasPointerInput {
+  const point = { x, y };
+  return { clientPoint: point, image: { point, inside } };
+}
 
-  it("ignores a second pointer and detaches the owner before release", () => {
-    const pointer = new CanvasPointerSession();
-    const gesture = { move: vi.fn(), end: vi.fn(), cancel: vi.fn() };
-    const capture = vi.fn();
-    const release = vi.fn(() => pointer.cancel(1));
-    const ignoredCapture = vi.fn();
-    const input: CanvasPointerInput = {
-      clientPoint: { x: 1, y: 2 },
-      image: sample(1, 2),
+function captureTarget() {
+  const captures = new Set<number>();
+  return {
+    scrollLeft: 0,
+    scrollTop: 0,
+    setPointerCapture: vi.fn((id: number) => {
+      captures.add(id);
+    }),
+    hasPointerCapture: (id: number) => captures.has(id),
+    releasePointerCapture: vi.fn((id: number) => {
+      captures.delete(id);
+    }),
+  };
+}
+
+function press(
+  target: ReturnType<typeof captureTarget>,
+  pointerId: number,
+  button = 0,
+) {
+  return {
+    currentTarget: target as unknown as HTMLDivElement,
+    pointerId,
+    button,
+    preventDefault: vi.fn(),
+  };
+}
+
+function tool(id: string) {
+  const controller = createCanvasToolControllers().get(id);
+  if (!controller) throw new Error(`Missing tool ${id}`);
+  return controller;
+}
+
+function key(
+  key: string,
+  options: Partial<CanvasKeyInput> = {},
+): CanvasKeyInput {
+  return {
+    key,
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    canvasFocused: true,
+    pointerActive: false,
+    ...options,
+  };
+}
+
+describe("canvas interactions", () => {
+  it("uses frame coordinates at zoomed bounds and preserves outside samples", async () => {
+    const {
+      context: { inspection },
+    } = await canvasContext();
+    const bounds = {
+      left: 50,
+      top: 25,
+      width: inspection.height * 3,
+      height: inspection.width * 3,
     };
-
-    expect(pointer.begin(1, gesture, capture, release)).toBe(true);
-    expect(pointer.begin(2, gesture, ignoredCapture, vi.fn())).toBe(false);
-    expect(ignoredCapture).not.toHaveBeenCalled();
-    pointer.move(2, input);
-    pointer.end(2, input);
-    pointer.cancel(2);
-    expect(gesture.move).not.toHaveBeenCalled();
-    expect(gesture.end).not.toHaveBeenCalled();
-    expect(gesture.cancel).not.toHaveBeenCalled();
-
-    pointer.move(1, input);
-    pointer.end(1, input);
-    pointer.end(1, input);
-    expect(capture).toHaveBeenCalledOnce();
-    expect(gesture.move).toHaveBeenCalledExactlyOnceWith(input);
-    expect(gesture.end).toHaveBeenCalledExactlyOnceWith(input);
-    expect(release).toHaveBeenCalledOnce();
-    expect(gesture.cancel).not.toHaveBeenCalled();
-    expect(pointer.isActive).toBe(false);
-  });
-
-  it("detaches a cancelled gesture before invoking its cleanup or a later up", () => {
-    const pointer = new CanvasPointerSession();
-    const input = { clientPoint: { x: 1, y: 2 }, image: null };
-    const gesture = {
-      move: vi.fn(),
-      end: vi.fn(),
-      cancel: vi.fn(() => pointer.end(1, input)),
-    };
-    const release = vi.fn();
-    pointer.begin(1, gesture, vi.fn(), release);
-    pointer.cancel();
-    pointer.end(1, input);
-    expect(gesture.cancel).toHaveBeenCalledOnce();
-    expect(release).toHaveBeenCalledOnce();
-    expect(gesture.end).not.toHaveBeenCalled();
-  });
-});
-
-describe("All and Select", () => {
-  it("builds a full-image mask through All and preserves partial DCT and MCU edge blocks", async () => {
-    const { context } = await loadFixture();
-    const { inspection } = context;
-    const all = MASK_TOOL_REGISTRY.all.controller;
-    const select = MASK_TOOL_REGISTRY.select.controller;
-    expect(value(all.createMask(inspection)).shapes).toMatchObject([
-      { x: 0, y: 0, width: 17, height: 9 },
-    ]);
-    const edgeStart = sample(20, 12, false);
-    const end = sample(15, 7);
-    const dct = value(select.begin(context, edgeStart));
-    expect(value(dct.end(end))?.shapes).toMatchObject([
-      { x: 8, y: 0, width: 9, height: 9 },
-    ]);
-    const mcu = value(select.begin({ ...context, grid: "mcu" }, edgeStart));
-    expect(value(mcu.end(end))?.shapes).toMatchObject([
-      { x: 0, y: 0, width: 17, height: 9 },
-    ]);
-    const empty = value(select.begin(context, end));
-    expect(value(empty.end(end))).toBeNull();
-  });
-
-  it("moves the keyboard cursor in visual directions and commits only on the second Enter", async () => {
-    const { context } = await loadFixture();
-    const keyboard = MASK_TOOL_REGISTRY.select.controller.beginKeyboard(
-      context,
-      6,
-    );
-    if (!keyboard) throw new Error("Expected a keyboard selection");
-    expect(keyboard.getCursor()).toMatchObject({ blockX: 1, blockY: 1 });
-    expect(value(keyboard.confirm()).mask).toBeUndefined();
-    const moved = keyboard.move("ArrowRight");
-    if (!moved) throw new Error("Expected an arrow movement");
-    expect(keyboard.getCursor()).toMatchObject({ blockX: 1, blockY: 0 });
-    expect(value(moved).draft).toMatchObject({
-      kind: "rectangle",
-      selection: { x: 8, y: 0, width: 8, height: 9 },
+    expect(
+      getCanvasPointerInput({ x: 50, y: 25 }, bounds, inspection, 6).image,
+    ).toEqual({
+      inside: true,
+      point: { x: 0, y: inspection.height },
     });
-    expect(value(keyboard.confirm()).mask?.shapes).toMatchObject([
-      { x: 8, y: 0, width: 8, height: 9 },
-    ]);
-    value(keyboard.confirm());
-    keyboard.clear();
-    expect(value(keyboard.confirm()).mask).toBeUndefined();
+    expect(
+      getCanvasPointerInput({ x: 47, y: 25 }, bounds, inspection, 6).image,
+    ).toEqual({
+      inside: false,
+      point: { x: 0, y: inspection.height + 1 },
+    });
   });
 
-  it("starts the Select cursor on the current component after a reset", async () => {
-    const { context } = await loadFixture();
-    const select = MASK_TOOL_REGISTRY.select.controller;
-    const previous = select.beginKeyboard(context, 1);
-    if (!previous) throw new Error("Expected a keyboard selection");
-    expect(previous.getCursor()).toMatchObject({ componentId: 1, blockY: 1 });
+  it.each([
+    ["dct", 0, 8],
+    ["dct", 1, 16],
+    ["mcu", 0, 16],
+  ] as const)(
+    "clips a rectangle and snaps it using %s component %s",
+    async (grid, componentIndex, width) => {
+      const { context, publish } = await canvasContext({
+        grid,
+        componentIndex,
+      });
+      const gesture = tool("select").begin(pointer(-5, -6, false), context);
+      if (!gesture) throw new Error("Expected an active Select gesture.");
+      gesture.move(pointer(5, 6));
+      expect(publish).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          draft: {
+            kind: "rectangle",
+            selection: expect.objectContaining({ x: 0, y: 0, width }),
+          },
+        }),
+      );
+      gesture.end(pointer(5, 6));
+      expect(publish).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          draft: null,
+          selection: {
+            autoApply: true,
+            mask: expect.objectContaining({
+              shapes: [expect.objectContaining({ x: 0, y: 0, width })],
+            }),
+          },
+        }),
+      );
+    },
+  );
 
-    const nextContext = { ...context, componentIndex: 1 };
-    const initial = select.getInitialCursor(nextContext);
-    expect(initial).toMatchObject({
+  it("clears the rectangle draft without committing a zero-area selection", async () => {
+    const { context, publish } = await canvasContext();
+    const gesture = tool("select").begin(pointer(1, 3), context);
+    if (!gesture) throw new Error("Expected an active Select gesture.");
+    gesture.end(pointer(1, 3));
+    expect(publish).toHaveBeenLastCalledWith(
+      expect.objectContaining({ draft: null, selection: undefined }),
+    );
+  });
+
+  it("runs keyboard selection through the active Select tool", async () => {
+    const { context, publish } = await canvasContext({ orientation: 6 });
+    const select = tool("select");
+    select.focus?.(context);
+    const initial = context.keyboardCursor;
+    if (!initial) throw new Error("Expected a keyboard cursor.");
+    expect(select.handleKey?.(key("Enter"), context)).toBe(true);
+    expect(publish).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        draft: {
+          kind: "rectangle",
+          selection: expect.objectContaining({
+            x: initial.imageX,
+            y: initial.imageY,
+          }),
+        },
+      }),
+    );
+    const callsBeforeRepeat = publish.mock.calls.length;
+    expect(select.handleKey?.(key("Enter", { repeat: true }), context)).toBe(
+      true,
+    );
+    expect(publish).toHaveBeenCalledTimes(callsBeforeRepeat);
+    expect(select.handleKey?.(key("ArrowRight"), context)).toBe(true);
+    expect(context.keyboardCursor?.blockY).toBe(initial.blockY - 1);
+    expect(select.handleKey?.(key("Enter"), context)).toBe(true);
+    expect(publish).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        draft: null,
+        selection: {
+          autoApply: true,
+          mask: expect.objectContaining({
+            shapes: [expect.objectContaining({ kind: "rectangle", y: 0 })],
+          }),
+        },
+      }),
+    );
+    expect(select.handleKey?.(key("Escape"), context)).toBe(true);
+    expect(publish).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        draft: null,
+        selection: { autoApply: false, mask: null },
+        keyboardCursor: initial,
+      }),
+    );
+  });
+
+  it("uses the whole-image command from All and Select All without auto-apply", async () => {
+    const { context, publish } = await canvasContext();
+    const shape = expect.objectContaining({
+      x: 0,
+      y: 0,
+      width: context.inspection.width,
+      height: context.inspection.height,
+    });
+    const fullImage = expect.objectContaining({
+      selection: {
+        autoApply: false,
+        mask: expect.objectContaining({ shapes: [shape] }),
+      },
+    });
+    const all = tool("all");
+    all.activate?.(context);
+    expect(publish).toHaveBeenLastCalledWith(fullImage);
+    expect(all.begin(pointer(3, 3), context)).toBeNull();
+
+    expect(
+      tool("select").handleKey?.(
+        key("a", { ctrlKey: true, canvasFocused: false }),
+        context,
+      ),
+    ).toBe(true);
+    expect(context.cancelGesture).toHaveBeenCalledOnce();
+    expect(publish).toHaveBeenLastCalledWith(fullImage);
+  });
+
+  it("preserves a gap between sampled brush segments in the final mask", async () => {
+    const { context, publish } = await canvasContext();
+    const brush = tool("brush");
+    expect(brush.begin(pointer(1, 1, false), context)).toBeNull();
+    const gesture = brush.begin(pointer(1, 1), context);
+    if (!gesture) throw new Error("Expected brush gesture.");
+    gesture.move(pointer(-1, 0, false));
+    gesture.move(pointer(16, 1));
+    expect(publish).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        draft: expect.objectContaining({
+          kind: "brush",
+          strokes: [[{ x: 4, y: 4 }], [{ x: 16.5, y: 4 }]],
+        }),
+      }),
+    );
+    gesture.end(pointer(16, 1));
+    expect(publish).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        selection: {
+          autoApply: true,
+          mask: expect.objectContaining({
+            shapes: [
+              expect.objectContaining({
+                kind: "brush",
+                points: [
+                  { x: 4, y: 4 },
+                  { x: 16.5, y: 4 },
+                ],
+              }),
+            ],
+          }),
+        },
+      }),
+    );
+  });
+
+  it("reads the initial Select cursor for the current component", async () => {
+    const { context } = await canvasContext({ componentIndex: 1 });
+    expect(tool("select").getInitialCursor?.(context)).toMatchObject({
       componentId: 2,
       blockX: 1,
       blockY: 0,
       imageWidth: 1,
     });
-    expect(select.beginKeyboard(nextContext, 1)?.getCursor()).toEqual(initial);
   });
-});
 
-describe("Brush", () => {
-  it("pins the radius, interpolates within a segment and cancels at the whole-stroke point limit", async () => {
-    const { context } = await loadFixture();
-    const brush = MASK_TOOL_REGISTRY.brush.controller;
-    expect(value(brush.begin(context, sample(-1, 1, false)))).toBeNull();
+  it("limits the total brush points across separate segments", async () => {
+    const { context, publish } = await canvasContext();
     const settings = {
       ...context,
       inspection: { ...context.inspection, width: 20_000 },
     };
-    const started = value(brush.begin(settings, sample(1, 1)));
-    if (!started) throw new Error("Expected a brush gesture");
+    const gesture = tool("brush").begin(pointer(1, 1), settings);
+    if (!gesture) throw new Error("Expected a brush gesture");
     settings.brushSize = 256;
-    value(started.move(sample(9, 1)));
-    const draft = started.getDraft();
-    if (draft?.kind !== "brush") throw new Error("Expected a brush draft");
-    expect(draft.radius).toBe(2);
-    expect(draft.strokes[0]).toHaveLength(9);
-
-    value(started.move(sample(9_990, 1)));
-    value(started.move(sample(2, -1, false)));
-    value(started.move(sample(1, 1)));
-    expect(started.move(sample(20, 1))).toMatchObject({
-      ok: false,
-      error: { message: expect.stringContaining("too long") },
-    });
-    expect(started.getDraft()).toBeNull();
-    expect(value(started.end(sample(20, 1)))).toBeNull();
-  });
-
-  it("keeps the gap through coverage, effect history, mask restore, and project round-trip", async () => {
-    const { bytes, fileName, context } = await loadFixture(
-      "synthetic-texture-420.jpg",
-    );
-    const brush = MASK_TOOL_REGISTRY.brush.controller;
-    const stroke = value(
-      brush.begin({ ...context, brushSize: 8 }, sample(1, 1)),
-    );
-    if (!stroke) throw new Error("Expected a brush gesture");
-    value(stroke.move(sample(1, -1, false)));
-    value(stroke.move(sample(34, 1)));
-    expect(stroke.getDraft()).toMatchObject({
-      strokes: [[{ x: 4, y: 4 }], [{ x: 36, y: 4 }]],
-    });
-    const mask = value(stroke.end(sample(34, 1)));
-    if (!mask) throw new Error("Expected a finished brush mask");
-    expect(isSpatialMask(mask)).toBe(true);
-    expect(mask.shapes).toMatchObject([
-      {
-        kind: "brush",
-        radius: 4,
-        points: [
-          { x: 4, y: 4 },
-          { x: 36, y: 4 },
-        ],
-      },
-    ]);
-
-    const { inspection } = context;
-    const componentId = inspection.components[0]!.id;
-    for (const getCoverage of [
-      getMaskBlockCoverage,
-      getMaskBlockCoverageAtLeastHalf,
-    ]) {
-      expect(
-        [...value(getCoverage(mask, inspection, componentId))].slice(0, 5),
-      ).toEqual(
-        getCoverage === getMaskBlockCoverage
-          ? [1, 1, 0, 0, 1]
-          : [1, 0, 0, 0, 1],
-      );
-    }
-    expect(value(getMaskBlockCoveragePath(mask, inspection, componentId))).toBe(
-      "M0 0h16v8h-16zM32 0h13v8h-13zM0 8h8v8h-8zM32 8h8v8h-8z",
-    );
-
-    const effect = getJpegOperationEffect("pixelate")!;
-    const operation = value(
-      effect.controller.buildOperation({
-        inspection,
-        componentIndex: 0,
-        settings: effect.view.defaultSettings,
-        mask,
+    gesture.move(pointer(9, 1));
+    expect(publish).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        draft: expect.objectContaining({ radius: 2 }),
       }),
     );
-    expect(isOperationList([operation], inspection)).toBe(true);
-    const source = {
-      bytes,
-      fileName,
-      sha256: createHash("sha256").update(bytes).digest("hex"),
-    };
-    const imported = {
-      originalAsset: value(OriginalAsset.create(source)),
-      inspection,
-      previewUrl: "blob:fixture",
-    };
-    const history = value(createJpegDocumentSession(imported));
-    const applied = value(
-      effect.controller.apply(history, operation, inspection),
+    gesture.move(pointer(9_990, 1));
+    gesture.move(pointer(2, -1, false));
+    gesture.move(pointer(1, 1));
+    gesture.move(pointer(20, 1));
+    expect(publish).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        draft: null,
+        error: expect.stringContaining("too long"),
+      }),
     );
-    expect(applied.currentState.jpegOperations).toEqual([operation]);
+    gesture.end(pointer(20, 1));
+    expect(publish).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        draft: null,
+        selection: undefined,
+      }),
+    );
+  });
 
-    const file = value(
-      await createJgeProjectFile(
-        {
-          source,
-          operations: applied.operations,
-          draftMask: mask,
-          scanCorruptionStages: [],
-        },
-        { application: "0.1.0", codec: "libjpeg-turbo 3.2.0" },
-      ),
+  it("drives an additional registered controller through the same command and pointer lifecycle", async () => {
+    const { context, publish } = await canvasContext();
+    const target = captureTarget();
+    const router = new CanvasPointer();
+    const gesture = { move: vi.fn(), end: vi.fn(), cancel: vi.fn() };
+    const begin = vi.fn(() => gesture);
+    const hover = vi.fn();
+    class AdditionalTool implements CanvasInteraction {
+      begin = begin;
+      hover = hover;
+      activate(context: CanvasContext) {
+        context.publish({ announcement: "Additional tool active." });
+      }
+      getHint() {
+        return { text: "Additional tool hint." };
+      }
+    }
+    const registry = {
+      extra: {
+        Controller: AdditionalTool,
+        view: { label: "Extra", shortcut: "X", iconPaths: [] },
+      },
+    };
+    const interaction = createCanvasToolControllers(registry).get("extra");
+    if (!interaction) throw new Error("Expected registered tool.");
+    interaction.activate?.(context);
+    expect(publish).toHaveBeenCalledWith({
+      announcement: "Additional tool active.",
+    });
+    expect(interaction.getHint(context)?.text).toBe("Additional tool hint.");
+    router.begin(
+      press(target, 1),
+      pointer(1, 1),
+      context,
+      interaction,
+      false,
+      vi.fn(),
     );
-    const serialized = await file.text();
-    expect(JSON.parse(serialized).schemaVersion).toBe(
-      JGE_PROJECT_SCHEMA_VERSION,
+    router.begin(
+      press(target, 2),
+      pointer(1, 1),
+      context,
+      interaction,
+      false,
+      vi.fn(),
     );
-    const reopened = value(await readJgeProjectText(serialized));
-    expect(reopened.draftMask).toEqual(mask);
-    expect(reopened.source.bytes).toEqual(bytes);
-    const restored = value(createJpegDocumentSession(imported));
-    expect(
-      value(restored.restoreOperations(reopened.operations)).currentState
-        .jpegOperations,
-    ).toEqual([operation]);
-    const snapshot = getMaskFromParameters(reopened.operations[0]?.parameters);
-    if (!snapshot) throw new Error("Expected the saved operation's brush mask");
-    const copy = value(copySpatialMask(snapshot));
-    expect(copy.id).not.toBe(mask.id);
-    expect(copy.shapes).toEqual(mask.shapes);
+    router.move(2, pointer(1, 1), context, interaction);
+    router.move(1, pointer(2, 3), context, interaction);
+    router.end(2, pointer(4, 4));
+    router.leave(1, context, interaction);
+    router.end(1, pointer(7, 3));
+    router.cancel(1);
+
+    expect(begin).toHaveBeenCalledExactlyOnceWith(pointer(1, 1), context);
+    expect(gesture.move).toHaveBeenCalledExactlyOnceWith(pointer(2, 3));
+    expect(hover).toHaveBeenCalledTimes(2);
+    expect(hover).toHaveBeenLastCalledWith(null, context);
+    expect(gesture.end).toHaveBeenCalledExactlyOnceWith(pointer(7, 3));
+    expect(gesture.cancel).not.toHaveBeenCalled();
+    expect(target.releasePointerCapture).toHaveBeenCalledExactlyOnceWith(1);
+  });
+
+  it("captures only an accepted gesture and cancels it without allowing release to commit", async () => {
+    const { context } = await canvasContext();
+    const target = captureTarget();
+    const router = new CanvasPointer();
+    const gesture = { move: vi.fn(), end: vi.fn(), cancel: vi.fn() };
+    const interaction = { begin: () => gesture, getHint: () => null };
+    router.begin(
+      press(target, 5),
+      pointer(1, 1),
+      context,
+      tool("all"),
+      false,
+      vi.fn(),
+    );
+    expect(target.setPointerCapture).not.toHaveBeenCalled();
+    router.begin(
+      press(target, 5),
+      pointer(1, 1),
+      context,
+      interaction,
+      false,
+      vi.fn(),
+    );
+    router.cancel(6);
+    expect(router.isActive).toBe(true);
+    router.cancel(5);
+    router.end(5, pointer(7, 3));
+    expect(gesture.cancel).toHaveBeenCalledTimes(1);
+    expect(gesture.end).not.toHaveBeenCalled();
+  });
+
+  it("routes middle-button and Space drags through the pan interaction", async () => {
+    const { context } = await canvasContext();
+    const target = captureTarget();
+    const router = new CanvasPointer();
+    const setPanning = vi.fn();
+    const begin = vi.fn(() => null);
+    const interaction = { begin, getHint: () => null };
+    router.begin(
+      press(target, 1, 1),
+      pointer(10, 10),
+      context,
+      interaction,
+      false,
+      setPanning,
+    );
+    router.move(1, pointer(5, 5), context, interaction);
+    expect(target.scrollLeft).toBe(5);
+    expect(target.scrollTop).toBe(5);
+    router.cancel(1);
+    router.begin(
+      press(target, 2),
+      pointer(10, 10),
+      context,
+      interaction,
+      true,
+      setPanning,
+    );
+    router.end(2, pointer(10, 10));
+    expect(begin).not.toHaveBeenCalled();
+    expect(setPanning.mock.calls).toEqual([[true], [false], [true], [false]]);
   });
 });

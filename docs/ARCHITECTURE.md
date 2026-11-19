@@ -64,29 +64,29 @@ Canvas, panels, tool controls, dialogs, keyboard shortcuts, overlays, and the
 catalog rendering. UI must not parse JPEG markers or mutate coefficient arrays
 directly.
 
-`useCanvasInteraction` maps client coordinates to pixels in the original JPEG
-after accounting for zoom and EXIF orientation. It keeps coordinates outside
-the image so Select can clip a drag at the edge. `CanvasPointerSession` captures
-one pointer for the active tool, effect gesture, or pan. It detaches the
-session before calling the completion or cancellation handler and releases
-capture afterwards. The workspace cancels the session before changing its
-document, effect, tool, component or snap grid, and before resetting or
-restoring a mask.
-
 ### `features/canvas-tools/`
 
-The mask tool registry pairs each controller with its View. Effect Views
-declare the tool IDs available in their toolbar. The canvas toolbar reads the
-labels, icons, shortcuts and context controls from the tool registry. Toolbar
-buttons and keyboard shortcuts use the same tool-selection handler.
+The canvas-tool registry pairs `CanvasInteraction` constructors with their
+toolbar views and optional controls. Effects declare allowed tool IDs. The
+toolbar and keyboard shortcuts use the same activation path. The editor
+creates one instance of each registered controller per workspace.
 
-All creates a full-image mask. Select uses the same rectangle geometry for
-pointer and keyboard input. Brush snaps samples to the selected grid and
-interpolates within each continuous part of a stroke using its starting size.
-The controllers return temporary outlines during a gesture and a completed
-mask at the end. The workspace commits the finished mask and checks Auto
-Apply once for pointer or keyboard selection. All and Ctrl/⌘+A set the
-working mask directly.
+The UI normalizes pointer input to original JPEG frame coordinates and binds
+one captured pointer to the gesture from the active interaction. All, Brush,
+Select, pan and the effect adapter implement the same contract. It exposes
+activation, hints, overlays, keyboard input, and hover where the interaction
+supports them. Select owns its keyboard anchor, and Brush owns the sampled
+points of the current stroke. A successful editing capture focuses the canvas
+without scrolling. Cancellation discards the gesture draft and releases
+capture. `ImageOverlays` renders the draft and committed outlines. The
+editor commits a completed mask once and applies the
+active effect when Auto Apply is enabled. All and keyboard Select All replace
+the mask directly.
+
+Block Transfer and Repeat supply phase-specific hints through their existing
+gesture controllers. Transfer applies at the end of a valid destination drag.
+Repeat uses the operation validator to mark an invalid destination and keeps
+its explicit Apply button.
 
 ### `features/effects/`
 
@@ -103,8 +103,7 @@ behavior.
   `buildOperation` (the single source of Preview and Apply parameters) and
   `apply`, which validates parameters and dispatches into the existing
   document operations. Gesture effects add a `gestures` controller (pointer
-  begin/move/end/cancel, an overlay description, and a hint for the current
-  phase).
+  begin/move/end/cancel and an overlay description).
 - Each concrete JPEG effect controller names its `OperationController` and
   constructs its own operation parameters. Coefficient effects share the
   codec operation, not a View-selected mode: fixed modes and preset values
@@ -127,23 +126,24 @@ behavior.
   boundary accept only its own kind, so entropy-stream work can never enter
   coefficient history. Its history, workers, and original bytes stay separate.
 
-Block Transfer and Block Repeat use the same canvas pointer session as mask
-tools. Each controller owns its source and destination geometry and provides
-a phase-specific hint described by the canvas. Transfer applies a valid drop
-with its final destination settings. Repeat validates the requested
-destinations and commits with Apply block repeat. The New source button and
-R shortcut both cancel the current drag and clear its source. Changing the
-target component also clears the source because block coordinates belong to
-that component.
+Block Transfer and Block Repeat are `gesture` effects. They select and drag
+through the same hierarchy as the mask tools: the pointer is routed to the
+active effect's gesture controller instead of Brush/Select. Their top-bar
+"New source" action (shortcut R) resets the source region; it is disabled
+while no source is chosen, and changing the target component also discards the
+source because block coordinates are per component.
 
 Legacy persisted keys are preserved through the optional `storageKey` on a
 View (Posterization keeps `dc-steps`, Coefficient Scale keeps `chroma-scale`).
-History entries record the operation kind and its parameters. Pixelate and
-Zero can produce identical operations, and History uses the family title
-when the View is ambiguous. Both directional modes of Engraving resolve to the
-same View using the stored mode.
+History entries record operation kinds, not effect IDs, so Pixelate and Zero
+(and Engraving / Vertical Engraving) produce identical operations. Their
+History rows therefore show the family title instead of guessing a View.
+Recording the effect ID in new operations would be a project-format change and
+needs a separate decision.
 
-The selected effect panel stays open while the mask tool changes. The
+Mask-authoring tools (All, Brush, Select) can change without replacing the
+selected effect panel. Hand, Inspector, and Info no longer exist; Original
+asset and JPEG structure details are not part of the tool panels. The
 quantization View keys its editor by the original asset digest so a new JPEG
 resets its local draft. Handlers reach panels through a stable `EditorBridge`
 that always forwards to the latest application handlers.
@@ -170,9 +170,9 @@ available for compatibility with existing operation data. Effects embed an
 immutable mask snapshot and ID in their parameters; editing the draft cannot
 alter an existing operation. History can restore a snapshot as a
 newly identified draft without modifying the operation or creating a history
-entry. The canvas can display temporary gesture outlines while effects use
-the last completed mask for preview and application. Block gesture
-coordinates are stored in the selected component's grid.
+entry. Tool-specific overlays are presentation
+state: mask-authoring tools show the draft, while Coefficient Glitch and
+Shuffle show the exact mask they will use. The block coordinate remains distinct from image-pixel coordinates.
 
 Mask input snaps to the active Coefficient Glitch component's visible 8×8
 DCT-block footprints by default, accounting for sampling factors, or to the
@@ -180,12 +180,8 @@ image-space MCU grid in MCU mode. Brush and Select do not own or store a
 component choice; the effect's target selector stays in the JPEG effect panel,
 and DCT snapping follows that target. The stored mask remains image-pixel
 geometry; worker operations map it to component blocks and do not treat
-snapped pixels as block or MCU coordinates. A brush mask stores one figure
-with a radius and a list of independent samples. If a stroke leaves the
-image and returns, only samples from the visible segments are stored. This
-preserves the gap in coverage and keeps the existing project format. Brush
-overlays render each full visible component DCT block selected by the
-existing mask-coverage mapping,
+snapped pixels as block or MCU coordinates. Brush overlays render each full
+visible component DCT block selected by the existing mask-coverage mapping,
 without circular edges or partial blocks. The DCT/MCU setting controls sample
 snapping; the overlay therefore shows the component blocks an effect will
 change. This is a view of the existing image-pixel mask and does not change

@@ -55,8 +55,8 @@ const cases = [
   ["posterization", "dc-steps", "dc", "all", 3, 73],
   ["ac-low-pass", "low-pass", "ac", "all", 3, 73],
   ["ringing", "ringing-boost", "ac", "all", 3, 73],
-  ["engraving", "engrave-horizontal", "ac", "all", 3, 73],
   ["engraving", "engrave-vertical", "ac", "all", 3, 73],
+  ["engraving", "engrave-horizontal", "ac", "all", 3, 73],
   ["ac-invert", "invert", "ac", "high", 0, 73],
   ["ac-isolate", "isolate", "ac", "high", 0, 73],
 ] as const;

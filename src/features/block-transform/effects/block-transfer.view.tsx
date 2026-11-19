@@ -60,7 +60,7 @@ export const BlockTransferView: EffectView<BlockTransferSettings> = {
     {
       id: "reset-source",
       label: "New source",
-      title: "Choose a new source region",
+      title: "Choose a new source region (R)",
       shortcut: "R",
       disabled: !settings.source && !settings.draft,
       patch: NO_BLOCK_TRANSFER_SOURCE,

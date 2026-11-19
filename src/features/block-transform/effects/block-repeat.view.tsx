@@ -45,7 +45,7 @@ export const BlockRepeatView: EffectView<BlockRepeatSettings> = {
     {
       id: "reset-source",
       label: "New source",
-      title: "Choose a new source block",
+      title: "Choose a new source block (R)",
       shortcut: "R",
       disabled: !settings.source && !settings.draft,
       patch: NO_BLOCK_REPEAT_SOURCE,

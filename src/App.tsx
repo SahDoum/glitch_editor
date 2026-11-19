@@ -7,6 +7,7 @@ import {
   useState,
   type ChangeEvent,
   type DragEvent,
+  type PointerEvent,
 } from "react";
 import type { JpegOutputMode } from "./jpeg/encode-options";
 import { encodeJpegCoefficients } from "./application/coefficient-reader";
@@ -39,9 +40,10 @@ import {
   readJgeProjectFile,
   type JgeProjectData,
 } from "./project/project-file";
-import type {
-  JpegBlockGeometry,
-  JpegSelectionGrid,
+import {
+  type JpegBlockGeometry,
+  type JpegBlockCoordinate,
+  type JpegSelectionGrid,
 } from "./jpeg/block-geometry";
 import { copySpatialMask, type SpatialMask } from "./document/masks";
 import type { ProjectDocument } from "./document/model";
@@ -58,6 +60,7 @@ import {
   getWorkspaceOverlayVisibility,
   getWorkspaceShortcut,
   workspaceReducer,
+  type MaskTool,
 } from "./ui/workspace-state";
 import { getRectangleSelection } from "./ui/selection-overlay";
 import { ScanCorruptionHistory } from "./application/scan-corruption";
@@ -71,18 +74,26 @@ import { CollapsibleSection } from "./ui/collapsible-section";
 import type {
   EffectEditor,
   EffectTopBarAction,
-  GestureContext,
-  GestureOutcome,
-  MaskTool,
 } from "./features/effects/types";
-import { MASK_TOOL_REGISTRY } from "./features/canvas-tools/registry";
-import type { MaskCommitTrigger } from "./features/canvas-tools/types";
 import { isJpegOperationController } from "./features/effects/types";
 import { EffectCatalogPanel } from "./ui/effect-catalog-panel";
+import { createWholeImageMask } from "./features/canvas-tools/all-tool";
+import {
+  createCanvasToolControllers,
+  getMaskToolView,
+} from "./features/canvas-tools/registry";
+import type {
+  CanvasContext,
+  CanvasFeedback,
+  CanvasInteraction,
+  ImagePoint,
+  MaskDraft,
+  MaskToolContext,
+} from "./features/canvas-tools/types";
+import { CanvasPointer, getCanvasPointerInput } from "./ui/canvas-pointer";
+import { EffectCanvasInteraction } from "./ui/canvas-tool-gestures";
 import { CanvasToolbar } from "./ui/canvas-toolbar";
-import { bindEffectCanvasInteraction } from "./ui/canvas-interactions";
 import { ImageOverlays } from "./ui/image-overlays";
-import { useCanvasInteraction } from "./ui/use-canvas-interaction";
 import { OperationHistoryPanel } from "./ui/operation-history";
 import {
   getJpegComponentLabels,
@@ -172,6 +183,12 @@ function App() {
   const [showBlocks, setShowBlocks] = useState(false);
   const [showMcus, setShowMcus] = useState(false);
   const [showOriginal, setShowOriginal] = useState(false);
+  const [isPanning, setIsPanning] = useState(false);
+  const [keyboardCursor, setKeyboardCursor] =
+    useState<JpegBlockCoordinate | null>(null);
+  const [canvasHasKeyboardFocus, setCanvasHasKeyboardFocus] = useState(false);
+  const [canvasKeyboardAnnouncement, setCanvasKeyboardAnnouncement] =
+    useState("");
   const [workspaceState, dispatchWorkspace] = useReducer(workspaceReducer, {
     ...initialWorkspaceState,
     activeEffectId: DEFAULT_EFFECT_ID,
@@ -205,6 +222,10 @@ function App() {
     initialAutoApply.error,
   );
   const [zoom, setZoom] = useState(1);
+  const [maskDraft, setMaskDraft] = useState<MaskDraft | null>(null);
+  const [brushCursorPoint, setBrushCursorPoint] = useState<ImagePoint | null>(
+    null,
+  );
   const fileInput = useRef<HTMLInputElement>(null);
   const requestId = useRef(0);
   const previewCoordinator = useRef(new PreviewCoordinator());
@@ -223,6 +244,11 @@ function App() {
     readonly ScanCorruptionParameters[] | null
   >(null);
   const projectStagesReplayStarted = useRef(false);
+  const [canvasPointer] = useState(() => new CanvasPointer());
+  const [canvasTools] = useState(createCanvasToolControllers);
+  const spacePanActive = useRef(false);
+  const imageStage = useRef<HTMLDivElement>(null);
+  const previewImageWrap = useRef<HTMLDivElement>(null);
   const jpegOperations =
     historyDocument?.currentState.jpegOperations ?? EMPTY_JPEG_OPERATIONS;
   const activeMask = globalSelectionMask;
@@ -230,11 +256,8 @@ function App() {
   const activeView = activeEffect?.view;
   const activeSettings = activeView ? effectSettings[activeView.id] : undefined;
   const isMaskEffect = activeView?.interaction === "mask";
-  const activeGestures = activeEffect
-    ? isJpegOperationController(activeEffect.controller)
-      ? activeEffect.controller.gestures
-      : undefined
-    : undefined;
+  const maskToolId = toolMode === "effect" ? null : toolMode;
+  const maskToolView = maskToolId ? getMaskToolView(maskToolId) : null;
   const componentCount = document?.inspection.components.length ?? 0;
   const documentHash = document?.originalAsset.sha256;
   const orientation = useMemo(() => {
@@ -246,47 +269,6 @@ function App() {
     if (!result.ok) throw new Error(result.error.message);
     return result.value;
   }, [document]);
-  const gestureContext: GestureContext<ErasedSettings> | null =
-    document && activeSettings
-      ? {
-          inspection: document.inspection,
-          componentIndex,
-          settings: activeSettings,
-        }
-      : null;
-  const effectInteraction =
-    toolMode === "effect" && activeGestures && gestureContext
-      ? bindEffectCanvasInteraction(
-          activeGestures,
-          gestureContext,
-          applyGestureOutcome,
-        )
-      : null;
-  const {
-    bindStage,
-    bindImage,
-    pointerHandlers,
-    keyboardHandlers,
-    cancel: cancelCanvas,
-    setSpacePan,
-    draft: canvasDraft,
-    brushCursor,
-    keyboardCursor,
-    isPanning,
-    hint: canvasHint,
-    announcement: canvasAnnouncement,
-    announce: announceCanvas,
-  } = useCanvasInteraction({
-    inspection: document?.inspection,
-    orientation,
-    tool: toolMode,
-    componentIndex,
-    grid: maskGrid,
-    brushSize,
-    effectInteraction,
-    onCommitMask: commitMask,
-    onError: setErrorMessage,
-  });
   const colorModel = useMemo(
     () =>
       document
@@ -502,7 +484,7 @@ function App() {
   );
 
   async function loadFile(file: File) {
-    cancelCanvas();
+    resetCanvasInteraction();
     cancelScanCorruption();
     const currentRequest = ++requestId.current;
     importController.current?.abort();
@@ -559,9 +541,7 @@ function App() {
     }
     let initialSelectionMask = projectData?.draftMask ?? null;
     if (!initialSelectionMask) {
-      const mask = MASK_TOOL_REGISTRY.all.controller.createMask(
-        result.value.inspection,
-      );
+      const mask = createWholeImageMask(result.value.inspection);
       if (!mask.ok) {
         URL.revokeObjectURL(result.value.previewUrl);
         setErrorMessage(mask.error.message);
@@ -591,7 +571,6 @@ function App() {
       }
     }
 
-    cancelCanvas();
     scanCorruptionController.current?.abort();
     scanCorruptionController.current = null;
     scanCorruptionHistory.current.clear();
@@ -621,6 +600,7 @@ function App() {
       canUndo: history.value.canUndo,
       canRedo: history.value.canRedo,
     });
+    resetCanvasInteraction();
     dispatchWorkspace({ type: "reset-document" });
     dispatchWorkspace({
       type: "activate-effect",
@@ -728,42 +708,91 @@ function App() {
     updateHistory(mutate(history));
   }
 
-  function selectAllImage() {
-    if (!document) return;
-    cancelCanvas();
-    const mask = MASK_TOOL_REGISTRY.all.controller.createMask(
-      document.inspection,
-    );
-    if (!mask.ok) {
-      setErrorMessage(mask.error.message);
-      return;
+  function publishCanvasFeedback(feedback: CanvasFeedback) {
+    if (feedback.draft !== undefined) setMaskDraft(feedback.draft);
+    if (feedback.keyboardCursor !== undefined)
+      setKeyboardCursor(feedback.keyboardCursor);
+    if (feedback.hoverPoint !== undefined)
+      setBrushCursorPoint(feedback.hoverPoint);
+    if (feedback.announcement !== undefined)
+      setCanvasKeyboardAnnouncement(feedback.announcement);
+    if (feedback.error !== undefined) setErrorMessage(feedback.error);
+    if (feedback.selection) {
+      setErrorMessage("");
+      const { mask, autoApply } = feedback.selection;
+      dispatchWorkspace({ type: "set-selection", selection: mask });
+      if (mask && autoApply && autoApplySelectionEffect(mask)) {
+        dispatchWorkspace({ type: "set-selection", selection: null });
+      }
     }
-    commitMask(mask.value, "command");
-    announceCanvas("Selected the entire image.");
+    if (feedback.effect) {
+      const { ownerId, patch, apply } = feedback.effect;
+      if (patch) {
+        setEffectSettings((current) => ({
+          ...current,
+          [ownerId]: mergeSettings(current[ownerId] ?? {}, patch),
+        }));
+      }
+      if (apply) applyEffect(patch);
+    }
+  }
+
+  function pointerInput(event: PointerEvent<HTMLDivElement>) {
+    return getCanvasPointerInput(
+      { x: event.clientX, y: event.clientY },
+      previewImageWrap.current?.getBoundingClientRect(),
+      document?.inspection,
+      orientation,
+    );
+  }
+
+  function onImagePointerDown(event: PointerEvent<HTMLDivElement>) {
+    if (!canvasContext) return;
+    const shouldFocusCanvas = canvasPointer.begin(
+      event,
+      pointerInput(event),
+      canvasContext,
+      canvasInteraction,
+      spacePanActive.current,
+      setIsPanning,
+    );
+    if (shouldFocusCanvas)
+      previewImageWrap.current?.focus({ preventScroll: true });
+  }
+
+  function onImagePointerMove(event: PointerEvent<HTMLDivElement>) {
+    if (!canvasContext) return;
+    canvasPointer.move(
+      event.pointerId,
+      pointerInput(event),
+      canvasContext,
+      canvasInteraction,
+    );
+  }
+
+  function resetCanvasInteraction() {
+    canvasPointer.cancel();
+    for (const tool of canvasTools.values()) tool.reset?.();
+    setKeyboardCursor(null);
+    setMaskDraft(null);
+    setBrushCursorPoint(null);
   }
 
   function activateTool(tool: MaskTool) {
-    if (!document || !enabledCanvasTools.has(tool)) return;
+    if (!enabledCanvasTools.has(tool)) return;
+    resetCanvasInteraction();
     dispatchWorkspace({ type: "activate-tool", tool });
-    const entry = MASK_TOOL_REGISTRY[tool];
-    if (entry.kind === "command") selectAllImage();
-    else {
-      cancelCanvas();
-      announceCanvas(`${entry.view.label} tool selected.`);
-    }
+    setCanvasKeyboardAnnouncement(
+      `${getMaskToolView(tool).label} tool selected.`,
+    );
+    if (canvasContext) canvasTools.get(tool)?.activate?.(canvasContext);
     if (activeToolPanel.current) activeToolPanel.current.open = true;
-  }
-
-  function changeMaskGrid(grid: JpegSelectionGrid) {
-    if (grid === maskGrid) return;
-    cancelCanvas();
-    setMaskGrid(grid);
   }
 
   function activateEffect(effectId: string) {
     const effect = getEffect(effectId);
     if (!effect) return;
-    cancelCanvas();
+    resetCanvasInteraction();
     setErrorMessage("");
     dispatchWorkspace({
       type: "activate-effect",
@@ -779,7 +808,7 @@ function App() {
   ) {
     const view = activeView;
     if (!view || !patch) return;
-    if (persist && activeGestures) cancelCanvas();
+    if (persist) canvasPointer.cancel();
     setEffectSettings((current) => ({
       ...current,
       [view.id]: mergeSettings(current[view.id] ?? {}, patch),
@@ -801,29 +830,14 @@ function App() {
     setEffectSettingsError("");
   }
 
-  function applyGestureOutcome(outcome: GestureOutcome<ErasedSettings>) {
-    const { patch } = outcome;
-    if (patch && activeView) {
-      const { id } = activeView;
-      setEffectSettings((current) => ({
-        ...current,
-        [id]: mergeSettings(current[id] ?? {}, patch),
-      }));
-    }
-    if (outcome.error !== undefined) setErrorMessage(outcome.error);
-    if (outcome.apply) applyEffect(patch);
-  }
-
   function runTopBarAction(action: EffectTopBarAction<object>) {
-    if (action.disabled) return;
-    cancelCanvas();
+    resetCanvasInteraction();
     changeEffectSettings(action.patch, false);
     setErrorMessage("");
   }
 
   function changeComponent(index: number) {
-    if (index === componentIndex) return;
-    cancelCanvas();
+    resetCanvasInteraction();
     setComponentIndex(index);
     setErrorMessage("");
     setEffectSettings((current) =>
@@ -911,16 +925,9 @@ function App() {
       setEffectAutoApplyError(result.error.message);
       return;
     }
+    resetCanvasInteraction();
     setEffectAutoApply(next);
     setEffectAutoApplyError("");
-  }
-
-  function commitMask(mask: SpatialMask | null, trigger: MaskCommitTrigger) {
-    setErrorMessage("");
-    dispatchWorkspace({ type: "set-selection", selection: mask });
-    if (mask && trigger !== "command" && autoApplySelectionEffect(mask)) {
-      dispatchWorkspace({ type: "set-selection", selection: null });
-    }
   }
 
   function autoApplySelectionEffect(mask: SpatialMask): boolean {
@@ -1054,8 +1061,8 @@ function App() {
   });
 
   function clearSelection() {
-    cancelCanvas();
-    commitMask(null, "command");
+    resetCanvasInteraction();
+    dispatchWorkspace({ type: "set-selection", selection: null });
   }
 
   function resetHistory() {
@@ -1106,8 +1113,9 @@ function App() {
         tool: restored.value.shapes[0]?.kind === "brush" ? "brush" : "select",
       });
     }
-    cancelCanvas();
-    commitMask(restored.value, "command");
+    resetCanvasInteraction();
+    dispatchWorkspace({ type: "set-selection", selection: restored.value });
+    setErrorMessage("");
   }
 
   const showCorruptedResult = useCallback(
@@ -1592,23 +1600,72 @@ function App() {
 
   const overlayVisibility = getWorkspaceOverlayVisibility(toolMode);
   const activeMaskForOverlay = overlayVisibility.mask ? activeMask : null;
-  const rectangleDraft =
-    canvasDraft?.kind === "rectangle" ? canvasDraft.selection : null;
-  const brushDraft = canvasDraft?.kind === "brush" ? canvasDraft : null;
   const visibleSelection = overlayVisibility.mask
-    ? (rectangleDraft ?? getRectangleSelection(activeMaskForOverlay))
+    ? maskDraft?.kind === "rectangle"
+      ? maskDraft.selection
+      : getRectangleSelection(activeMaskForOverlay)
     : null;
-  const gestureOverlay =
-    activeGestures && gestureContext
-      ? activeGestures.getOverlay(gestureContext)
+  const canvasImageContext: MaskToolContext | null = document
+    ? {
+        inspection: document.inspection,
+        componentIndex,
+        grid: maskGrid,
+        brushSize,
+      }
+    : null;
+  const canvasContext: CanvasContext | null = canvasImageContext
+    ? {
+        ...canvasImageContext,
+        orientation,
+        keyboardCursor,
+        publish: publishCanvasFeedback,
+        cancelGesture: () => canvasPointer.cancel(),
+      }
+    : null;
+
+  function resolveCanvasInteraction(): CanvasInteraction | undefined {
+    if (maskToolId) return canvasTools.get(maskToolId);
+    if (
+      !canvasImageContext ||
+      !activeEffect ||
+      !activeSettings ||
+      !isJpegOperationController(activeEffect.controller)
+    ) {
+      return undefined;
+    }
+    const { controller, view } = activeEffect;
+    if (!controller.gestures) return undefined;
+    return new EffectCanvasInteraction(
+      controller.gestures,
+      {
+        settings: activeSettings,
+        inspection: canvasImageContext.inspection,
+        componentIndex,
+      },
+      view.id,
+    );
+  }
+
+  const canvasInteraction = resolveCanvasInteraction();
+  const visibleKeyboardCursor =
+    canvasHasKeyboardFocus && canvasImageContext
+      ? (keyboardCursor ??
+        canvasInteraction?.getInitialCursor?.(canvasImageContext) ??
+        null)
       : null;
+  const gestureOverlay =
+    canvasImageContext && canvasInteraction?.getOverlay?.(canvasImageContext);
+  const canvasHint =
+    canvasImageContext && canvasInteraction?.getHint(canvasImageContext);
   const activeToolLabel = activeView?.label ?? "Effect settings";
   const toolbarTools = activeView?.toolbar.tools ?? [];
   const enabledCanvasTools: ReadonlySet<MaskTool> = isMaskEffect
     ? new Set(toolbarTools)
     : NO_TOOLS;
   const needsCanvasMask = !activeMask && isMaskEffect;
-  const suggestedCanvasTools = needsCanvasMask ? enabledCanvasTools : NO_TOOLS;
+  const suggestedCanvasTools: ReadonlySet<MaskTool> = needsCanvasMask
+    ? new Set(toolbarTools)
+    : NO_TOOLS;
   const topBarActions =
     activeView?.getTopBarActions?.(
       activeSettings ?? activeView.defaultSettings,
@@ -1642,17 +1699,30 @@ function App() {
         )
           return;
         event.preventDefault();
-        setSpacePan(true);
+        spacePanActive.current = true;
         return;
       }
 
-      const shortcut = getWorkspaceShortcut(event);
-      if (shortcut === "select-all") {
-        if (toolMode !== "select" || !document) return;
+      if (
+        canvasContext &&
+        canvasInteraction?.handleKey?.(
+          {
+            key: event.key,
+            repeat: event.repeat,
+            ctrlKey: event.ctrlKey,
+            metaKey: event.metaKey,
+            altKey: event.altKey,
+            canvasFocused: target === previewImageWrap.current,
+            pointerActive: canvasPointer.isActive,
+          },
+          canvasContext,
+        )
+      ) {
         event.preventDefault();
-        selectAllImage();
         return;
       }
+      const shortcut = getWorkspaceShortcut(event);
+      if (shortcut === "select-all") return;
       if (!event.ctrlKey && !event.metaKey && !event.altKey && document) {
         const key = event.key.toUpperCase();
         const action = topBarActions.find(
@@ -1666,8 +1736,7 @@ function App() {
         }
         const tool = toolbarTools.find(
           (id) =>
-            enabledCanvasTools.has(id) &&
-            MASK_TOOL_REGISTRY[id].view.shortcut === key,
+            enabledCanvasTools.has(id) && getMaskToolView(id).shortcut === key,
         );
         if (!tool) return;
         event.preventDefault();
@@ -1689,12 +1758,20 @@ function App() {
     }
 
     function onWorkspaceKeyUp(event: KeyboardEvent) {
-      if (event.code === "Space") setSpacePan(false);
+      if (event.code === "Space") spacePanActive.current = false;
     }
 
+    function onWorkspaceBlur() {
+      spacePanActive.current = false;
+      resetCanvasInteraction();
+      setCanvasHasKeyboardFocus(false);
+    }
+
+    window.addEventListener("blur", onWorkspaceBlur);
     window.addEventListener("keydown", onWorkspaceKeyDown);
     window.addEventListener("keyup", onWorkspaceKeyUp);
     return () => {
+      window.removeEventListener("blur", onWorkspaceBlur);
       window.removeEventListener("keydown", onWorkspaceKeyDown);
       window.removeEventListener("keyup", onWorkspaceKeyUp);
     };
@@ -2029,16 +2106,18 @@ function App() {
                 <div className="preview-toolbar">
                   <CanvasToolbar
                     tools={toolbarTools}
-                    activeTool={toolMode === "effect" ? "all" : toolMode}
+                    activeTool={toolMode === "effect" ? null : toolMode}
                     enabledTools={enabledCanvasTools}
                     suggestedTools={suggestedCanvasTools}
                     showSnapGrid={activeView?.toolbar.showSnapGrid ?? false}
                     actions={topBarActions}
                     onAction={runTopBarAction}
-                    brushSize={brushSize}
-                    onChangeBrushSize={setBrushSize}
+                    controls={{ brushSize, onChangeBrushSize: setBrushSize }}
                     maskGrid={maskGrid}
-                    onChangeMaskGrid={changeMaskGrid}
+                    onChangeMaskGrid={(grid) => {
+                      resetCanvasInteraction();
+                      setMaskGrid(grid);
+                    }}
                     onSelectTool={activateTool}
                   />
                   {draftPreviewUrl && !showOriginal && !showCleanEncoded && (
@@ -2143,30 +2222,50 @@ function App() {
                   </div>
                 </div>
                 {canvasHint && (
-                  <p id="canvas-tool-hint" className="canvas-keyboard-help">
-                    {canvasHint.text}
-                    {canvasHint.keyboard && ` ${canvasHint.keyboard}`}
+                  <p id="canvas-tool-help" className="canvas-keyboard-help">
+                    {canvasHint.text} {canvasHint.keyboard}
                   </p>
                 )}
                 <div
                   className="image-stage"
-                  ref={bindStage}
-                  {...pointerHandlers}
+                  ref={imageStage}
+                  onPointerDown={onImagePointerDown}
+                  onPointerMove={onImagePointerMove}
+                  onPointerUp={(event) =>
+                    canvasPointer.end(event.pointerId, pointerInput(event))
+                  }
+                  onPointerLeave={(event) => {
+                    if (canvasContext)
+                      canvasPointer.leave(
+                        event.pointerId,
+                        canvasContext,
+                        canvasInteraction,
+                      );
+                  }}
+                  onPointerCancel={(event) =>
+                    canvasPointer.cancel(event.pointerId)
+                  }
+                  onLostPointerCapture={(event) =>
+                    canvasPointer.cancel(event.pointerId)
+                  }
                 >
                   <div
-                    className={`preview-image-wrap ${toolMode === "select" ? "is-selecting" : ""} ${toolMode === "brush" ? "is-brushing" : ""} ${isPanning ? "is-panning" : ""} ${toolMode === "effect" && activeGestures ? "is-block-transforming" : ""}`}
+                    className={`preview-image-wrap ${maskToolView?.canvasClass ?? canvasInteraction?.canvasClass ?? ""} ${isPanning ? "is-panning" : ""}`}
                     style={{ transform: `scale(${zoom})` }}
                     role="group"
                     tabIndex={0}
                     aria-label="JPEG image canvas"
                     aria-describedby={
-                      canvasHint ? "canvas-tool-hint" : undefined
+                      canvasHint ? "canvas-tool-help" : undefined
                     }
-                    aria-keyshortcuts={
-                      toolMode === "select" ? "Control+A Meta+A" : undefined
-                    }
-                    {...keyboardHandlers}
-                    ref={bindImage}
+                    aria-keyshortcuts={maskToolView?.keyShortcuts}
+                    onFocus={() => {
+                      setCanvasHasKeyboardFocus(true);
+                      if (canvasContext)
+                        canvasInteraction?.focus?.(canvasContext);
+                    }}
+                    onBlur={() => setCanvasHasKeyboardFocus(false)}
+                    ref={previewImageWrap}
                   >
                     {previewUrlToDisplay ? (
                       <img
@@ -2188,13 +2287,19 @@ function App() {
                       showMcus={showMcus}
                       selection={visibleSelection}
                       mask={activeMaskForOverlay}
-                      brushDraft={brushDraft?.strokes ?? []}
-                      brushCursorPoint={brushCursor}
-                      brushRadius={brushDraft?.radius ?? brushSize / 2}
+                      brushDraft={
+                        maskDraft?.kind === "brush" ? maskDraft.strokes : []
+                      }
+                      brushCursorPoint={brushCursorPoint}
+                      brushRadius={
+                        maskDraft?.kind === "brush"
+                          ? maskDraft.radius
+                          : brushSize / 2
+                      }
                       componentId={
                         document.inspection.components[componentIndex]?.id ?? -1
                       }
-                      keyboardCursor={keyboardCursor}
+                      keyboardCursor={visibleKeyboardCursor}
                       gestureSource={gestureOverlay?.source ?? null}
                       gestureSourceInvalid={
                         gestureOverlay?.sourceInvalid ?? false
@@ -2211,7 +2316,7 @@ function App() {
                   role="status"
                   aria-live="polite"
                 >
-                  {canvasAnnouncement}
+                  {canvasKeyboardAnnouncement}
                 </span>
               </div>
             )}

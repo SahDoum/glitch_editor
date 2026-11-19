@@ -44,7 +44,7 @@ describe("effect registry", () => {
     for (const { view } of EFFECT_REGISTRY) {
       expect(view.id).not.toMatch(/hand|inspector|info/i);
       for (const tool of view.toolbar.tools) {
-        expect(MASK_TOOL_REGISTRY[tool]).toBeDefined();
+        expect(MASK_TOOL_REGISTRY).toHaveProperty(tool);
       }
     }
   });

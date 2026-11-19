@@ -6,7 +6,7 @@ export const MASK_EFFECT_TOOLBAR: EffectToolbarConfig = Object.freeze({
   showSnapGrid: true,
 });
 
-/** Effects without a mask show only the whole-image tool, disabled. */
+/** Gesture and panel effects show a disabled All button in the mask-tool row. */
 export const WHOLE_IMAGE_TOOLBAR: EffectToolbarConfig = Object.freeze({
   tools: Object.freeze<MaskTool[]>(["all"]),
   showSnapGrid: false,

@@ -14,22 +14,26 @@ import {
 } from "../../jpeg/block-geometry";
 import type { JpegOrientation } from "../../jpeg/orientation";
 import { failure, success, type Result } from "../../shared/result";
-import type { ImagePoint } from "../effects/types";
+import { selectWholeImage } from "./all-tool";
+import { openMaskGesture } from "./mask-gesture";
 import type {
+  CanvasContext,
+  CanvasFeedback,
+  CanvasInteraction,
+  CanvasKeyInput,
+  CanvasPointerInput,
+  ImagePoint,
   ImageSample,
-  MaskDraft,
   MaskGesture,
   MaskToolContext,
-  MaskToolController,
 } from "./types";
 
 function selectRectangle(
-  context: MaskToolContext,
+  { inspection, componentIndex, grid }: MaskToolContext,
   start: ImagePoint,
   end: ImagePoint,
 ): Result<SpatialSelection | null> {
-  const { inspection, componentIndex, grid } = context;
-  const selected = createRectangleSelection(
+  const rectangle = createRectangleSelection(
     start.x,
     start.y,
     end.x,
@@ -37,190 +41,236 @@ function selectRectangle(
     inspection.width,
     inspection.height,
   );
-  if (!selected.ok || !selected.value) return selected;
-  if (grid === "mcu") return snapSelectionToMcus(selected.value, inspection);
+  if (!rectangle.ok || !rectangle.value) return rectangle;
+  if (grid === "mcu") return snapSelectionToMcus(rectangle.value, inspection);
   const component = inspection.components[componentIndex];
-  if (!component) {
-    return failure({
-      code: "INVALID_INPUT",
-      message: "The selected JPEG component is invalid.",
-    });
-  }
-  return snapSelectionToComponentBlocks(
-    selected.value,
-    inspection,
-    component.id,
+  return component
+    ? snapSelectionToComponentBlocks(rectangle.value, inspection, component.id)
+    : failure({
+        code: "INVALID_INPUT",
+        message: "The selected JPEG component is invalid.",
+      });
+}
+
+function createMask(
+  context: MaskToolContext,
+  selection: SpatialSelection,
+): Result<SpatialMask> {
+  return createSpatialMask(
+    selection,
+    context.inspection.width,
+    context.inspection.height,
   );
 }
 
-function maskFromRectangle(
+function selectBlocks(
   context: MaskToolContext,
-  selected: Result<SpatialSelection | null>,
-): Result<SpatialMask | null> {
-  if (!selected.ok) return selected;
-  if (!selected.value) return success(null);
-  const { width, height } = context.inspection;
-  return createSpatialMask(selected.value, width, height);
+  anchor: JpegBlockCoordinate,
+  cursor: JpegBlockCoordinate,
+) {
+  return selectRectangle(
+    context,
+    {
+      x: Math.min(anchor.imageX, cursor.imageX),
+      y: Math.min(anchor.imageY, cursor.imageY),
+    },
+    {
+      x: Math.max(
+        anchor.imageX + anchor.imageWidth,
+        cursor.imageX + cursor.imageWidth,
+      ),
+      y: Math.max(
+        anchor.imageY + anchor.imageHeight,
+        cursor.imageY + cursor.imageHeight,
+      ),
+    },
+  );
 }
 
-class RectangleGesture implements MaskGesture {
-  private selection: SpatialSelection | null = null;
-
-  constructor(
-    private readonly context: MaskToolContext,
-    private readonly start: ImagePoint,
-  ) {}
-
-  move({ point }: ImageSample) {
-    const selected = selectRectangle(this.context, this.start, point);
-    if (!selected.ok) return selected;
-    this.selection = selected.value;
-    return success(undefined);
-  }
-
-  getDraft(): MaskDraft | null {
-    return this.selection
-      ? { kind: "rectangle", selection: this.selection }
-      : null;
-  }
-
-  end(sample: ImageSample | null) {
-    this.cancel();
-    return sample
-      ? maskFromRectangle(
-          this.context,
-          selectRectangle(this.context, this.start, sample.point),
-        )
-      : success(null);
-  }
-
-  cancel() {
-    this.selection = null;
-  }
-}
-
-const DIRECTION_BY_KEY = new Map<string, ImagePoint>([
+const ARROW_DIRECTIONS = new Map<string, ImagePoint>([
   ["ArrowLeft", { x: -1, y: 0 }],
   ["ArrowRight", { x: 1, y: 0 }],
   ["ArrowUp", { x: 0, y: -1 }],
   ["ArrowDown", { x: 0, y: 1 }],
 ]);
 
-interface KeyboardSelectionUpdate {
-  readonly draft: MaskDraft | null;
-  readonly announcement: string;
-  readonly mask?: SpatialMask | null;
-}
-
-function getKeyboardStart({ inspection, componentIndex }: MaskToolContext) {
-  const component = inspection.components[componentIndex];
-  if (!component) return null;
-  const grid = getJpegComponentBlockGrid(inspection, component.id);
-  if (!grid) return null;
-  const cursor = mapJpegBlockCoordinate(
-    inspection,
-    component.id,
-    Math.floor(grid.columns / 2),
-    Math.floor(grid.rows / 2),
-  );
-  return cursor.ok ? { cursor: cursor.value, ...grid } : null;
-}
-
-export class KeyboardRectangle {
+class SelectKeyboard {
   private anchor: JpegBlockCoordinate | null = null;
 
-  constructor(
-    private readonly context: MaskToolContext,
-    private readonly orientation: JpegOrientation,
-    private cursor: JpegBlockCoordinate,
-    private readonly columns: number,
-    private readonly rows: number,
-  ) {}
-
-  getCursor() {
-    return this.cursor;
+  reset(): void {
+    this.anchor = null;
   }
 
-  move(key: string): Result<KeyboardSelectionUpdate> | null {
-    const direction = DIRECTION_BY_KEY.get(key);
-    if (!direction) return null;
-    const { x, y } = previewPointToFrame(
-      direction.x,
-      direction.y,
-      0,
-      0,
-      this.orientation,
+  initialCursor({ inspection, componentIndex }: MaskToolContext) {
+    const component = inspection.components[componentIndex];
+    const grid =
+      component && getJpegComponentBlockGrid(inspection, component.id);
+    if (!grid) return null;
+    const coordinate = mapJpegBlockCoordinate(
+      inspection,
+      component.id,
+      Math.floor(grid.columns / 2),
+      Math.floor(grid.rows / 2),
     );
-    const moved = mapJpegBlockCoordinate(
-      this.context.inspection,
-      this.cursor.componentId,
-      Math.max(0, Math.min(this.columns - 1, this.cursor.blockX + x)),
-      Math.max(0, Math.min(this.rows - 1, this.cursor.blockY + y)),
-    );
-    if (!moved.ok) return moved;
-    this.cursor = moved.value;
-    return success({
-      draft: this.getDraft(),
-      announcement: `DCT block ${this.cursor.blockX + 1} of ${this.columns}, row ${this.cursor.blockY + 1} of ${this.rows}.`,
-    });
+    return coordinate.ok ? coordinate.value : null;
   }
 
-  confirm(): Result<KeyboardSelectionUpdate> {
-    if (!this.anchor) {
-      this.anchor = this.cursor;
+  handleKey(
+    context: MaskToolContext,
+    cursor: JpegBlockCoordinate | null,
+    key: string,
+    orientation: JpegOrientation,
+  ): Result<CanvasFeedback | null> {
+    if (key === "Escape") {
+      this.reset();
       return success({
-        draft: this.getDraft(),
-        announcement: `Selection started at DCT block ${this.cursor.blockX + 1}, row ${this.cursor.blockY + 1}. Use arrow keys to extend it, then Enter to finish or Escape to clear.`,
+        draft: null,
+        keyboardCursor: this.initialCursor(context),
+        selection: { mask: null, autoApply: false },
+        announcement: "Selection cleared.",
       });
     }
-    const selected = this.selectToCursor(this.anchor);
-    this.anchor = null;
-    const mask = maskFromRectangle(this.context, selected);
+    const direction = ARROW_DIRECTIONS.get(key);
+    if (!direction && key !== "Enter") return success(null);
+    const { inspection, componentIndex } = context;
+    const component = inspection.components[componentIndex];
+    const grid =
+      component && getJpegComponentBlockGrid(inspection, component.id);
+    if (!grid) return success(null);
+    const current =
+      cursor?.componentId === component.id
+        ? cursor
+        : this.initialCursor(context);
+    if (!current) return success(null);
+
+    if (direction) {
+      const delta = previewPointToFrame(
+        direction.x,
+        direction.y,
+        0,
+        0,
+        orientation,
+      );
+      const moved = mapJpegBlockCoordinate(
+        inspection,
+        component.id,
+        Math.max(0, Math.min(grid.columns - 1, current.blockX + delta.x)),
+        Math.max(0, Math.min(grid.rows - 1, current.blockY + delta.y)),
+      );
+      if (!moved.ok) return moved;
+      const draft = this.anchor
+        ? selectBlocks(context, this.anchor, moved.value)
+        : success(undefined);
+      if (!draft.ok) return draft;
+      return success({
+        keyboardCursor: moved.value,
+        draft: draft.value
+          ? { kind: "rectangle", selection: draft.value }
+          : draft.value,
+        announcement: `DCT block ${moved.value.blockX + 1} of ${grid.columns}, row ${moved.value.blockY + 1} of ${grid.rows}.`,
+      });
+    }
+
+    const selection = selectBlocks(context, this.anchor ?? current, current);
+    if (!selection.ok || !selection.value)
+      return selection.ok ? success(null) : selection;
+    if (!this.anchor) {
+      this.anchor = current;
+      return success({
+        keyboardCursor: current,
+        draft: { kind: "rectangle", selection: selection.value },
+        announcement: `Selection started at DCT block ${current.blockX + 1}, row ${current.blockY + 1}. Use arrow keys to extend it, then Enter to finish or Escape to clear.`,
+      });
+    }
+    const mask = createMask(context, selection.value);
     if (!mask.ok) return mask;
+    this.reset();
     return success({
-      mask: mask.value,
       draft: null,
+      selection: { mask: mask.value, autoApply: true },
       announcement: "Rectangle selection complete.",
     });
   }
-
-  clear() {
-    this.anchor = null;
-  }
-
-  private getDraft(): MaskDraft | null {
-    if (!this.anchor) return null;
-    const selected = this.selectToCursor(this.anchor);
-    return selected.ok && selected.value
-      ? { kind: "rectangle", selection: selected.value }
-      : null;
-  }
-
-  private selectToCursor(anchor: JpegBlockCoordinate) {
-    const cursor = this.cursor;
-    return selectRectangle(
-      this.context,
-      {
-        x: Math.min(anchor.imageX, cursor.imageX),
-        y: Math.min(anchor.imageY, cursor.imageY),
-      },
-      {
-        x: Math.max(
-          anchor.imageX + anchor.imageWidth,
-          cursor.imageX + cursor.imageWidth,
-        ),
-        y: Math.max(
-          anchor.imageY + anchor.imageHeight,
-          cursor.imageY + cursor.imageHeight,
-        ),
-      },
-    );
-  }
 }
 
-export class SelectTool implements MaskToolController {
-  begin(context: MaskToolContext, sample: ImageSample) {
-    return success(new RectangleGesture(context, sample.point));
+export class SelectTool implements CanvasInteraction {
+  private readonly keyboard = new SelectKeyboard();
+
+  begin({ image }: CanvasPointerInput, context: CanvasContext) {
+    if (!image) return null;
+    this.keyboard.reset();
+    return openMaskGesture(this.start(context, image), context);
+  }
+
+  private start(
+    context: MaskToolContext,
+    { point: start }: ImageSample,
+  ): Result<MaskGesture> {
+    let draft: SpatialSelection | null = null;
+    return success({
+      move({ point }) {
+        const selection = selectRectangle(context, start, point);
+        if (!selection.ok) return selection;
+        draft = selection.value;
+        return success(undefined);
+      },
+      getDraft: () => (draft ? { kind: "rectangle", selection: draft } : null),
+      end(sample) {
+        if (!sample) return success(null);
+        const selection = selectRectangle(context, start, sample.point);
+        if (!selection.ok) return selection;
+        return selection.value
+          ? createMask(context, selection.value)
+          : success(null);
+      },
+      cancel() {
+        draft = null;
+      },
+    });
+  }
+
+  focus(context: CanvasContext): void {
+    context.publish({ keyboardCursor: this.getInitialCursor(context) });
+  }
+
+  getInitialCursor(context: MaskToolContext) {
+    return this.keyboard.initialCursor(context);
+  }
+
+  reset(): void {
+    this.keyboard.reset();
+  }
+
+  handleKey(input: CanvasKeyInput, context: CanvasContext): boolean {
+    if (
+      !input.altKey &&
+      (input.ctrlKey || input.metaKey) &&
+      input.key.toLowerCase() === "a"
+    ) {
+      context.cancelGesture();
+      this.reset();
+      context.publish({ keyboardCursor: null });
+      selectWholeImage(context);
+      return true;
+    }
+    if (!input.canvasFocused || input.altKey || input.ctrlKey || input.metaKey)
+      return false;
+    if (input.key === "Escape") context.cancelGesture();
+    else if (input.pointerActive) return false;
+    if (input.key === "Enter" && input.repeat) return true;
+    const result = this.keyboard.handleKey(
+      context,
+      context.keyboardCursor,
+      input.key,
+      context.orientation,
+    );
+    if (!result.ok) {
+      context.publish({ error: result.error.message });
+      return true;
+    }
+    if (!result.value) return false;
+    context.publish(result.value);
+    return true;
   }
 
   getHint({ grid }: MaskToolContext) {
@@ -230,22 +280,5 @@ export class SelectTool implements MaskToolController {
       keyboard:
         "Arrow keys move one DCT block. Enter starts or completes a rectangle. Escape clears the selection. Ctrl/⌘+A selects the whole image.",
     };
-  }
-
-  getInitialCursor(context: MaskToolContext) {
-    return getKeyboardStart(context)?.cursor ?? null;
-  }
-
-  beginKeyboard(context: MaskToolContext, orientation: JpegOrientation) {
-    const start = getKeyboardStart(context);
-    return start
-      ? new KeyboardRectangle(
-          context,
-          orientation,
-          start.cursor,
-          start.columns,
-          start.rows,
-        )
-      : null;
   }
 }

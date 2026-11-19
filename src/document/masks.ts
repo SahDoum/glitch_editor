@@ -301,8 +301,19 @@ export function createBrushMaskFromStrokes(
   imageWidth: number,
   imageHeight: number,
 ): Result<SpatialMask> {
-  // The coverage functions treat these as independent samples. Interpolation
-  // happens within each stroke before storage, so a single shape keeps gaps.
+  const pointCount = strokes.reduce(
+    (total, stroke) => total + stroke.length,
+    0,
+  );
+  if (pointCount === 0 || pointCount > MAX_BRUSH_POINTS) {
+    return failure({
+      code: "INVALID_INPUT",
+      message: "The image-space brush mask is invalid.",
+    });
+  }
+
+  // The completed segments contain sampled brush centers. Coverage is the
+  // union of their footprints, so one shape preserves gaps between segments.
   return createBrushMask(strokes.flat(), radius, imageWidth, imageHeight);
 }
 

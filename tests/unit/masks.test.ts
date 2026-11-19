@@ -9,6 +9,10 @@ import {
   getMaskFromParameters,
   isSpatialMask,
 } from "../../src/document/masks";
+import {
+  getMaskBlockCoverage,
+  getMaskBlockCoverageAtLeastHalf,
+} from "../../src/jpeg/block-geometry";
 
 describe("spatial selections and masks", () => {
   it("creates pixel-space rectangular selections from either drag direction", () => {
@@ -129,39 +133,43 @@ describe("spatial selections and masks", () => {
     });
   });
 
-  it("stores separated brush samples as one valid brush shape", () => {
-    const mask = createBrushMaskFromStrokes(
-      [
-        [
-          { x: 2, y: 3 },
-          { x: 5, y: 3 },
-        ],
-        [
-          { x: 15, y: 3 },
-          { x: 18, y: 3 },
-        ],
+  it("keeps gaps between brush segments in a valid single-shape mask", () => {
+    const geometry = {
+      width: 40,
+      height: 8,
+      components: [
+        {
+          id: 1,
+          horizontalSampling: 1,
+          verticalSampling: 1,
+          quantizationTable: 0,
+        },
       ],
-      2,
-      20,
-      16,
+    };
+    const points = [
+      { x: 4, y: 4 },
+      { x: 36, y: 4 },
+    ] as const;
+    const mask = createBrushMaskFromStrokes(
+      [[points[0]], [], [points[1]]],
+      3.75,
+      geometry.width,
+      geometry.height,
     );
-    expect(mask).toMatchObject({
-      ok: true,
-      value: {
-        shapes: [
-          {
-            kind: "brush",
-            points: [
-              { x: 2, y: 3 },
-              { x: 5, y: 3 },
-              { x: 15, y: 3 },
-              { x: 18, y: 3 },
-            ],
-          },
-        ],
-      },
-    });
-    if (mask.ok) expect(isSpatialMask(mask.value)).toBe(true);
+    if (!mask.ok) throw new Error(mask.error.message);
+    expect(isSpatialMask(mask.value)).toBe(true);
+    expect(mask.value.shapes).toEqual([
+      { kind: "brush", mode: "add", radius: 3.75, points },
+    ]);
+    const coverage = { ok: true, value: Uint8Array.of(1, 0, 0, 0, 1) };
+    expect(getMaskBlockCoverage(mask.value, geometry, 1)).toEqual(coverage);
+    expect(getMaskBlockCoverageAtLeastHalf(mask.value, geometry, 1)).toEqual(
+      coverage,
+    );
+    const copied = copySpatialMask(mask.value);
+    if (!copied.ok) throw new Error(copied.error.message);
+    expect(copied.value.shapes).toEqual(mask.value.shapes);
+    expect(copied.value.id).not.toBe(mask.value.id);
   });
 
   it("copies rectangle and brush snapshots with new identities and independent geometry", () => {
