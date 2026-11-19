@@ -235,7 +235,7 @@ describe("canvas interactions", () => {
 
     expect(
       tool("select").handleKey?.(
-        key("a", { ctrlKey: true, canvasFocused: false }),
+        key("a", { ctrlKey: true, canvasFocused: true }),
         context,
       ),
     ).toBe(true);

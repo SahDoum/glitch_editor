@@ -22,7 +22,7 @@ describe("effect registry", () => {
       expect(controller.view).toBe(view);
       expect(view.Panel).toBeDefined();
       expect(view.iconPaths.length).toBeGreaterThan(0);
-      expect(view.toolbar.tools.length).toBeGreaterThan(0);
+      expect(view.toolbar.tools.length > 0).toBe(view.interaction === "mask");
     }
   });
 
@@ -37,7 +37,18 @@ describe("effect registry", () => {
     expect([...menuIds].sort()).toEqual(
       EFFECT_REGISTRY.map(({ view }) => view.id).sort(),
     );
-    expect(new Set(menuIds).size).toBe(menuIds.length);
+    expect(new Set(menuIds).size).toBe(17);
+    expect(EFFECT_MENU[0]?.effectIds).toEqual([
+      "pixelate",
+      "engraving",
+      "ringing",
+    ]);
+    expect(EFFECT_MENU.slice(1).map(({ heading }) => heading)).toEqual([
+      "Tone and detail",
+      "JPEG coefficients",
+      "Blocks",
+      "JPEG experiments",
+    ]);
   });
 
   it("removes the Hand, Inspector and Info tools", () => {
@@ -101,7 +112,7 @@ describe("effect registry", () => {
   it("describes recorded operations by exact view or family title", () => {
     expect(
       findOperationPresentation({ kind: "block-permutation" })?.title,
-    ).toBe("Block Shuffle");
+    ).toBe("Shuffle Blocks");
     expect(findOperationPresentation({ kind: "quantization" })?.view?.id).toBe(
       "quantization",
     );

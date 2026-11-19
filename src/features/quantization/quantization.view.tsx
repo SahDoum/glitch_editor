@@ -44,8 +44,9 @@ export function getCurrentQuantizationTables(
 
 export const QuantizationView: EffectView<QuantizationSettings> = {
   id: "quantization",
-  label: "Quantization Matrix",
-  description: "Edit a DQT table and re-encode the JPEG.",
+  label: "Quantization Table",
+  description:
+    "Changes the JPEG values that control tone and detail precision.",
   category: "Quantization",
   iconPaths: [
     "M4 4h16v16H4z",

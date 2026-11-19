@@ -79,7 +79,7 @@ function sourceGesture(start: ImagePoint): EffectGesture<BlockRepeatSettings> {
         return {
           patch: { draft: null },
           error:
-            "Copy / repeat uses one source block. Drag within a single visible DCT block.",
+            "Select one source block by dragging within a visible DCT block.",
         };
       }
       return {
@@ -117,13 +117,34 @@ function destinationGesture(
 }
 
 const gestures: EffectGestureController<BlockRepeatSettings> = {
-  getHint({ settings }) {
-    return settings.source
-      ? {
-          text: "Drag from the source block to the first destination, then choose Apply block repeat.",
-          keyboard: "Press R to choose a new source.",
-        }
-      : { text: "Drag within one visible DCT block to select the source." };
+  getHint(context) {
+    if (!context.settings.source) return { text: "Select one source block." };
+    const keyboard = "Press R to choose another source.";
+    const operation = getBlockRepeatOperation(context);
+    if (!operation)
+      return {
+        text: "Drag from the source block to the first destination.",
+        keyboard,
+      };
+    if (operation.offsetX === 0 && operation.offsetY === 0) {
+      return {
+        text: "Move the first copy away from the source block.",
+        keyboard,
+      };
+    }
+    if (
+      !Number.isInteger(operation.repetitions) ||
+      operation.repetitions < 1 ||
+      operation.repetitions > 256
+    ) {
+      return { text: "Enter a copy count from 1 to 256.", keyboard };
+    }
+    return {
+      text: isBlockRepeatParameters(operation, context.inspection)
+        ? "The copies are ready. Press Apply to repeat the block."
+        : "Some copies go outside the photo. Reduce the count or move the first copy closer.",
+      keyboard,
+    };
   },
   begin(context, point) {
     const block = getComponentBlockPoint(
@@ -163,12 +184,30 @@ const gestures: EffectGestureController<BlockRepeatSettings> = {
   getOverlay(context) {
     const { settings, inspection, componentIndex } = context;
     const operation = getBlockRepeatOperation(context);
+    const destinations = [];
+    if (
+      operation &&
+      Number.isInteger(operation.repetitions) &&
+      operation.repetitions <= 256
+    ) {
+      for (let copy = 1; copy <= operation.repetitions; copy++) {
+        const selection = getBlockRegionSelection(inspection, componentIndex, {
+          x: operation.sourceX + copy * operation.offsetX,
+          y: operation.sourceY + copy * operation.offsetY,
+          width: 1,
+          height: 1,
+        });
+        if (selection) destinations.push(selection);
+      }
+    }
     return {
       source: getBlockRegionSelection(
         inspection,
         componentIndex,
         settings.draft ?? settings.source,
       ),
+      sourceLabel: settings.source ? "Source" : undefined,
+      destinations,
       sourceInvalid:
         settings.draft !== null &&
         (settings.draft.width !== 1 || settings.draft.height !== 1),

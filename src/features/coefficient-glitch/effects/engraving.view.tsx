@@ -15,8 +15,8 @@ export const EngravingSettings: CoefficientRecipeStep = {
 export const EngravingView: EffectView<CoefficientRecipeStep> =
   defineCoefficientView({
     id: "engraving",
-    label: "Engraving",
-    description: "Keep DC and AC on a chosen frequency axis; remove other AC.",
+    label: "Streaks",
+    description: "Draws fine detail into horizontal or vertical streaks.",
     iconPaths: [
       "M9 1h6v4H9z",
       "M8 3h8v2H8z",
@@ -34,13 +34,13 @@ export const EngravingView: EffectView<CoefficientRecipeStep> =
       <CoefficientRangeField
         {...props}
         labelId="engraving-strength-label"
-        label={`Directional AC gain · ${props.settings.strength}×`}
+        label={`Streak strength · ${props.settings.strength}×`}
         min={1}
         max={8}
         step={0.1}
         lowLabel="1× · directional cut"
         highLabel="8× · stronger"
-        note="Keeps DC and scales AC on one frequency axis; other AC is removed in masked blocks. The result may be blocky and is not guaranteed to resemble engraving."
+        note="Keeps DC. Horizontal uses the u=0 frequency axis and Vertical uses v=0. The other AC coefficients are cleared in the area."
         extra={
           <EngravingDirectionChoice
             value={

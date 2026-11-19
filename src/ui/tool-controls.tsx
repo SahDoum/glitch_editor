@@ -122,18 +122,16 @@ export function EngravingDirectionChoice({
   return (
     <RadioChoiceGroup
       name="engraving-direction"
-      legend="Line direction"
+      legend="Direction"
       value={value}
       options={[
         {
           value: "engrave-horizontal",
           label: "Horizontal",
-          hint: "Keep AC on the u=0 axis",
         },
         {
           value: "engrave-vertical",
           label: "Vertical",
-          hint: "Keep AC on the v=0 axis",
         },
       ]}
       onChange={onChange}
@@ -146,11 +144,15 @@ export function SeedField({
   value,
   onChange,
   disabled = false,
+  showValue = true,
+  showNewVariation = true,
 }: {
   label: string;
   value: number | string;
   onChange(value: string): void;
   disabled?: boolean;
+  showValue?: boolean;
+  showNewVariation?: boolean;
 }) {
   const [copyStatus, setCopyStatus] = useState("");
 
@@ -169,49 +171,54 @@ export function SeedField({
 
   return (
     <div className="coefficient-field seed-field">
-      <span className="seed-label">{label}</span>
+      {showValue && <span className="seed-label">{label}</span>}
       <div className="seed-value-row">
-        <output className="seed-value" aria-live="polite">
-          {value}
-        </output>
-        <button
-          className="seed-copy"
-          type="button"
-          aria-label={`Copy ${label.toLowerCase()}`}
-          title="Copy seed"
-          disabled={disabled}
-          onClick={() => void copySeed()}
-        >
-          <svg
-            viewBox="0 0 16 16"
-            width="14"
-            height="14"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.4"
-            aria-hidden="true"
-          >
-            <rect x="5" y="5" width="8" height="9" rx="1" />
-            <path d="M10 5V3.5A1.5 1.5 0 0 0 8.5 2h-5A1.5 1.5 0 0 0 2 3.5v7A1.5 1.5 0 0 0 3.5 12H5" />
-          </svg>
-        </button>
-        <button
-          className="operation-button secondary seed-randomize"
-          type="button"
-          aria-label={`Randomize ${label.toLowerCase()}`}
-          disabled={disabled}
-          onClick={() =>
-            onChange(
-              String(
-                createRandomSeed(
-                  Number.isInteger(Number(value)) ? Number(value) : undefined,
+        {showValue && (
+          <>
+            <output className="seed-value" aria-live="polite">
+              {value}
+            </output>
+            <button
+              className="seed-copy"
+              type="button"
+              aria-label={`Copy ${label.toLowerCase()}`}
+              title="Copy seed"
+              disabled={disabled}
+              onClick={() => void copySeed()}
+            >
+              <svg
+                viewBox="0 0 16 16"
+                width="14"
+                height="14"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.4"
+                aria-hidden="true"
+              >
+                <rect x="5" y="5" width="8" height="9" rx="1" />
+                <path d="M10 5V3.5A1.5 1.5 0 0 0 8.5 2h-5A1.5 1.5 0 0 0 2 3.5v7A1.5 1.5 0 0 0 3.5 12H5" />
+              </svg>
+            </button>
+          </>
+        )}
+        {showNewVariation && (
+          <button
+            className="operation-button secondary seed-randomize"
+            type="button"
+            disabled={disabled}
+            onClick={() =>
+              onChange(
+                String(
+                  createRandomSeed(
+                    Number.isInteger(Number(value)) ? Number(value) : undefined,
+                  ),
                 ),
-              ),
-            )
-          }
-        >
-          Randomize
-        </button>
+              )
+            }
+          >
+            New variation
+          </button>
+        )}
       </div>
       {copyStatus && (
         <span className="seed-copy-status" role="status">

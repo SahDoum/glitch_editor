@@ -79,9 +79,10 @@ supports them. Select owns its keyboard anchor, and Brush owns the sampled
 points of the current stroke. A successful editing capture focuses the canvas
 without scrolling. Cancellation discards the gesture draft and releases
 capture. `ImageOverlays` renders the draft and committed outlines. The
-editor commits a completed mask once and applies the
-active effect when Auto Apply is enabled. All and keyboard Select All replace
-the mask directly.
+editor commits a completed mask once. A per-document preference for each
+effect and tool allows one operation after a completed stroke or rectangle.
+The mask is cleared after successful encoding. Choose Whole photo or use
+Control/Command+A on the focused canvas to select the full frame.
 
 Block Transfer and Repeat supply phase-specific hints through their existing
 gesture controllers. Transfer applies at the end of a valid destination drag.
@@ -160,10 +161,11 @@ Coordinates import, document lifecycle, selection, operation dispatch, preview r
 
 Owns immutable source assets, document metadata, current editable representation, masks/selections, operation stack, and revision identifiers.
 
-All selects the full image as the current spatial mask by default; choosing it
-again restores full-image coverage. Brush and Select author a draft spatial
-mask in image-pixel coordinates. Opening a project with a saved draft mask
-preserves that mask and activates Select instead of replacing it with All.
+Whole photo uses a full-frame mask. Brush and Rectangle author a draft
+spatial mask in image-pixel coordinates. Leaving Whole photo starts an
+empty local area, and temporarily switching to a gesture or panel effect
+keeps the local area and tool. Opening a project restores the tool from
+the geometry of the saved mask.
 The interface uses the current draft for mask-consuming JPEG effects and no
 longer exposes named masks. The underlying named-mask operation remains
 available for compatibility with existing operation data. Effects embed an
@@ -187,17 +189,13 @@ snapping; the overlay therefore shows the component blocks an effect will
 change. This is a view of the existing image-pixel mask and does not change
 its stored shape or operation coverage.
 
-The workspace has an Effects catalog on the left, a canvas with a single
-horizontal tool row above it, and contextual effect settings plus History on
-the right. The catalog groups coefficient, block, quantization, and
-encoded-data operations and stays visible while settings are shown. History is
-collapsed at the bottom of the right-side scrolling panel; when expanded, it
-follows the settings in that scroll flow. On narrow screens the catalog, canvas,
-and right panel reflow vertically. Brush and Select are enabled on the canvas
-toolbar only for effects whose View declares mask interaction; block transfer
-and repeat use their own canvas gestures. History displays newer operations above older ones without changing
-their bottom-to-top replay order. UI collapse and panel selection are
-presentation state, not document or operation data.
+The workspace has an Effects catalog, canvas, and contextual effect
+settings. History opens in the settings column without discarding the form.
+Newer operations appear above older ones while replay still runs in stack
+order. File commands share one open path, including dropped files. A saved
+project snapshot tracks operations, the working area, and damage stages.
+Import prepares the replacement and replays any project operations before
+replacing the current document.
 
 Coefficient effect settings are validated and saved separately per effect in
 browser `localStorage`; they are not serialized into `.jpglitch` projects.
@@ -212,12 +210,9 @@ Engraving selects horizontal or vertical mode in its settings while retaining
 the existing typed operation modes and per-effect settings storage.
 Custom User brush creation and selection are not exposed. Previously stored
 custom-brush data is left untouched in browser storage but is not loaded by the
-interface. Per-effect automatic-apply toggles continue to use the existing
-browser-storage key for compatibility: when enabled, a completed Brush or
-rectangle mask immediately creates an ordinary undoable coefficient
-operation and clears the draft mask after the operation is accepted. If
-validation fails, the draft remains available for correction. The operation's
-mask snapshot can be restored from history if encoding fails.
+interface. Automatic application starts disabled on each open. When enabled,
+a completed Brush or Rectangle gesture requests one undoable operation.
+The mask remains available if validation or encoding fails.
 The current single-shape mask replaces the previous draft; automatic apply
 does not imply an additive mask. Effect history contains an immutable mask
 snapshot; restoring it replaces the draft without confirmation.
@@ -470,13 +465,14 @@ It does not imply fractional-sample chroma translation or MCU manipulation.
    whether it is standards-compliant and decodable, but a failed browser
    preview does not discard the encoded bytes.
 
-An uncommitted effect preview is explicitly requested, re-encodes a temporary
-JPEG, and does not add a History operation. The UI supports this path for
-coefficient effects, mask-based block effects, and DQT edits. Parameter changes
-mark an existing draft preview stale; obsolete requests are superseded through
-the preview coordinator. This is not a lightweight live-preview path because
-the current codec re-encodes the JPEG. Scan Corrupt does not have this draft
-preview path. Full before/after split or wipe comparison remains future work.
+A draft preview re-encodes a temporary JPEG through the operation controller.
+Coefficient effects request previews when the draft changes. Mask-based block
+effects offer a manual preview. Changing a draft replaces its visible preview
+with the last result or original and cancels the obsolete worker request.
+A file opening starts a new session, even when the source bytes match.
+Apply commits one operation after encoding succeeds. A matching draft can
+supply its encoded bytes directly for Apply and download. Undo and Redo
+recompute the committed stack. Scan Corrupt renders its own terminal stages.
 
 The UI must distinguish:
 

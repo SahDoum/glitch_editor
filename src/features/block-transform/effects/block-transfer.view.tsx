@@ -1,3 +1,4 @@
+import { EffectActions } from "../../../ui/effect-actions";
 import type { JpegBlockRegion } from "../../../jpeg/block-geometry";
 import type {
   BlockTransferAction,
@@ -13,6 +14,7 @@ import { BlockTransformFrame } from "../block-transform.shared";
 export interface BlockTransferSettings {
   readonly mode: BlockTransferMode;
   readonly action: BlockTransferAction;
+  readonly applyOnDrop: boolean;
   readonly source: JpegBlockRegion | null;
   /** Source rectangle while it is being dragged. */
   readonly draft: JpegBlockRegion | null;
@@ -29,8 +31,8 @@ export const NO_BLOCK_TRANSFER_SOURCE = {
 
 export const BlockTransferView: EffectView<BlockTransferSettings> = {
   id: "block-transfer",
-  label: "Block Transfer",
-  description: "Copy or swap a dragged region of DCT blocks.",
+  label: "Transfer Blocks",
+  description: "Copies or swaps a region of JPEG blocks.",
   category: "Blocks",
   iconPaths: ["M14 6v-2H2v16h12v-2", "M9 10h8V7l6 5-6 5v-3H9z"],
   interaction: "gesture",
@@ -40,6 +42,7 @@ export const BlockTransferView: EffectView<BlockTransferSettings> = {
   defaultSettings: {
     mode: "all",
     action: "copy",
+    applyOnDrop: false,
     ...NO_BLOCK_TRANSFER_SOURCE,
   },
   operation: {
@@ -59,8 +62,8 @@ export const BlockTransferView: EffectView<BlockTransferSettings> = {
   getTopBarActions: (settings) => [
     {
       id: "reset-source",
-      label: "New source",
-      title: "Choose a new source region (R)",
+      label: "Choose another source",
+      title: "Choose another source region",
       shortcut: "R",
       disabled: !settings.source && !settings.draft,
       patch: NO_BLOCK_TRANSFER_SOURCE,
@@ -72,25 +75,40 @@ export const BlockTransferView: EffectView<BlockTransferSettings> = {
   }),
   Panel({ settings, editor, onChangeSettings }) {
     return (
-      <BlockTransformFrame editor={editor} requiresMask={false}>
-        {settings.source && (
-          <p className="selection-readout">
-            Source blocks ({settings.source.x}, {settings.source.y}) ·{" "}
-            {settings.source.width} × {settings.source.height}
-          </p>
-        )}
-        <RadioChoiceGroup<BlockTransferMode>
-          name="block-transfer-data"
-          legend="Coefficient data"
-          value={settings.mode}
-          options={[
-            { value: "all", label: "Whole block", hint: "DC + AC" },
-            { value: "dc", label: "DC only" },
-            { value: "ac", label: "AC only" },
-          ]}
-          onChange={(mode) => onChangeSettings({ mode })}
-          layout="triple"
-        />
+      <BlockTransformFrame
+        editor={editor}
+        advanced={
+          <>
+            <RadioChoiceGroup<BlockTransferMode>
+              name="block-transfer-data"
+              legend="Coefficient data"
+              value={settings.mode}
+              options={[
+                { value: "all", label: "Whole block", hint: "DC + AC" },
+                { value: "dc", label: "DC only" },
+                { value: "ac", label: "AC only" },
+              ]}
+              onChange={(mode) => onChangeSettings({ mode })}
+              layout="triple"
+            />
+            <p className="coefficient-note">
+              Copying luminance transfers brightness structure. The destination
+              can retain a different color.
+            </p>
+          </>
+        }
+        actions={
+          <EffectActions
+            onApply={() => editor.apply()}
+            disabled={!editor.canApply || editor.hasScanCorruption}
+            prompt={
+              settings.applyOnDrop
+                ? "Release over a valid destination to apply."
+                : undefined
+            }
+          />
+        }
+      >
         <RadioChoiceGroup<BlockTransferAction>
           name="block-transfer-action"
           legend="Transfer action"
@@ -102,12 +120,17 @@ export const BlockTransferView: EffectView<BlockTransferSettings> = {
           onChange={(action) => onChangeSettings({ action })}
           layout="inline"
         />
-        {settings.action === "swap" && (
-          <p className="coefficient-note">
-            Swaps must use non-overlapping regions. Use copy for overlapping
-            source and destination areas.
-          </p>
-        )}
+        <label className="effect-auto-apply">
+          <input
+            type="checkbox"
+            checked={settings.applyOnDrop}
+            disabled={editor.isEncoding || editor.hasScanCorruption}
+            onChange={(event) =>
+              onChangeSettings({ applyOnDrop: event.currentTarget.checked })
+            }
+          />
+          Apply on drop
+        </label>
       </BlockTransformFrame>
     );
   },

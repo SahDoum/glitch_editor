@@ -1,6 +1,5 @@
 export interface EditorHandlers {
   readonly changeComponent: (index: number) => void;
-  readonly changeAutoApply: (checked: boolean) => void;
   readonly setError: (message: string) => void;
   readonly apply: (patch?: object) => void;
   readonly preview: (patch?: object) => void;
@@ -23,8 +22,6 @@ export class EditorBridge {
 
   readonly changeComponent = (index: number): void =>
     this.latest?.changeComponent(index);
-  readonly changeAutoApply = (checked: boolean): void =>
-    this.latest?.changeAutoApply(checked);
   readonly setError = (message: string): void => this.latest?.setError(message);
   readonly apply = (patch?: object): void => this.latest?.apply(patch);
   readonly preview = (patch?: object): void => this.latest?.preview(patch);

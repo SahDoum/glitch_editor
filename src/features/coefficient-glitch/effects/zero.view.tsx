@@ -13,9 +13,8 @@ export const ZeroSettings: CoefficientRecipeStep = {
 export const ZeroView: EffectView<CoefficientRecipeStep> =
   defineCoefficientView({
     id: "zero",
-    label: "Zero",
-    description:
-      "Set selected quantized DCT coefficients to zero; choose DC or an AC frequency zone.",
+    label: "Zero Coefficients",
+    description: "Clears the tones or detail band you select.",
     iconPaths: [
       "M5 2h4v4H5z",
       "M10 2h4v4h-4z",
@@ -31,4 +30,5 @@ export const ZeroView: EffectView<CoefficientRecipeStep> =
     defaultSettings: ZeroSettings,
     historyModes: ["zero"],
     showBandMatrix: true,
+    bandLabel: "Clear coefficients",
   });

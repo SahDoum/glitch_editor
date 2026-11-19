@@ -64,7 +64,7 @@ describe("block transfer and repeat gestures", () => {
       const end = destination.gesture?.end(context(), { x: 9, y: 1 }, true);
       settings = { ...settings, ...end?.patch };
       expect(settings.destination).toEqual({ x: 1, y: 0 });
-      if (id === "block-transfer") expect(end?.apply).toBe(true);
+      if (id === "block-transfer") expect(end?.apply).toBe(false);
       else expect(end?.apply).toBeUndefined();
       const built = getJpegOperationEffect(id)!.controller.buildOperation({
         settings,
@@ -188,7 +188,7 @@ describe("block transfer and repeat gestures", () => {
   it("publishes Transfer source and application through canvas feedback for the owning effect", async () => {
     const { inspection: info } = await inspection();
     const { effect, gestures } = gestureEffect("block-transfer");
-    let settings: Loose = { ...effect.view.defaultSettings };
+    let settings: Loose = { ...effect.view.defaultSettings, applyOnDrop: true };
     const outcomes: NonNullable<CanvasFeedback["effect"]>[] = [];
     const canvas: CanvasContext = {
       inspection: info,
@@ -291,9 +291,13 @@ describe("block transfer and repeat gestures", () => {
     expect(controller.buildOperation({ ...context, mask: null }).ok).toBe(
       false,
     );
-    const valid = { ...context, settings: { ...context.settings, count: 1 } };
+    const valid = { ...context, settings: { ...context.settings, count: 2 } };
     expect(gestures.getOverlay(valid)).toMatchObject({
       destinationInvalid: false,
+      destinations: [
+        { x: 8, y: 0, width: 8, height: 8 },
+        { x: 16, y: 0, width: 8, height: 8 },
+      ],
     });
     expect(controller.buildOperation({ ...valid, mask: null }).ok).toBe(true);
   });

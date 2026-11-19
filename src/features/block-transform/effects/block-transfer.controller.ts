@@ -140,7 +140,7 @@ function destinationGesture(): EffectGesture<BlockTransferSettings> {
       );
       return {
         patch: { destination: block.value },
-        apply: valid,
+        apply: valid && context.settings.applyOnDrop,
         error: valid
           ? ""
           : context.settings.action === "swap"
@@ -153,13 +153,38 @@ function destinationGesture(): EffectGesture<BlockTransferSettings> {
 }
 
 const gestures: EffectGestureController<BlockTransferSettings> = {
-  getHint({ settings }) {
-    return settings.source
-      ? {
-          text: "Drag to position the destination. Release over a valid area to apply.",
-          keyboard: "Press R to choose a new source.",
-        }
-      : { text: "Drag to select a source region on the DCT grid." };
+  getHint({ settings, inspection, componentIndex }) {
+    if (!settings.source) return { text: "Select a source region." };
+    const keyboard = "Press R to choose another source.";
+    const operation = settings.destination
+      ? getBlockTransferOperation(
+          inspection,
+          componentIndex,
+          settings,
+          settings.destination,
+        )
+      : null;
+    if (operation && !isBlockTransferParameters(operation, inspection)) {
+      return {
+        text:
+          settings.action === "swap"
+            ? "Swap needs two separate areas."
+            : "The destination region is too large.",
+        keyboard,
+      };
+    }
+    if (settings.applyOnDrop) {
+      return {
+        text: "Choose a destination. Releasing applies the transfer.",
+        keyboard,
+      };
+    }
+    return {
+      text: operation
+        ? "The destination is ready. Press Apply to transfer."
+        : "Choose a destination.",
+      keyboard,
+    };
   },
   begin(context: Context, point) {
     const block = getComponentBlockPoint(
@@ -224,6 +249,7 @@ const gestures: EffectGestureController<BlockTransferSettings> = {
     return {
       source: getBlockRegionSelection(inspection, componentIndex, shownSource),
       sourceInvalid,
+      sourceLabel: settings.source ? "Source" : undefined,
       destination: getBlockRegionSelection(
         inspection,
         componentIndex,

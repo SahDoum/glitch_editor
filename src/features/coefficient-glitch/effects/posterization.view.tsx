@@ -15,7 +15,7 @@ export const PosterizationView: EffectView<CoefficientRecipeStep> =
   defineCoefficientView({
     id: "posterization",
     label: "Posterization",
-    description: "Round selected blocks' DC coefficients to steps.",
+    description: "Groups tones into visible steps.",
     iconPaths: [
       "M4 3h16v13l-4 4H4z",
       "M16 16h4l-4 4z",
@@ -29,7 +29,7 @@ export const PosterizationView: EffectView<CoefficientRecipeStep> =
       <CoefficientRangeField
         {...props}
         labelId="dc-step-label"
-        label={`DC coefficient step · ${props.settings.strength}`}
+        label={`Step size · ${props.settings.strength}`}
         min={1}
         max={512}
         step={1}

@@ -14,9 +14,8 @@ export const RingingSettings: CoefficientRecipeStep = {
 export const RingingView: EffectView<CoefficientRecipeStep> =
   defineCoefficientView({
     id: "ringing",
-    label: "Ringing",
-    description:
-      "Keep low AC, boost coefficients at u+v 3, and remove higher AC.",
+    label: "Ringing Halo",
+    description: "May add halos around high-contrast edges.",
     iconPaths: [
       "M12 3a9 9 0 1 0 9 9",
       "M8 1q2-1 4-1",
@@ -34,7 +33,7 @@ export const RingingView: EffectView<CoefficientRecipeStep> =
       <CoefficientRangeField
         {...props}
         labelId="ringing-boost-label"
-        label={`Ringing boost · ${props.settings.strength}×`}
+        label={`Halo strength · ${props.settings.strength}×`}
         min={1}
         max={8}
         step={0.1}

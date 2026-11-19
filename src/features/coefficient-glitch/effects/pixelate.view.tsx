@@ -14,8 +14,7 @@ export const PixelateView: EffectView<CoefficientRecipeStep> =
   defineCoefficientView({
     id: "pixelate",
     label: "Pixelate",
-    description:
-      "Zero all AC coefficients in affected blocks; a fixed preset of the Zero operation.",
+    description: "Turns detail into visible blocks.",
     iconPaths: [
       "M3 3h8v8H3z",
       "M13 3h8v8h-8z",

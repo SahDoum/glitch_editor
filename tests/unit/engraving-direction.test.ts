@@ -12,7 +12,7 @@ describe("engraving direction control", () => {
       createElement(EngravingDirectionChoice, { value, onChange: () => {} }),
     );
 
-    expect(markup).toContain("<legend>Line direction</legend>");
+    expect(markup).toContain("<legend>Direction</legend>");
     expect(markup.match(/type="radio"/g)).toHaveLength(2);
     const checkedInput = markup.match(/<input[^>]*checked=""[^>]*>/g);
     expect(checkedInput).toHaveLength(1);

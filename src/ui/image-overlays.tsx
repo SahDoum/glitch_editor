@@ -24,8 +24,9 @@ export function ImageOverlays({
   componentId,
   keyboardCursor,
   gestureSource,
+  gestureSourceLabel,
   gestureSourceInvalid,
-  gestureDestination,
+  gestureDestinations,
   gestureDestinationInvalid,
 }: {
   inspection: JpegInspection;
@@ -40,8 +41,9 @@ export function ImageOverlays({
   componentId: number;
   keyboardCursor: JpegBlockCoordinate | null;
   gestureSource: SpatialSelection | null;
+  gestureSourceLabel?: string;
   gestureSourceInvalid: boolean;
-  gestureDestination: SpatialSelection | null;
+  gestureDestinations: readonly SpatialSelection[];
   gestureDestinationInvalid: boolean;
 }) {
   const blockPatternWidth = inspection.blockWidth;
@@ -156,15 +158,29 @@ export function ImageOverlays({
             height={gestureSource.height}
           />
         )}
-        {gestureDestination && (
-          <rect
-            className={`block-transfer-target-overlay ${gestureDestinationInvalid ? "is-invalid" : ""}`}
-            x={gestureDestination.x}
-            y={gestureDestination.y}
-            width={gestureDestination.width}
-            height={gestureDestination.height}
-          />
+        {gestureSource && gestureSourceLabel && (
+          <text
+            className="block-source-label"
+            x={gestureSource.x + 2}
+            y={Math.max(9, gestureSource.y - 2)}
+            fontSize={Math.max(
+              8,
+              Math.min(inspection.width, inspection.height) / 52,
+            )}
+          >
+            {gestureSourceLabel}
+          </text>
         )}
+        {gestureDestinations.map((destination, index) => (
+          <rect
+            key={index}
+            className={`block-transfer-target-overlay ${gestureDestinationInvalid ? "is-invalid" : ""}`}
+            x={destination.x}
+            y={destination.y}
+            width={destination.width}
+            height={destination.height}
+          />
+        ))}
         {draftBrushCoverage?.ok && (
           <path className="brush-draft-cells" d={draftBrushCoverage.value} />
         )}

@@ -6,7 +6,11 @@ import {
   JGE_PROJECT_SCHEMA_VERSION,
   readJgeProjectText,
 } from "../../src/project/project-file";
-import { createBrushMaskFromStrokes } from "../../src/document/masks";
+import { projectEditsKey } from "../../src/project/project-edits";
+import {
+  createBrushMaskFromStrokes,
+  createFullImageMask,
+} from "../../src/document/masks";
 
 async function loadFixture(): Promise<Uint8Array> {
   return new Uint8Array(
@@ -23,6 +27,32 @@ async function digestBytes(bytes: Uint8Array): Promise<Uint8Array> {
 }
 
 describe("project file persistence", () => {
+  it("compares working areas by geometry and tracks edits and damage", () => {
+    const first = createFullImageMask(16, 16);
+    const equivalent = createFullImageMask(16, 16);
+    if (!first.ok || !equivalent.ok) throw new Error("Expected masks");
+    expect(first.value.id).not.toEqual(equivalent.value.id);
+    const clean = {
+      operations: [],
+      draftMask: first.value,
+      scanCorruptionStages: [],
+    };
+    expect(projectEditsKey(clean)).toEqual(
+      projectEditsKey({ ...clean, draftMask: equivalent.value }),
+    );
+    expect(projectEditsKey(clean)).not.toEqual(
+      projectEditsKey({ ...clean, draftMask: null }),
+    );
+    expect(projectEditsKey(clean)).not.toEqual(
+      projectEditsKey({
+        ...clean,
+        scanCorruptionStages: [
+          { mode: "bit-flip", seed: 1, count: 1, rangeStart: 0, rangeEnd: 1 },
+        ],
+      }),
+    );
+  });
+
   it("round-trips scan corruption without coefficient operations", async () => {
     const bytes = await loadFixture();
     const digest = await digestBytes(bytes);

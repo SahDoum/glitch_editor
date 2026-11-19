@@ -1,9 +1,11 @@
 import { getMaskFromParameters, type SpatialMask } from "../document/masks";
 import type { OperationRecord, JsonValue } from "../operations/schema";
 import type { ScanCorruptionReport } from "../jpeg/scan-corruption";
-import { getHistoryDisplayEntries } from "./workspace-state";
+import { areaToolForMask, getHistoryDisplayEntries } from "./workspace-state";
+import { getMaskToolView } from "../features/canvas-tools/registry";
 import {
   findOperationPresentation,
+  getEffect,
   getScanCorruptionEffect,
 } from "../features/effects/registry";
 import type { OperationParameters } from "../features/effects/types";
@@ -11,8 +13,10 @@ import { EffectIcon } from "./effect-icon";
 
 interface OperationHistoryProps {
   operations: readonly OperationRecord[];
+  effectIds: Readonly<Record<string, string>>;
   scanCorruptionReports: readonly ScanCorruptionReport[];
   hasScanCorruption: boolean;
+  isBusy: boolean;
   onSetEnabled: (operationId: string, enabled: boolean) => void;
   onMove: (operationId: string, index: number) => void;
   onDelete: (operationId: string) => void;
@@ -99,18 +103,20 @@ function OperationDetails({
 
 function OperationItem({
   operation,
+  effectId,
   index,
   totalCount,
-  hasScanCorruption,
+  disabled,
   onSetEnabled,
   onMove,
   onDelete,
   onRestoreMask,
 }: {
   operation: OperationRecord;
+  effectId: string | undefined;
   index: number;
   totalCount: number;
-  hasScanCorruption: boolean;
+  disabled: boolean;
   onSetEnabled: OperationHistoryProps["onSetEnabled"];
   onMove: OperationHistoryProps["onMove"];
   onDelete: OperationHistoryProps["onDelete"];
@@ -121,7 +127,8 @@ function OperationItem({
   const presentation = parameters
     ? findOperationPresentation(parameters)
     : null;
-  const iconPaths = presentation?.view?.iconPaths;
+  const effect = effectId ? getEffect(effectId)?.view : undefined;
+  const iconPaths = effect?.iconPaths ?? presentation?.view?.iconPaths;
 
   return (
     <li
@@ -134,7 +141,7 @@ function OperationItem({
           <input
             type="checkbox"
             checked={operation.enabled}
-            disabled={hasScanCorruption}
+            disabled={disabled}
             onChange={(event) =>
               onSetEnabled(operation.id, event.currentTarget.checked)
             }
@@ -142,61 +149,74 @@ function OperationItem({
           {iconPaths && (
             <EffectIcon className="operation-effect-icon" paths={iconPaths} />
           )}
-          <span>{getOperationTitle(operation, parameters)}</span>
+          <span>
+            {effect?.label ?? getOperationTitle(operation, parameters)}
+          </span>
         </label>
-        <span className="operation-status">{operation.status}</span>
+        {mask && (
+          <span className="operation-status">
+            {getMaskToolView(areaToolForMask(mask)).label}
+          </span>
+        )}
+        {operation.status !== "applied" && (
+          <span className="operation-status">{operation.status}</span>
+        )}
       </div>
 
-      <OperationDetails operation={operation} mask={mask} />
-
-      <div className="operation-actions">
-        {mask && (
+      <details className="operation-entry-details">
+        <summary>Step details</summary>
+        <OperationDetails operation={operation} mask={mask} />
+        {operation.diagnostics?.map((message, index) => (
+          <p key={index}>{message}</p>
+        ))}
+        <div className="operation-actions">
+          {mask && (
+            <button
+              className="operation-button secondary"
+              type="button"
+              disabled={disabled}
+              title="Replace the current draft with a copy of this mask"
+              onClick={() => onRestoreMask(mask)}
+            >
+              Use this area
+            </button>
+          )}
           <button
             className="operation-button secondary"
             type="button"
-            disabled={hasScanCorruption}
-            title="Replace the current draft with a copy of this mask"
-            onClick={() => onRestoreMask(mask)}
+            disabled={disabled || index === totalCount - 1}
+            onClick={() => onMove(operation.id, index + 1)}
           >
-            Restore mask
+            Move later
           </button>
-        )}
-        <button
-          className="operation-button secondary"
-          type="button"
-          disabled={hasScanCorruption || index === totalCount - 1}
-          aria-label="Move operation up"
-          onClick={() => onMove(operation.id, index + 1)}
-        >
-          ↑
-        </button>
-        <button
-          className="operation-button secondary"
-          type="button"
-          disabled={hasScanCorruption || index === 0}
-          aria-label="Move operation down"
-          onClick={() => onMove(operation.id, index - 1)}
-        >
-          ↓
-        </button>
-        <button
-          className="operation-button danger"
-          type="button"
-          disabled={hasScanCorruption}
-          aria-label="Delete operation"
-          onClick={() => onDelete(operation.id)}
-        >
-          Delete
-        </button>
-      </div>
+          <button
+            className="operation-button secondary"
+            type="button"
+            disabled={disabled || index === 0}
+            onClick={() => onMove(operation.id, index - 1)}
+          >
+            Move earlier
+          </button>
+          <button
+            className="operation-button danger"
+            type="button"
+            disabled={disabled}
+            onClick={() => onDelete(operation.id)}
+          >
+            Delete
+          </button>
+        </div>
+      </details>
     </li>
   );
 }
 
 export function OperationHistoryPanel({
   operations,
+  effectIds,
   scanCorruptionReports,
   hasScanCorruption,
+  isBusy,
   onSetEnabled,
   onMove,
   onDelete,
@@ -206,30 +226,27 @@ export function OperationHistoryPanel({
   const scanView = getScanCorruptionEffect()?.view;
   return (
     <section className="inspector-section operation-stack">
-      <p className="operation-description">
-        New operations appear at the top. Enabled operations replay from the
-        bottom up; reordering recomputes later state.
-      </p>
       {hasScanCorruption && (
         <p className="scan-terminal-notice" role="status">
-          Entropy corruption is a terminal byte-domain phase. Undo every Scan
-          Corrupt stage before changing coefficient or DQT operations.
+          Undo the damage stages to edit earlier effects.
         </p>
       )}
       {scanCorruptionReports.length > 0 && (
         <ol className="scan-corruption-history">
-          {scanCorruptionReports.map((report, index) => (
-            <li key={`${index}-${report.seed}`}>
-              {scanView && (
-                <EffectIcon
-                  className="operation-effect-icon"
-                  paths={scanView.iconPaths}
-                />
-              )}
-              {scanView?.label} · {report.mode} · seed {report.seed} ·{" "}
-              {report.changedBytes} bytes / {report.changedBits} bits
-            </li>
-          ))}
+          {getHistoryDisplayEntries(scanCorruptionReports).map(
+            ({ operation: report, index }) => (
+              <li key={`${index}-${report.seed}`}>
+                {scanView && (
+                  <EffectIcon
+                    className="operation-effect-icon"
+                    paths={scanView.iconPaths}
+                  />
+                )}
+                {scanView?.label} · {report.mode} · seed {report.seed} ·{" "}
+                {report.changedBytes} bytes / {report.changedBits} bits
+              </li>
+            ),
+          )}
         </ol>
       )}
       {operations.length > 0 ? (
@@ -238,9 +255,10 @@ export function OperationHistoryPanel({
             <OperationItem
               key={operation.id}
               operation={operation}
+              effectId={effectIds[operation.id]}
               index={index}
               totalCount={operations.length}
-              hasScanCorruption={hasScanCorruption}
+              disabled={hasScanCorruption || isBusy}
               onSetEnabled={onSetEnabled}
               onMove={onMove}
               onDelete={onDelete}
@@ -254,10 +272,10 @@ export function OperationHistoryPanel({
       <button
         className="operation-reset"
         type="button"
-        disabled={operations.length === 0 && !hasScanCorruption}
+        disabled={isBusy || (operations.length === 0 && !hasScanCorruption)}
         onClick={onReset}
       >
-        Reset to original
+        Remove all effects
       </button>
     </section>
   );

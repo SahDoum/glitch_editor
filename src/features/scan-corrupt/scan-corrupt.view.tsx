@@ -21,9 +21,8 @@ export interface ScanCorruptSettings {
 
 export const ScanCorruptView: EffectView<ScanCorruptSettings> = {
   id: "scan-corrupt",
-  label: "Scan Corrupt",
-  description:
-    "Experiment on the encoded entropy scan after coefficient/DQT encoding.",
+  label: "JPEG Damage",
+  description: "Changes bytes in the encoded JPEG scan.",
   category: "Encoded data",
   iconPaths: ["M6 4h12v8h3v8H9v-8H6z"],
   interaction: "panel",
@@ -50,123 +49,179 @@ function ScanCorruptPanel({
   onChangeSettings,
 }: EffectPanelProps<ScanCorruptSettings>) {
   const { mode, count, rangeStart, rangeEnd, seed } = settings;
-  const { isEncoding } = editor;
   const {
     canApply,
     isCorrupting,
     hasScanCorruption,
     reports,
     diagnostic,
-    previewError,
     hasJpegOperations,
   } = editor.scanCorruption;
-  const onChangeMode = (value: ScanCorruptionMode) =>
-    onChangeSettings({ mode: value });
-  const onChangeCount = (value: number) => onChangeSettings({ count: value });
-  const onChangeRangeStart = (value: number) =>
-    onChangeSettings({ rangeStart: value });
-  const onChangeRangeEnd = (value: number) =>
-    onChangeSettings({ rangeEnd: value });
-  const onChangeSeed = (value: number) => onChangeSettings({ seed: value });
-  const onApply = () => editor.scanCorruption.apply(settings);
-  const onUpdateLastStage = () =>
-    editor.scanCorruption.updateLastStage(settings);
-  const onCancel = editor.scanCorruption.cancel;
+  const invalidCount =
+    !Number.isInteger(count) || count < 1 || count > MAX_SCAN_CORRUPTION_BYTES;
+  const invalidRange =
+    !Number.isFinite(rangeStart) ||
+    !Number.isFinite(rangeEnd) ||
+    rangeStart < 0 ||
+    rangeEnd > 1 ||
+    rangeStart >= rangeEnd;
+  const disabled =
+    !canApply || editor.isEncoding || invalidCount || invalidRange;
+
   return (
     <section className="inspector-section scan-corrupt-panel">
-      <p className="operation-description">
-        A bounded byte-domain experiment applied after the coefficient/DQT JPEG
-        encoder. This does not target pixels, DCT blocks, MCUs, or source-file
-        offsets. The decoder may show a different region or fail entirely. The
-        original and clean encoded JPEG remain unchanged.
+      <p className="channel-readout">Affects the encoded JPEG</p>
+      <p className="scan-terminal-notice">
+        A damaged JPG may not open in other apps.
       </p>
-      {!canApply && (
-        <p className="operation-empty" role="status">
-          {isEncoding
-            ? "The clean JPEG is being encoded. Scan Corrupt will be available when encoding finishes."
-            : "The clean JPEG is unavailable. Resolve the encoding error before applying Scan Corrupt."}
-        </p>
-      )}
-      {!hasJpegOperations && (
-        <p className="operation-empty">
-          Applying Scan Corrupt first re-encodes the source as a baseline JPEG
-          without changing its coefficients.
-        </p>
-      )}
       <RadioChoiceGroup<ScanCorruptionMode>
         name="scan-corruption-mode"
-        legend="Corruption mode"
+        legend="Damage type"
         value={mode}
         options={[
           { value: "bit-flip", label: "Flip one bit" },
-          { value: "byte-replacement", label: "Replace entropy byte" },
+          { value: "byte-replacement", label: "Replace scan byte" },
         ]}
-        onChange={onChangeMode}
+        onChange={(value) => onChangeSettings({ mode: value })}
         layout="inline"
       />
       <label className="coefficient-field tool-field">
-        <span>Changed bytes (1–{MAX_SCAN_CORRUPTION_BYTES})</span>
+        <span>Number of changes</span>
         <input
           type="number"
           min="1"
           max={MAX_SCAN_CORRUPTION_BYTES}
           step="1"
           value={count}
-          onChange={(event) => onChangeCount(Number(event.currentTarget.value))}
+          aria-invalid={invalidCount}
+          aria-describedby={invalidCount ? "damage-count-error" : undefined}
+          onChange={(event) =>
+            onChangeSettings({ count: Number(event.currentTarget.value) })
+          }
         />
       </label>
-      <div className="scan-range-fields">
-        <label className="coefficient-field">
-          <span>Scan range start (0–1)</span>
-          <input
-            type="number"
-            min="0"
-            max="1"
-            step="0.01"
-            value={rangeStart}
-            onChange={(event) =>
-              onChangeRangeStart(Number(event.currentTarget.value))
-            }
+      {invalidCount && (
+        <p id="damage-count-error" className="field-error" role="status">
+          Enter a whole number from 1 to {MAX_SCAN_CORRUPTION_BYTES}.
+        </p>
+      )}
+      <details className="advanced-controls">
+        <summary>Advanced settings</summary>
+        <div className="advanced-control-content">
+          <p className="coefficient-note">
+            The range is a fraction of the entropy-coded scan. JPEG decoders can
+            recover differently after a change.
+          </p>
+          {!hasJpegOperations && (
+            <p className="coefficient-note">
+              The first stage prepares a Standard JPG with the original
+              quantized coefficients.
+            </p>
+          )}
+          <div className="scan-range-fields">
+            <label className="coefficient-field">
+              <span>Scan range start (0–1)</span>
+              <input
+                type="number"
+                min="0"
+                max="1"
+                step="0.01"
+                value={rangeStart}
+                aria-invalid={invalidRange}
+                aria-describedby={
+                  invalidRange ? "damage-range-error" : undefined
+                }
+                onChange={(event) =>
+                  onChangeSettings({
+                    rangeStart: Number(event.currentTarget.value),
+                  })
+                }
+              />
+            </label>
+            <label className="coefficient-field">
+              <span>Scan range end (0–1)</span>
+              <input
+                type="number"
+                min="0"
+                max="1"
+                step="0.01"
+                value={rangeEnd}
+                aria-invalid={invalidRange}
+                aria-describedby={
+                  invalidRange ? "damage-range-error" : undefined
+                }
+                onChange={(event) =>
+                  onChangeSettings({
+                    rangeEnd: Number(event.currentTarget.value),
+                  })
+                }
+              />
+            </label>
+          </div>
+          {invalidRange && (
+            <p id="damage-range-error" className="field-error" role="status">
+              Choose a start and a later end from 0 to 1.
+            </p>
+          )}
+          <SeedField
+            label="Seed"
+            value={seed}
+            onChange={(value) => onChangeSettings({ seed: Number(value) })}
           />
-        </label>
-        <label className="coefficient-field">
-          <span>Scan range end (0–1)</span>
-          <input
-            type="number"
-            min="0"
-            max="1"
-            step="0.01"
-            value={rangeEnd}
-            onChange={(event) =>
-              onChangeRangeEnd(Number(event.currentTarget.value))
-            }
-          />
-        </label>
-      </div>
-      <SeedField
-        label="Unsigned 32-bit seed"
-        value={seed}
-        onChange={(value) => onChangeSeed(Number(value))}
-      />
-      <div className="scan-corrupt-actions">
+        </div>
+      </details>
+      {hasScanCorruption && (
+        <details className="advanced-controls">
+          <summary>Diagnostics</summary>
+          <div className="advanced-control-content">
+            {reports.map((report, index) => (
+              <p
+                className="scan-corruption-report"
+                key={`${index}-${report.seed}`}
+              >
+                Stage {index + 1} · {report.mode} · seed {report.seed} · scan{" "}
+                {formatOffset(report.scanStartOffset)}–
+                {formatOffset(report.scanEndOffset)} · range{" "}
+                {report.rangeStart.toFixed(2)}–{report.rangeEnd.toFixed(2)} ·{" "}
+                {report.changedBytes} bytes / {report.changedBits} bits changed
+              </p>
+            ))}
+            {diagnostic && (
+              <div
+                className={`scan-decode-diagnostic ${diagnostic.status === "complete" ? "is-complete" : "is-warning"}`}
+                aria-label="JPEG decode completeness diagnostic"
+              >
+                <p>{getScanDecodeDiagnosticMessage(diagnostic)}</p>
+                {getScanDecodeWarningLabels(diagnostic.warningFlags).map(
+                  (warning) => (
+                    <p key={warning}>Decoder warning · {warning}</p>
+                  ),
+                )}
+              </div>
+            )}
+          </div>
+        </details>
+      )}
+      {!canApply && !editor.isEncoding && (
+        <p className="field-error" role="status">
+          A ready JPG is needed to add a damage stage.
+        </p>
+      )}
+      <div className="scan-corrupt-actions effect-actions">
         <button
           className="operation-button"
           type="button"
-          disabled={
-            !canApply ||
-            isEncoding ||
-            reports.length >= MAX_SCAN_CORRUPTION_STAGES
-          }
-          onClick={onApply}
+          disabled={disabled || reports.length >= MAX_SCAN_CORRUPTION_STAGES}
+          onClick={() => editor.scanCorruption.apply(settings)}
         >
-          Apply scan corruption
+          Add damage stage
         </button>
         {hasScanCorruption && (
           <button
             className="operation-button secondary"
             type="button"
-            disabled={isEncoding}
-            onClick={onUpdateLastStage}
+            disabled={disabled}
+            onClick={() => editor.scanCorruption.updateLastStage(settings)}
           >
             Update last stage
           </button>
@@ -175,45 +230,12 @@ function ScanCorruptPanel({
           <button
             className="operation-button secondary"
             type="button"
-            onClick={onCancel}
+            onClick={editor.scanCorruption.cancel}
           >
             Cancel
           </button>
         )}
       </div>
-      <p className="operation-parameters" role="status">
-        {hasScanCorruption
-          ? `Stage ${reports.length} of ${MAX_SCAN_CORRUPTION_STAGES} · ${isEncoding ? "corrupting and checking decode…" : previewError ? "preview decode failed" : "corruption complete · preview decoded"}`
-          : "No entropy-stream stage applied."}
-      </p>
-      {reports.map((report, index) => (
-        <p className="scan-corruption-report" key={`${index}-${report.seed}`}>
-          Stage {index + 1} · {report.mode} · seed {report.seed} · scan{" "}
-          {formatOffset(report.scanStartOffset)}–
-          {formatOffset(report.scanEndOffset)} · range{" "}
-          {report.rangeStart.toFixed(2)}–{report.rangeEnd.toFixed(2)} ·{" "}
-          {report.changedBytes} bytes / {report.changedBits} bits changed
-        </p>
-      ))}
-      {hasScanCorruption && diagnostic && (
-        <div
-          className={`scan-decode-diagnostic ${diagnostic.status === "complete" ? "is-complete" : "is-warning"}`}
-          role="status"
-          aria-label="JPEG decode completeness diagnostic"
-        >
-          <p>{getScanDecodeDiagnosticMessage(diagnostic)}</p>
-          {getScanDecodeWarningLabels(diagnostic.warningFlags).map(
-            (warning) => (
-              <p key={warning}>Decoder warning: {warning}.</p>
-            ),
-          )}
-          <p>
-            This diagnostic reports libjpeg-turbo only. Other JPEG decoders may
-            recover differently; reading all rows here does not guarantee
-            identical display in other applications.
-          </p>
-        </div>
-      )}
     </section>
   );
 }

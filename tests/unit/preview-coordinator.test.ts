@@ -56,6 +56,23 @@ describe("preview result coordination", () => {
     });
   });
 
+  it("discards pending work when reopening the same source at the same revision", async () => {
+    const coordinator = new PreviewCoordinator();
+    const previous = deferred<string>();
+    const request = coordinator.run(
+      0,
+      () => 0,
+      () => previous.promise,
+    );
+
+    coordinator.cancel();
+    previous.resolve("previous document");
+    await expect(request).resolves.toEqual({
+      status: "stale",
+      documentRevision: 0,
+    });
+  });
+
   it("does not swallow computation failures", async () => {
     const coordinator = new PreviewCoordinator();
     await expect(

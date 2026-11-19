@@ -34,7 +34,7 @@ export const MASK_TOOL_REGISTRY = {
   all: {
     Controller: AllTool,
     view: {
-      label: "All",
+      label: "Whole photo",
       shortcut: "A",
       iconPaths: ["M5 3h10l4 4v14H5z", "M15 3v5h4"],
     },
@@ -53,7 +53,7 @@ export const MASK_TOOL_REGISTRY = {
   select: {
     Controller: SelectTool,
     view: {
-      label: "Select",
+      label: "Rectangle",
       shortcut: "M",
       iconPaths: ["M4 4h16v16H4z"],
       dashed: true,

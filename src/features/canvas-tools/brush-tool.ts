@@ -115,11 +115,8 @@ export class BrushTool implements CanvasInteraction {
     });
   }
 
-  getHint({ grid }: MaskToolContext) {
-    const gridLabel = grid === "mcu" ? "MCUs" : "DCT blocks";
-    return {
-      text: `Paint over the image, then release to finish the brush mask snapped to ${gridLabel}.`,
-    };
+  getHint() {
+    return { text: "Paint the area to affect." };
   }
 
   hover(sample: ImageSample | null, context: CanvasContext): void {

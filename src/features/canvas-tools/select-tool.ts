@@ -243,6 +243,7 @@ export class SelectTool implements CanvasInteraction {
 
   handleKey(input: CanvasKeyInput, context: CanvasContext): boolean {
     if (
+      input.canvasFocused &&
       !input.altKey &&
       (input.ctrlKey || input.metaKey) &&
       input.key.toLowerCase() === "a"
@@ -273,12 +274,11 @@ export class SelectTool implements CanvasInteraction {
     return true;
   }
 
-  getHint({ grid }: MaskToolContext) {
-    const gridLabel = grid === "mcu" ? "MCUs" : "DCT blocks";
+  getHint() {
     return {
-      text: `Drag to select a rectangle snapped to ${gridLabel}.`,
+      text: "Draw a rectangle on the photo.",
       keyboard:
-        "Arrow keys move one DCT block. Enter starts or completes a rectangle. Escape clears the selection. Ctrl/⌘+A selects the whole image.",
+        "Arrow keys move the cursor. Enter starts or completes a rectangle. Escape clears the selection. Ctrl/⌘+A selects the whole photo.",
     };
   }
 }

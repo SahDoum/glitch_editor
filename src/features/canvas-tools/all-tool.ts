@@ -1,4 +1,5 @@
 import { createFullImageMask } from "../../document/masks";
+import { success } from "../../shared/result";
 import type { JpegInspection } from "../../jpeg/inspect";
 import type { CanvasContext, CanvasInteraction } from "./types";
 
@@ -7,7 +8,9 @@ export function createWholeImageMask({ width, height }: JpegInspection) {
 }
 
 export function selectWholeImage(context: CanvasContext): void {
-  const result = createWholeImageMask(context.inspection);
+  const result = context.wholeImageMask
+    ? success(context.wholeImageMask)
+    : createWholeImageMask(context.inspection);
   if (result.ok) {
     context.publish({
       draft: null,

@@ -1,3 +1,4 @@
+import { EffectActions } from "../../../ui/effect-actions";
 import { SeedField } from "../../../ui/tool-controls";
 import { MASK_EFFECT_TOOLBAR } from "../../effects/mask-tools";
 import { field } from "../../effects/operation-fields";
@@ -10,8 +11,8 @@ export interface BlockShuffleSettings {
 
 export const BlockShuffleView: EffectView<BlockShuffleSettings> = {
   id: "block-shuffle",
-  label: "Block Shuffle",
-  description: "Shuffle whole DCT blocks inside the selected mask.",
+  label: "Shuffle Blocks",
+  description: "Rearranges whole blocks inside the area.",
   category: "Blocks",
   iconPaths: [
     "M4 5h5v5H4z",
@@ -32,39 +33,40 @@ export const BlockShuffleView: EffectView<BlockShuffleSettings> = {
     describe: (parameters) => (
       <>
         Component {field(parameters, "componentIndex")} · seed{" "}
-        {field(parameters, "seed")} · Fisher–Yates
+        {field(parameters, "seed")}
       </>
     ),
   },
   Panel({ settings, editor, onChangeSettings }) {
     return (
-      <BlockTransformFrame editor={editor} requiresMask>
-        <p className="operation-description">
-          Seeded Fisher–Yates permutation of whole blocks within the selected
-          mask. Every selected block is used once; blocks outside it are
-          unchanged.
-        </p>
+      <BlockTransformFrame
+        editor={editor}
+        advanced={
+          <SeedField
+            label="Seed"
+            value={settings.seed}
+            onChange={(value) => onChangeSettings({ seed: Number(value) })}
+            showNewVariation={false}
+          />
+        }
+        actions={
+          <EffectActions
+            prompt={editor.autoApplyPrompt}
+            onApply={() => editor.apply()}
+            onPreview={() => editor.preview()}
+            disabled={
+              !editor.canApply || !editor.hasMask || editor.hasScanCorruption
+            }
+            isPreviewing={editor.isPreviewing}
+          />
+        }
+      >
         <SeedField
-          label="Deterministic seed"
+          label="Seed"
+          showValue={false}
           value={settings.seed}
           onChange={(value) => onChangeSettings({ seed: Number(value) })}
         />
-        <button
-          className="operation-button secondary"
-          type="button"
-          disabled={!editor.hasMask || editor.isEncoding || editor.isPreviewing}
-          onClick={() => editor.preview()}
-        >
-          {editor.isPreviewing ? "Previewing…" : "Preview"}
-        </button>
-        <button
-          className="operation-button"
-          type="button"
-          disabled={!editor.hasMask || editor.isEncoding}
-          onClick={() => editor.apply()}
-        >
-          Shuffle blocks in mask
-        </button>
       </BlockTransformFrame>
     );
   },

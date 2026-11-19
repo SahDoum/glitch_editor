@@ -15,8 +15,7 @@ export const AcScaleView: EffectView<CoefficientRecipeStep> =
   defineCoefficientView({
     id: "ac-scale",
     label: "Coefficient Scale",
-    description:
-      "Scale selected quantized DCT coefficients; choose DC or AC in the matrix.",
+    description: "Scales the selected JPEG coefficients.",
     iconPaths: ["M4 18h16", "M6 15V9", "M10 15V5", "M14 15V8", "M18 15V3"],
     defaultSettings: AcScaleSettings,
     storageKey: "chroma-scale",
@@ -26,12 +25,13 @@ export const AcScaleView: EffectView<CoefficientRecipeStep> =
       <CoefficientRangeField
         {...props}
         labelId="coefficient-strength-label"
-        label={`Scale multiplier · ${props.settings.strength}`}
+        label={`Multiplier · ${props.settings.strength}×`}
         min={-8}
         max={8}
         step={0.1}
         lowLabel="−8 · reduce or invert"
         highLabel="+8 · increase"
+        note="Negative values reverse the sign of the selected coefficients."
       />
     ),
   });

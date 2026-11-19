@@ -90,7 +90,6 @@ export interface ScanCorruptionPanelState {
   readonly hasJpegOperations: boolean;
   readonly reports: readonly ScanCorruptionReport[];
   readonly diagnostic: ScanDecodeDiagnostic | null;
-  readonly previewError: string;
   readonly apply: (settings: ScanCorruptionParameters) => void;
   readonly updateLastStage: (settings: ScanCorruptionParameters) => void;
   readonly cancel: () => void;
@@ -104,16 +103,16 @@ export interface EffectEditor<Settings> {
   readonly componentLabels: readonly JpegComponentLabel[];
   readonly colorModel: JpegColorModel | null;
   readonly imageUrl: string | null;
+  readonly operationError: string;
   readonly componentIndex: number;
   readonly hasMask: boolean;
   readonly isEncoding: boolean;
   readonly isPreviewing: boolean;
+  readonly canApply: boolean;
   readonly hasScanCorruption: boolean;
-  readonly autoApply: boolean;
-  readonly autoApplyDisabled: boolean;
+  readonly autoApplyPrompt: string;
   readonly scanCorruption: ScanCorruptionPanelState;
   readonly onChangeComponent: (index: number) => void;
-  readonly onChangeAutoApply: (checked: boolean) => void;
   readonly onError: (message: string) => void;
   /** Builds and applies the effect from its settings plus an optional patch. */
   readonly apply: (patch?: Partial<Settings>) => void;
@@ -146,7 +145,7 @@ export interface EffectView<Settings> {
   readonly iconPaths: readonly string[];
   readonly interaction: EffectInteraction;
   readonly toolbar: EffectToolbarConfig;
-  /** Offers "Apply while painting" and debounced preview after mask edits. */
+  /** Allows automatic application after a completed local canvas gesture. */
   readonly autoApply: boolean;
   readonly autoPreview: boolean;
   readonly defaultSettings: Settings;

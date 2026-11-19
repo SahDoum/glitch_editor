@@ -96,7 +96,7 @@ describe("workspace state", () => {
     expect(getHistoryDisplayEntries([])).toEqual([]);
   });
 
-  it("preserves the shared selection while switching tools", () => {
+  it("starts with an empty local area after leaving Whole photo", () => {
     const selection = createRectangleSelection(1, 2, 8, 9, 16, 16);
     if (!selection.ok || !selection.value)
       throw new Error("Expected selection");
@@ -113,7 +113,7 @@ describe("workspace state", () => {
     });
 
     expect(next.activeTool).toBe("brush");
-    expect(next.selectionMask).toBe(mask.value);
+    expect(next.selectionMask).toBeNull();
   });
 
   it("keeps the chosen mask tool when switching between mask effects", () => {
@@ -138,9 +138,12 @@ describe("workspace state", () => {
     }
   });
 
-  it("returns to All when a mask effect follows a gesture effect", () => {
-    expect(initialWorkspaceState.activeTool).toBe("all");
-    const gesture = workspaceReducer(initialWorkspaceState, {
+  it("restores the area tool after a temporary gesture effect", () => {
+    const selecting = workspaceReducer(initialWorkspaceState, {
+      type: "activate-tool",
+      tool: "select",
+    });
+    const gesture = workspaceReducer(selecting, {
       type: "activate-effect",
       effectId: "block-repeat",
       usesMaskTools: false,
@@ -150,7 +153,7 @@ describe("workspace state", () => {
       effectId: "pixelate",
       usesMaskTools: true,
     });
-    expect(mask.activeTool).toBe("all");
+    expect(mask.activeTool).toBe("select");
     expect(mask.activeEffectId).toBe("pixelate");
     expect(getWorkspaceOverlayVisibility("all")).toEqual({ mask: true });
   });
@@ -162,10 +165,13 @@ describe("workspace state", () => {
     const mask = createSpatialMask(selection.value, 16, 16);
     if (!mask.ok) throw new Error("Expected selection mask");
     const switched = workspaceReducer(
-      workspaceReducer(initialWorkspaceState, {
-        type: "set-selection",
-        selection: mask.value,
-      }),
+      workspaceReducer(
+        workspaceReducer(initialWorkspaceState, {
+          type: "activate-tool",
+          tool: "select",
+        }),
+        { type: "set-selection", selection: mask.value },
+      ),
       { type: "activate-tool", tool: "brush" },
     );
 

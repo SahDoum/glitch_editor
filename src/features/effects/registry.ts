@@ -72,33 +72,30 @@ export const EFFECT_REGISTRY: readonly RegisteredEffect[] = Object.freeze([
 
 /** Menu presentation only; it references effects by ID and owns no behavior. */
 export const EFFECT_MENU: readonly EffectMenuGroup[] = Object.freeze([
+  { heading: "Quick effects", effectIds: ["pixelate", "engraving", "ringing"] },
   {
-    heading: "Coefficients",
+    heading: "Tone and detail",
     effectIds: [
-      "pixelate",
-      "zero",
       "posterization",
-      "ringing",
-      "engraving",
-      "coefficient-randomize",
-      "ac-scale",
       "dc-offset",
       "ac-low-pass",
-      "ac-invert",
-      "ac-isolate",
+      "coefficient-randomize",
     ],
+  },
+  {
+    heading: "JPEG coefficients",
+    effectIds: ["zero", "ac-scale", "ac-invert", "ac-isolate"],
   },
   {
     heading: "Blocks",
     effectIds: [
-      "block-transfer",
-      "block-repeat",
       "block-shuffle",
       "local-shift",
+      "block-transfer",
+      "block-repeat",
     ],
   },
-  { heading: "Quantization", effectIds: ["quantization"] },
-  { heading: "Encoded data", effectIds: ["scan-corrupt"] },
+  { heading: "JPEG experiments", effectIds: ["quantization", "scan-corrupt"] },
 ]);
 
 export const DEFAULT_EFFECT_ID: EffectId = "pixelate";

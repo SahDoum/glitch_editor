@@ -54,7 +54,7 @@ describe("JPEG component choice labels", () => {
 
   it("labels single-component JPEGs as grayscale", () => {
     expect(labels(getComponentChoiceOptions(components([0])))).toEqual([
-      "Gray",
+      "Grayscale",
     ]);
   });
 
@@ -70,8 +70,8 @@ describe("JPEG component choice labels", () => {
       ),
     ).toEqual([
       { label: "Luminance (Y)", tone: undefined },
-      { label: "Blue chroma (Cb)", tone: "blue-yellow" },
-      { label: "Red chroma (Cr)", tone: "red-green" },
+      { label: "Color (Cb)", tone: "blue-yellow" },
+      { label: "Color (Cr)", tone: "red-green" },
     ]);
   });
 });

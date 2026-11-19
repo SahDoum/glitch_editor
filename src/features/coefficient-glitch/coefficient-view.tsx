@@ -5,6 +5,7 @@ import { MASK_EFFECT_TOOLBAR } from "../effects/mask-tools";
 import type { EffectId, EffectView } from "../effects/types";
 import {
   CoefficientBandMatrix,
+  CoefficientBandPicker,
   CoefficientPanelFrame,
   type CoefficientPanelProps,
 } from "./coefficient-panel";
@@ -23,7 +24,10 @@ export interface CoefficientViewDefinition {
   /** Fixed presets have no persisted or editable settings. */
   readonly editable?: boolean;
   readonly showBandMatrix?: boolean;
-  readonly Fields?: (props: CoefficientPanelProps) => ReactNode;
+  readonly bandLabel?: string;
+  readonly Fields?: (
+    props: CoefficientPanelProps & { readonly advanced?: boolean },
+  ) => ReactNode;
 }
 
 export function defineCoefficientView(
@@ -46,8 +50,18 @@ export function defineCoefficientView(
     operation: createCoefficientOperationDescriptor(definition.historyModes),
     Panel(props) {
       return (
-        <CoefficientPanelFrame editor={props.editor}>
-          {showBandMatrix && <CoefficientBandMatrix {...props} />}
+        <CoefficientPanelFrame
+          editor={props.editor}
+          advanced={
+            <>
+              {showBandMatrix && <CoefficientBandMatrix {...props} />}
+              {Fields && <Fields {...props} advanced />}
+            </>
+          }
+        >
+          {definition.bandLabel && (
+            <CoefficientBandPicker {...props} legend={definition.bandLabel} />
+          )}
           {Fields && <Fields {...props} />}
         </CoefficientPanelFrame>
       );

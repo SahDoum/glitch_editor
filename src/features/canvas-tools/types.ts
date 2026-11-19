@@ -53,6 +53,8 @@ export interface CanvasOverlay {
   readonly source: SpatialSelection | null;
   readonly sourceInvalid: boolean;
   readonly destination: SpatialSelection | null;
+  readonly destinations?: readonly SpatialSelection[];
+  readonly sourceLabel?: string;
   readonly destinationInvalid: boolean;
 }
 
@@ -104,6 +106,7 @@ export interface CanvasFeedback {
  */
 export interface CanvasContext extends MaskToolContext {
   readonly orientation: JpegOrientation;
+  readonly wholeImageMask?: SpatialMask;
   readonly keyboardCursor: JpegBlockCoordinate | null;
   cancelGesture(): void;
   publish(feedback: CanvasFeedback): void;

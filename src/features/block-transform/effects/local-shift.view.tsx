@@ -1,3 +1,4 @@
+import { EffectActions } from "../../../ui/effect-actions";
 import { MASK_EFFECT_TOOLBAR } from "../../effects/mask-tools";
 import { field } from "../../effects/operation-fields";
 import type { EffectView } from "../../effects/types";
@@ -10,8 +11,8 @@ export interface LocalShiftSettings {
 
 export const LocalShiftView: EffectView<LocalShiftSettings> = {
   id: "local-shift",
-  label: "Local Shift",
-  description: "Copy nearby component blocks into the selected mask.",
+  label: "Block Shift",
+  description: "Offsets nearby JPEG blocks within the area.",
   category: "Blocks",
   iconPaths: [
     "M4 4h6v6H4z",
@@ -38,15 +39,30 @@ export const LocalShiftView: EffectView<LocalShiftSettings> = {
   },
   Panel({ settings, editor, onChangeSettings }) {
     return (
-      <BlockTransformFrame editor={editor} requiresMask>
-        <p className="operation-description">
-          Copy whole DCT blocks from the selected component into masked
-          destinations, shifted by component blocks. Choose a chroma component
-          for a color shift. Source blocks outside the image leave destinations
-          unchanged. At least 50% mask coverage is required.
-        </p>
+      <BlockTransformFrame
+        editor={editor}
+        advanced={
+          <p className="operation-description">
+            Copy whole DCT blocks from the selected component into masked
+            destinations, shifted by component blocks. Choose a chroma component
+            for a color shift. Source blocks outside the image leave
+            destinations unchanged. At least 50% mask coverage is required.
+          </p>
+        }
+        actions={
+          <EffectActions
+            prompt={editor.autoApplyPrompt}
+            onApply={() => editor.apply()}
+            onPreview={() => editor.preview()}
+            disabled={
+              !editor.canApply || !editor.hasMask || editor.hasScanCorruption
+            }
+            isPreviewing={editor.isPreviewing}
+          />
+        }
+      >
         <label className="coefficient-field tool-field">
-          <span>Horizontal offset in component blocks</span>
+          <span>Horizontal shift (blocks)</span>
           <input
             type="number"
             min="-256"
@@ -59,7 +75,7 @@ export const LocalShiftView: EffectView<LocalShiftSettings> = {
           />
         </label>
         <label className="coefficient-field tool-field">
-          <span>Vertical offset in component blocks</span>
+          <span>Vertical shift (blocks)</span>
           <input
             type="number"
             min="-256"
@@ -71,22 +87,6 @@ export const LocalShiftView: EffectView<LocalShiftSettings> = {
             }
           />
         </label>
-        <button
-          className="operation-button secondary"
-          type="button"
-          disabled={!editor.hasMask || editor.isEncoding || editor.isPreviewing}
-          onClick={() => editor.preview()}
-        >
-          {editor.isPreviewing ? "Previewing…" : "Preview"}
-        </button>
-        <button
-          className="operation-button"
-          type="button"
-          disabled={!editor.hasMask || editor.isEncoding}
-          onClick={() => editor.apply()}
-        >
-          Shift blocks in mask
-        </button>
       </BlockTransformFrame>
     );
   },

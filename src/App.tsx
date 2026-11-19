@@ -12,6 +12,13 @@ import {
 import type { JpegOutputMode } from "./jpeg/encode-options";
 import { encodeJpegCoefficients } from "./application/coefficient-reader";
 import {
+  createJpegPreviewUrl,
+  decodeJpegFrame,
+  encodeJpegFrame,
+  jpegGeometry,
+  type EncodedJpegFrame,
+} from "./application/jpeg-result";
+import {
   createJpegDocumentSession,
   type JpegEditableState,
 } from "./application/jpeg-document";
@@ -31,17 +38,15 @@ import {
   type PersistedEffectSettings,
 } from "./features/effects/settings-persistence";
 import { importJpeg, type ImportedJpeg } from "./application/import-jpeg";
-import {
-  previewDimensions,
-  readJpegOrientation,
-} from "./application/preview-orientation";
+import { readJpegOrientation } from "./application/preview-orientation";
 import {
   createJgeProjectFile,
   readJgeProjectFile,
   type JgeProjectData,
+  type JgeProjectSaveData,
 } from "./project/project-file";
+import { projectEditsKey } from "./project/project-edits";
 import {
-  type JpegBlockGeometry,
   type JpegBlockCoordinate,
   type JpegSelectionGrid,
 } from "./jpeg/block-geometry";
@@ -52,10 +57,7 @@ import type { JpegGlitchOperation } from "./operations/jpeg-glitch";
 import { EditorBridge } from "./features/effects/editor-bridge";
 import { PreviewCoordinator } from "./application/preview-coordinator";
 import {
-  readBrushAutoApply,
-  writeBrushAutoApply,
-} from "./application/coefficient-brushes";
-import {
+  areaToolForMask,
   initialWorkspaceState,
   getWorkspaceOverlayVisibility,
   getWorkspaceShortcut,
@@ -63,20 +65,25 @@ import {
   type MaskTool,
 } from "./ui/workspace-state";
 import { getRectangleSelection } from "./ui/selection-overlay";
-import { ScanCorruptionHistory } from "./application/scan-corruption";
+import {
+  ScanCorruptionHistory,
+  type CorruptedEncodedJpeg,
+} from "./application/scan-corruption";
+import { downloadFileUrl } from "./ui/download-file";
 import {
   MAX_SCAN_CORRUPTION_STAGES,
   type ScanCorruptionParameters,
   type ScanCorruptionReport,
 } from "./jpeg/scan-corruption";
 import type { ScanDecodeDiagnostic } from "./jpeg/scan-corruption-worker-protocol";
-import { CollapsibleSection } from "./ui/collapsible-section";
 import type {
   EffectEditor,
   EffectTopBarAction,
 } from "./features/effects/types";
 import { isJpegOperationController } from "./features/effects/types";
 import { EffectCatalogPanel } from "./ui/effect-catalog-panel";
+import { examplePhotoUrl } from "./ui/example-photo";
+import { WelcomeScreen } from "./ui/welcome-screen";
 import { createWholeImageMask } from "./features/canvas-tools/all-tool";
 import {
   createCanvasToolControllers,
@@ -106,6 +113,19 @@ const JPEG_CODEC_VERSION = "libjpeg-turbo 3.2.0";
 const EMPTY_JPEG_OPERATIONS: JpegEditableState["jpegOperations"] =
   Object.freeze([]);
 const NO_TOOLS: ReadonlySet<MaskTool> = new Set();
+const PHOTO_TYPES = "image/jpeg,.jpg,.jpeg";
+const PROJECT_TYPES =
+  ".jpglitch,application/vnd.jpeg-glitch-editor.project+json";
+
+interface RequestedFile {
+  readonly file: File;
+  readonly example?: boolean;
+}
+
+interface FileOpenError {
+  readonly message: string;
+  readonly detail?: string;
+}
 
 /** Defaults overlaid with the settings a user saved in this browser. */
 function createEffectSettings(
@@ -119,29 +139,10 @@ function createEffectSettings(
   );
 }
 
-function createJpegPreviewUrl(bytes: Uint8Array): string {
-  const buffer = new ArrayBuffer(bytes.byteLength);
-  new Uint8Array(buffer).set(bytes);
-  return URL.createObjectURL(new Blob([buffer], { type: "image/jpeg" }));
-}
-
-function loadInitialEffectAutoApply(): {
-  settings: Readonly<Record<string, boolean>>;
-  error: string;
-} {
-  let storage: Storage;
-  try {
-    storage = window.localStorage;
-  } catch {
-    return {
-      settings: {},
-      error: "Effect automatic-apply settings are unavailable.",
-    };
-  }
-  const result = readBrushAutoApply(storage);
-  return result.ok
-    ? { settings: result.value, error: "" }
-    : { settings: {}, error: result.error.message };
+interface DraftPreview {
+  readonly signature: string;
+  readonly operation: JpegGlitchOperation;
+  readonly frame: EncodedJpegFrame;
 }
 
 function App() {
@@ -151,8 +152,17 @@ function App() {
   const [editedPreviewUrl, setEditedPreviewUrl] = useState<string | null>(null);
   const [editedBytes, setEditedBytes] = useState<Uint8Array | null>(null);
   const [editedPreviewError, setEditedPreviewError] = useState("");
-  const [draftPreviewUrl, setDraftPreviewUrl] = useState<string | null>(null);
-  const [draftPreviewSignature, setDraftPreviewSignature] = useState("");
+  const [draftPreview, setDraftPreview] = useState<DraftPreview | null>(null);
+  const [draftRequest, setDraftRequest] = useState<number | null>(null);
+  const [previewFailed, setPreviewFailed] = useState(false);
+  const [effectApplied, setEffectApplied] = useState(false);
+  const [applying, setApplying] = useState<
+    "effect" | "stroke" | "selection" | null
+  >(null);
+  const [wholeImageMask, setWholeImageMask] = useState<SpatialMask | null>(
+    null,
+  );
+  const [documentSession, setDocumentSession] = useState(0);
   const [isDraftPreviewing, setIsDraftPreviewing] = useState(false);
   const [cleanEncodedPreviewUrl, setCleanEncodedPreviewUrl] = useState<
     string | null
@@ -174,7 +184,17 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState("Inspecting JPEG…");
   const [isSavingProject, setIsSavingProject] = useState(false);
-  const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
+  const [isExportOptionsOpen, setIsExportOptionsOpen] = useState(false);
+  const [requestedFile, setRequestedFile] = useState<RequestedFile | null>(
+    null,
+  );
+  const [openError, setOpenError] = useState<FileOpenError | null>(null);
+  const [examplePhoto, setExamplePhoto] = useState(false);
+  const [isFetchingExample, setIsFetchingExample] = useState(false);
+  const [operationEffectIds, setOperationEffectIds] = useState<
+    Readonly<Record<string, string>>
+  >({});
+  const [showHistory, setShowHistory] = useState(false);
   const [exportMode, setExportMode] = useState<JpegOutputMode>("baseline");
   const [isExporting, setIsExporting] = useState(false);
   const [projectNotice, setProjectNotice] = useState("");
@@ -198,8 +218,9 @@ function App() {
     activeEffectId,
     selectionMask: globalSelectionMask,
   } = workspaceState;
-  const activeToolPanel = useRef<HTMLDetailsElement>(null);
-  const saveDialogRef = useRef<HTMLDialogElement>(null);
+  const exportOptionsRef = useRef<HTMLDialogElement>(null);
+  const replaceDialogRef = useRef<HTMLDialogElement>(null);
+  const fileMenu = useRef<HTMLDetailsElement>(null);
   const cleanEncodedPreviewErrorRef = useRef(cleanEncodedPreviewError);
   const [maskGrid, setMaskGrid] = useState<JpegSelectionGrid>("dct");
   const [componentIndex, setComponentIndex] = useState(0);
@@ -214,15 +235,12 @@ function App() {
     initialPersisted.error,
   );
   const [brushSize, setBrushSize] = useState(32);
-  const [initialAutoApply] = useState(loadInitialEffectAutoApply);
-  const [effectAutoApply, setEffectAutoApply] = useState(
-    initialAutoApply.settings,
-  );
-  const [effectAutoApplyError, setEffectAutoApplyError] = useState(
-    initialAutoApply.error,
-  );
+  const [effectAutoApply, setEffectAutoApply] = useState<
+    Readonly<Record<string, boolean>>
+  >({});
   const [zoom, setZoom] = useState(1);
   const [maskDraft, setMaskDraft] = useState<MaskDraft | null>(null);
+  const [canvasError, setCanvasError] = useState("");
   const [brushCursorPoint, setBrushCursorPoint] = useState<ImagePoint | null>(
     null,
   );
@@ -230,7 +248,10 @@ function App() {
   const requestId = useRef(0);
   const previewCoordinator = useRef(new PreviewCoordinator());
   const previewAbortController = useRef<AbortController | null>(null);
-  const previewRequestSignature = useRef("");
+  const applyController = useRef<AbortController | null>(null);
+  const renderedOperations = useRef<readonly JpegGlitchOperation[] | null>(
+    null,
+  );
   const previewCurrentEffectRef = useRef<(() => Promise<void>) | null>(null);
   const dragDepth = useRef(0);
   const importController = useRef<AbortController | null>(null);
@@ -240,10 +261,8 @@ function App() {
   const scanCorruptionHistory = useRef(new ScanCorruptionHistory());
   const cleanEncodedBytes = useRef<Uint8Array | null>(null);
   const scanCorruptionController = useRef<AbortController | null>(null);
-  const pendingProjectStages = useRef<
-    readonly ScanCorruptionParameters[] | null
-  >(null);
-  const projectStagesReplayStarted = useRef(false);
+  const lastSavedProject = useRef("");
+  const savingProject = useRef(false);
   const [canvasPointer] = useState(() => new CanvasPointer());
   const [canvasTools] = useState(createCanvasToolControllers);
   const spacePanActive = useRef(false);
@@ -251,11 +270,18 @@ function App() {
   const previewImageWrap = useRef<HTMLDivElement>(null);
   const jpegOperations =
     historyDocument?.currentState.jpegOperations ?? EMPTY_JPEG_OPERATIONS;
-  const activeMask = globalSelectionMask;
   const activeEffect = getEffect(activeEffectId ?? DEFAULT_EFFECT_ID);
   const activeView = activeEffect?.view;
   const activeSettings = activeView ? effectSettings[activeView.id] : undefined;
   const isMaskEffect = activeView?.interaction === "mask";
+  const activeMask = isMaskEffect ? globalSelectionMask : null;
+  const autoApplyKey =
+    activeView && (toolMode === "brush" || toolMode === "select")
+      ? `${getStorageKey(activeView)}:${toolMode}`
+      : null;
+  const autoApply = Boolean(
+    autoApplyKey && activeView?.autoApply && effectAutoApply[autoApplyKey],
+  );
   const maskToolId = toolMode === "effect" ? null : toolMode;
   const maskToolView = maskToolId ? getMaskToolView(maskToolId) : null;
   const componentCount = document?.inspection.components.length ?? 0;
@@ -286,33 +312,67 @@ function App() {
         : ([] as readonly JpegComponentLabel[]),
     [colorModel, componentCount],
   );
-  function getPreviewSignature(settings: ErasedSettings | undefined) {
+  function getPreviewSignature(
+    settings: ErasedSettings | undefined,
+    mask = activeMask,
+  ) {
     return JSON.stringify({
-      documentHash,
+      documentSession,
       revision: historyDocument?.revision ?? 0,
       effectId: activeView?.id ?? null,
       componentIndex,
       settings,
-      maskId: isMaskEffect ? (activeMask?.id ?? null) : null,
+      maskId: isMaskEffect ? (mask?.id ?? null) : null,
     });
   }
   const effectPreviewSignature = getPreviewSignature(activeSettings);
-  const isDraftPreviewStale =
-    draftPreviewUrl !== null &&
-    draftPreviewSignature !== effectPreviewSignature;
+  const currentPreview =
+    draftPreview?.signature === effectPreviewSignature ? draftPreview : null;
+  const draftPreviewUrl = currentPreview?.frame.url;
+  const isBusy = isEncoding || applying !== null;
+  const needsAutomaticPreview =
+    draftRequest !== null &&
+    Boolean(activeView?.autoPreview && isMaskEffect && activeMask) &&
+    !isBusy &&
+    scanCorruptionReports.length === 0;
+  const awaitingPreview =
+    isDraftPreviewing ||
+    (needsAutomaticPreview && !currentPreview && !previewFailed);
+  const currentOperation = useMemo(() => {
+    if (
+      !document ||
+      !activeEffect ||
+      !activeSettings ||
+      !isJpegOperationController(activeEffect.controller) ||
+      activeEffect.view.interaction === "panel" ||
+      (isMaskEffect && !activeMask)
+    )
+      return null;
+    return activeEffect.controller.buildOperation({
+      settings: activeSettings,
+      inspection: document.inspection,
+      componentIndex,
+      mask: activeMask,
+    });
+  }, [
+    document,
+    activeEffect,
+    activeSettings,
+    componentIndex,
+    activeMask,
+    isMaskEffect,
+  ]);
+  const canApply =
+    draftRequest !== null &&
+    !isBusy &&
+    !isLoading &&
+    (activeView?.interaction === "panel" || (currentOperation?.ok ?? false));
   const contextualErrorMessage = [
     effectSettingsError
       ? `${effectSettingsError} Effect settings may not be retained.`
       : "",
-    effectAutoApplyError,
     documentHash && componentIndex >= componentCount
       ? `This image has no component ${componentIndex}. Choose another brush or component.`
-      : "",
-    scanCorruptionReports.length > 0 ? editedPreviewError : "",
-    scanCorruptionReports.length > 0 &&
-    cleanEncodedPreviewError &&
-    !cleanEncodedPreviewUrl
-      ? `The clean encoded JPEG could not be previewed: ${cleanEncodedPreviewError}`
       : "",
   ]
     .filter(Boolean)
@@ -324,37 +384,33 @@ function App() {
       : "");
 
   useEffect(() => {
-    if (previewRequestSignature.current !== effectPreviewSignature) {
-      previewAbortController.current?.abort();
-      previewCoordinator.current.cancel();
-    }
-    if (
-      !activeView?.autoPreview ||
-      !isMaskEffect ||
-      !activeMask ||
-      scanCorruptionReports.length > 0
-    ) {
-      return;
-    }
+    if (!needsAutomaticPreview || currentPreview || previewFailed) return;
     const timeout = window.setTimeout(() => {
       const previewCurrentEffect = previewCurrentEffectRef.current;
       if (previewCurrentEffect) void previewCurrentEffect();
     }, 250);
     return () => window.clearTimeout(timeout);
   }, [
-    activeMask,
-    activeView,
-    isMaskEffect,
+    currentPreview,
+    draftRequest,
     effectPreviewSignature,
-    scanCorruptionReports.length,
+    needsAutomaticPreview,
+    previewFailed,
   ]);
 
   useEffect(() => {
-    const dialog = saveDialogRef.current;
+    const dialog = exportOptionsRef.current;
     if (!dialog) return;
-    if (isSaveDialogOpen && !dialog.open) dialog.showModal();
-    else if (!isSaveDialogOpen && dialog.open) dialog.close();
-  }, [isSaveDialogOpen]);
+    if (isExportOptionsOpen && !dialog.open) dialog.showModal();
+    else if (!isExportOptionsOpen && dialog.open) dialog.close();
+  }, [isExportOptionsOpen]);
+
+  useEffect(() => {
+    const dialog = replaceDialogRef.current;
+    if (!dialog) return;
+    if (requestedFile && !dialog.open) dialog.showModal();
+    else if (!requestedFile && dialog.open) dialog.close();
+  }, [requestedFile]);
 
   useEffect(
     () => () => {
@@ -372,10 +428,9 @@ function App() {
 
   useEffect(
     () => () => {
-      previewAbortController.current?.abort();
-      if (draftPreviewUrl) URL.revokeObjectURL(draftPreviewUrl);
+      if (draftPreview?.frame.url) URL.revokeObjectURL(draftPreview.frame.url);
     },
-    [draftPreviewUrl],
+    [draftPreview],
   );
 
   useEffect(
@@ -389,261 +444,296 @@ function App() {
     cleanEncodedPreviewErrorRef.current = cleanEncodedPreviewError;
   }, [cleanEncodedPreviewError]);
 
+  const publishCoefficientFrame = useCallback((frame: EncodedJpegFrame) => {
+    cleanEncodedBytes.current = frame.bytes;
+    setEditedBytes(frame.bytes);
+    setEditedPreviewUrl((previous) => frame.url ?? previous);
+    setEditedPreviewError(frame.displayError);
+    setCleanEncodedPreviewUrl(
+      frame.url ? createJpegPreviewUrl(frame.bytes) : null,
+    );
+    setCleanEncodedPreviewError(frame.displayError);
+    setIsEncoding(false);
+  }, []);
+
   useEffect(() => {
-    scanCorruptionController.current?.abort();
-    scanCorruptionController.current = null;
-    scanCorruptionHistory.current.clear();
-    cleanEncodedBytes.current = null;
     if (!document || jpegOperations.length === 0) return;
+    if (renderedOperations.current === jpegOperations) return;
 
     const controller = new AbortController();
-    const geometry: JpegBlockGeometry = {
-      width: document.inspection.width,
-      height: document.inspection.height,
-      components: document.inspection.components.map(
-        ({ id, horizontalSampling, verticalSampling, quantizationTable }) => ({
-          id,
-          horizontalSampling,
-          verticalSampling,
-          quantizationTable,
-        }),
-      ),
-    };
-
+    const history = operationHistory.current;
     void (async () => {
-      const encoded = await encodeJpegCoefficients(
-        document.originalAsset.readBytes(),
-        geometry,
+      const encoded = await encodeJpegFrame(
+        document,
+        orientation,
         jpegOperations,
         controller.signal,
       );
-      if (controller.signal.aborted) return;
+      if (
+        controller.signal.aborted ||
+        history !== operationHistory.current ||
+        jpegOperations !== history?.snapshot.currentState.jpegOperations
+      ) {
+        if (encoded.ok && encoded.value.url) {
+          URL.revokeObjectURL(encoded.value.url);
+        }
+        return;
+      }
       if (!encoded.ok) {
         setErrorMessage(encoded.error.message);
+        setEditedPreviewError(
+          "The result could not be encoded. Showing the last available image.",
+        );
         setIsEncoding(false);
         return;
       }
-
-      cleanEncodedBytes.current = encoded.value.slice();
-      const outputBuffer = new ArrayBuffer(encoded.value.byteLength);
-      new Uint8Array(outputBuffer).set(encoded.value);
-      const previewUrl = URL.createObjectURL(
-        new Blob([outputBuffer], { type: "image/jpeg" }),
-      );
-      let previewError = "";
-      try {
-        const preview = new Image();
-        preview.src = previewUrl;
-        await preview.decode();
-        const expected = previewDimensions(document.inspection, orientation);
-        if (
-          preview.naturalWidth !== expected.width ||
-          preview.naturalHeight !== expected.height
-        ) {
-          previewError =
-            "The encoded output dimensions differ from the source image.";
-        }
-      } catch {
-        previewError =
-          "The browser decoder could not render this encoded experiment. The file is still available to export.";
-      }
-      if (controller.signal.aborted) {
-        URL.revokeObjectURL(previewUrl);
-        return;
-      }
-
-      if (previewError) {
-        URL.revokeObjectURL(previewUrl);
-        setEditedPreviewUrl(null);
-        setEditedPreviewError(previewError);
-        setCleanEncodedPreviewUrl(null);
-        setCleanEncodedPreviewError(previewError);
-      } else {
-        setEditedPreviewUrl(previewUrl);
-        setEditedPreviewError("");
-        setCleanEncodedPreviewUrl(
-          URL.createObjectURL(
-            new Blob([outputBuffer.slice(0)], { type: "image/jpeg" }),
-          ),
-        );
-        setCleanEncodedPreviewError("");
-      }
-      setEditedBytes(encoded.value);
-      setIsEncoding(false);
+      renderedOperations.current = jpegOperations;
+      publishCoefficientFrame(encoded.value);
     })();
 
     return () => controller.abort();
-  }, [document, jpegOperations, orientation]);
+  }, [document, jpegOperations, orientation, publishCoefficientFrame]);
 
   useEffect(
     () => () => {
       importController.current?.abort();
       scanCorruptionController.current?.abort();
+      previewAbortController.current?.abort();
+      applyController.current?.abort();
     },
     [],
   );
 
-  async function loadFile(file: File) {
-    resetCanvasInteraction();
-    cancelScanCorruption();
+  async function loadFile({ file, example = false }: RequestedFile) {
     const currentRequest = ++requestId.current;
     importController.current?.abort();
     const controller = new AbortController();
     importController.current = controller;
-    setErrorMessage("");
-    setProjectNotice("");
+    setOpenError(null);
     setIsLoading(true);
-    const isProjectFile = file.name.toLowerCase().endsWith(".jpglitch");
-    setLoadingMessage(isProjectFile ? "Opening project…" : "Inspecting JPEG…");
+    const isProjectFile = /\.jpglitch$/i.test(file.name);
+    setLoadingMessage(isProjectFile ? "Opening project…" : "Opening photo…");
 
-    let projectData: JgeProjectData | null = null;
-    let jpegFile = file;
-    if (isProjectFile) {
-      const savedProject = await readJgeProjectFile(
-        file,
-        (message) => setLoadingMessage(message),
-        controller.signal,
+    let source: ImportedJpeg | null = null;
+    let cleanFrame: EncodedJpegFrame | null = null;
+    let damagedFrame: EncodedJpegFrame | null = null;
+    let accepted = false;
+    try {
+      let projectData: JgeProjectData | null = null;
+      let jpegFile = file;
+      if (isProjectFile) {
+        const savedProject = await readJgeProjectFile(
+          file,
+          (message) => {
+            if (!controller.signal.aborted) setLoadingMessage(message);
+          },
+          controller.signal,
+        );
+        if (controller.signal.aborted) return;
+        if (!savedProject.ok) throw new Error(savedProject.error.message);
+        projectData = savedProject.value;
+        const buffer = new ArrayBuffer(projectData.source.bytes.byteLength);
+        new Uint8Array(buffer).set(projectData.source.bytes);
+        jpegFile = new File([buffer], projectData.source.fileName, {
+          type: "image/jpeg",
+        });
+        setLoadingMessage("Opening embedded photo…");
+      }
+
+      const imported = await importJpeg(jpegFile, controller.signal);
+      if (imported.ok) source = imported.value;
+      if (controller.signal.aborted) return;
+      if (!imported.ok) throw new Error(imported.error.message);
+
+      const history = createJpegDocumentSession(imported.value);
+      if (!history.ok) throw new Error(history.error.message);
+      const sourceOrientation = readJpegOrientation(
+        imported.value.originalAsset.readBytes(),
+        imported.value.inspection,
       );
-      if (currentRequest !== requestId.current) return;
-      if (!savedProject.ok) {
+      if (!sourceOrientation.ok)
+        throw new Error(sourceOrientation.error.message);
+      const wholeMask = createWholeImageMask(imported.value.inspection);
+      if (!wholeMask.ok) throw new Error(wholeMask.error.message);
+      const initialSelectionMask = projectData?.draftMask ?? wholeMask.value;
+      const savedStages = projectData?.scanCorruptionStages ?? [];
+      let damaged: CorruptedEncodedJpeg | null = null;
+      if (projectData) {
+        const restored = history.value.restoreOperations(
+          projectData.operations,
+        );
+        if (!restored.ok) throw new Error(restored.error.message);
+        if (
+          initialSelectionMask.width !== imported.value.inspection.width ||
+          initialSelectionMask.height !== imported.value.inspection.height
+        )
+          throw new Error(
+            "The saved area dimensions do not match the embedded JPG.",
+          );
+
+        const operations = history.value.snapshot.currentState.jpegOperations;
+        if (operations.length > 0 || savedStages.length > 0) {
+          setLoadingMessage("Replaying project…");
+          const encoded = await encodeJpegFrame(
+            imported.value,
+            sourceOrientation.value,
+            operations,
+            controller.signal,
+          );
+          if (encoded.ok) cleanFrame = encoded.value;
+          if (controller.signal.aborted) return;
+          if (!encoded.ok) throw new Error(encoded.error.message);
+          if (savedStages.length > 0) {
+            const scan = getScanCorruptionEffect();
+            if (!scan)
+              throw new Error("The JPEG Damage effect is unavailable.");
+            const replayed = await scan.controller.execute_corrupt(
+              encoded.value.bytes,
+              savedStages,
+              controller.signal,
+            );
+            if (controller.signal.aborted) return;
+            if (!replayed.ok) throw new Error(replayed.error.message);
+            damaged = replayed.value;
+            damagedFrame = await decodeJpegFrame(
+              imported.value,
+              sourceOrientation.value,
+              damaged.bytes,
+              controller.signal,
+            );
+            if (!damagedFrame) return;
+          }
+        }
+      }
+      scanCorruptionController.current?.abort();
+      scanCorruptionController.current = null;
+      scanCorruptionHistory.current.clear();
+      cleanEncodedBytes.current = null;
+      operationHistory.current = history.value;
+      setHistoryDocument(history.value.snapshot);
+      applyController.current?.abort();
+      applyController.current = null;
+      setApplying(null);
+      discardDraftPreview();
+      setDraftRequest(projectData ? null : 1);
+      setEffectApplied(false);
+      setDocumentSession((current) => current + 1);
+      renderedOperations.current = cleanFrame
+        ? history.value.snapshot.currentState.jpegOperations
+        : null;
+      setEditedPreviewUrl(null);
+      setEditedBytes(null);
+      setEditedPreviewError("");
+      setCleanEncodedPreviewUrl(null);
+      setCleanEncodedPreviewError("");
+      setScanCorruptionReports([]);
+      setScanDecodeDiagnostic(null);
+      setIsScanCorrupting(false);
+      setShowCleanEncoded(false);
+      setIsEncoding(false);
+      setHistoryAvailability({
+        canUndo: history.value.canUndo,
+        canRedo: history.value.canRedo,
+      });
+      resetCanvasInteraction();
+      dispatchWorkspace({ type: "reset-document" });
+      dispatchWorkspace({
+        type: "activate-effect",
+        effectId: DEFAULT_EFFECT_ID,
+        usesMaskTools:
+          getEffect(DEFAULT_EFFECT_ID)?.view.interaction === "mask",
+      });
+      setWholeImageMask(wholeMask.value);
+      dispatchWorkspace({
+        type: "activate-tool",
+        tool: areaToolForMask(initialSelectionMask),
+      });
+      dispatchWorkspace({
+        type: "set-selection",
+        selection: initialSelectionMask,
+      });
+      setComponentIndex(0);
+      setEffectSettings(createEffectSettings(persistedSettings.current));
+      setBrushSize(32);
+      setEffectAutoApply({});
+      setMaskGrid("dct");
+      dispatchWorkspace({ type: "select-mask", maskId: null });
+      setShowBlocks(false);
+      setShowMcus(false);
+      setShowOriginal(false);
+      setZoom(1);
+      setDocument(imported.value);
+      setExamplePhoto(example);
+      setOperationEffectIds({});
+      setShowHistory(false);
+      setProjectNotice("");
+      lastSavedProject.current = projectEditsKey({
+        operations: history.value.snapshot.operations,
+        draftMask: initialSelectionMask,
+        scanCorruptionStages: savedStages,
+      });
+      if (
+        cleanFrame &&
+        (history.value.snapshot.currentState.jpegOperations.length > 0 ||
+          damaged)
+      ) {
+        publishCoefficientFrame(cleanFrame);
+      }
+      if (damaged && damagedFrame) {
+        for (const stage of savedStages)
+          scanCorruptionHistory.current.record(stage);
+        publishDamageFrame(damagedFrame, damaged.reports, damaged.diagnostic);
+      }
+      accepted = true;
+      if (
+        projectData &&
+        (projectData.applicationVersion !== APPLICATION_VERSION ||
+          projectData.codecVersion !== JPEG_CODEC_VERSION)
+      ) {
+        setProjectNotice(
+          `Created with app ${projectData.applicationVersion} and ${projectData.codecVersion}; replayed JPEG output may differ from its previous export.`,
+        );
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        const detail = error instanceof Error ? error.message : undefined;
+        const message = detail?.includes("MiB")
+          ? detail
+          : isProjectFile
+            ? "This project could not be opened."
+            : "This JPG could not be opened. Try a different JPG.";
+        setOpenError({
+          message,
+          detail: detail !== message ? detail : undefined,
+        });
+      }
+    } finally {
+      if (!accepted) {
+        if (source) URL.revokeObjectURL(source.previewUrl);
+        if (cleanFrame?.url) URL.revokeObjectURL(cleanFrame.url);
+        if (damagedFrame?.url) URL.revokeObjectURL(damagedFrame.url);
+      }
+      if (currentRequest === requestId.current) {
         importController.current = null;
         setIsLoading(false);
-        setErrorMessage(savedProject.error.message);
-        return;
       }
-      projectData = savedProject.value;
-      const sourceBuffer = new ArrayBuffer(projectData.source.bytes.byteLength);
-      new Uint8Array(sourceBuffer).set(projectData.source.bytes);
-      jpegFile = new File([sourceBuffer], projectData.source.fileName, {
-        type: "image/jpeg",
-      });
-      setLoadingMessage("Inspecting embedded JPEG…");
-    }
-
-    const result = await importJpeg(jpegFile, controller.signal);
-    if (currentRequest !== requestId.current) {
-      if (result.ok) URL.revokeObjectURL(result.value.previewUrl);
-      return;
-    }
-
-    importController.current = null;
-    setIsLoading(false);
-    if (!result.ok) {
-      setErrorMessage(result.error.message);
-      return;
-    }
-
-    const history = createJpegDocumentSession(result.value);
-    if (!history.ok) {
-      URL.revokeObjectURL(result.value.previewUrl);
-      setErrorMessage(history.error.message);
-      return;
-    }
-    let initialSelectionMask = projectData?.draftMask ?? null;
-    if (!initialSelectionMask) {
-      const mask = createWholeImageMask(result.value.inspection);
-      if (!mask.ok) {
-        URL.revokeObjectURL(result.value.previewUrl);
-        setErrorMessage(mask.error.message);
-        return;
-      }
-      initialSelectionMask = mask.value;
-    }
-    if (projectData) {
-      const restored = history.value.restoreOperations(projectData.operations);
-      if (!restored.ok) {
-        URL.revokeObjectURL(result.value.previewUrl);
-        setErrorMessage(
-          `The saved operation stack could not be restored: ${restored.error.message}`,
-        );
-        return;
-      }
-      if (
-        projectData.draftMask &&
-        (projectData.draftMask.width !== result.value.inspection.width ||
-          projectData.draftMask.height !== result.value.inspection.height)
-      ) {
-        URL.revokeObjectURL(result.value.previewUrl);
-        setErrorMessage(
-          "The saved draft mask dimensions do not match the embedded JPEG.",
-        );
-        return;
-      }
-    }
-
-    scanCorruptionController.current?.abort();
-    scanCorruptionController.current = null;
-    scanCorruptionHistory.current.clear();
-    cleanEncodedBytes.current = null;
-    operationHistory.current = history.value;
-    setHistoryDocument(history.value.snapshot);
-    pendingProjectStages.current =
-      projectData && projectData.scanCorruptionStages.length > 0
-        ? projectData.scanCorruptionStages
-        : null;
-    projectStagesReplayStarted.current = false;
-    previewAbortController.current?.abort();
-    previewCoordinator.current.cancel();
-    setDraftPreviewUrl(null);
-    setDraftPreviewSignature("");
-    setEditedPreviewUrl(null);
-    setEditedBytes(null);
-    setEditedPreviewError("");
-    setCleanEncodedPreviewUrl(null);
-    setCleanEncodedPreviewError("");
-    setScanCorruptionReports([]);
-    setScanDecodeDiagnostic(null);
-    setIsScanCorrupting(false);
-    setShowCleanEncoded(false);
-    setIsEncoding(history.value.snapshot.operations.length > 0);
-    setHistoryAvailability({
-      canUndo: history.value.canUndo,
-      canRedo: history.value.canRedo,
-    });
-    resetCanvasInteraction();
-    dispatchWorkspace({ type: "reset-document" });
-    dispatchWorkspace({
-      type: "activate-effect",
-      effectId: DEFAULT_EFFECT_ID,
-      usesMaskTools: getEffect(DEFAULT_EFFECT_ID)?.view.interaction === "mask",
-    });
-    if (projectData?.draftMask) {
-      dispatchWorkspace({ type: "activate-tool", tool: "select" });
-    }
-    dispatchWorkspace({
-      type: "set-selection",
-      selection: initialSelectionMask,
-    });
-    setComponentIndex(0);
-    setEffectSettings(createEffectSettings(persistedSettings.current));
-    setBrushSize(32);
-    setMaskGrid("dct");
-    dispatchWorkspace({ type: "select-mask", maskId: null });
-    setShowBlocks(false);
-    setShowMcus(false);
-    setShowOriginal(false);
-    setZoom(1);
-    setDocument(result.value);
-    if (
-      projectData &&
-      (projectData.applicationVersion !== APPLICATION_VERSION ||
-        projectData.codecVersion !== JPEG_CODEC_VERSION)
-    ) {
-      setProjectNotice(
-        `Created with app ${projectData.applicationVersion} and ${projectData.codecVersion}; replayed JPEG output may differ from its previous export.`,
-      );
     }
   }
 
   function updateHistory(
     result: ReturnType<OperationHistory<JpegEditableState>["add"]>,
+    appliedFrame?: EncodedJpegFrame,
   ) {
     if (!result.ok) {
       setErrorMessage(result.error.message);
       return;
     }
+    discardDraftPreview();
+    setDraftRequest(null);
+    setEffectApplied(Boolean(appliedFrame));
     const previousJpegOperations = historyDocument?.currentState.jpegOperations;
-    if (result.value.currentState.jpegOperations !== previousJpegOperations) {
+    const nextOperations = result.value.currentState.jpegOperations;
+    if (nextOperations !== previousJpegOperations) {
       if (scanCorruptionHistory.current.activeStages.length > 0) {
         const rolledBack = operationHistory.current?.undo();
         if (rolledBack?.ok) setHistoryDocument(rolledBack.value);
@@ -656,27 +746,27 @@ function App() {
             (history?.canRedo ?? false) ||
             scanCorruptionHistory.current.canRedo,
         });
-        setErrorMessage(
-          "Undo Scan Corrupt before changing coefficient or DQT operations.",
-        );
+        setErrorMessage("Undo the damage stages to edit earlier effects.");
         return;
       }
       scanCorruptionController.current?.abort();
       scanCorruptionController.current = null;
       scanCorruptionHistory.current.clear();
       cleanEncodedBytes.current = null;
-      previewAbortController.current?.abort();
-      previewCoordinator.current.cancel();
-      setDraftPreviewUrl(null);
-      setDraftPreviewSignature("");
+      renderedOperations.current = null;
       setScanCorruptionReports([]);
       setScanDecodeDiagnostic(null);
-      setEditedPreviewUrl(null);
       setEditedBytes(null);
       setEditedPreviewError("");
       setCleanEncodedPreviewUrl(null);
       setCleanEncodedPreviewError("");
-      setIsEncoding(result.value.currentState.jpegOperations.length > 0);
+      if (appliedFrame) {
+        renderedOperations.current = nextOperations;
+        publishCoefficientFrame(appliedFrame);
+      } else {
+        if (nextOperations.length === 0) setEditedPreviewUrl(null);
+        setIsEncoding(nextOperations.length > 0);
+      }
       setIsScanCorrupting(false);
       setShowOriginal(false);
       setShowCleanEncoded(false);
@@ -697,12 +787,8 @@ function App() {
       history: OperationHistory<JpegEditableState>,
     ) => ReturnType<OperationHistory<JpegEditableState>["add"]>,
   ) {
-    if (scanCorruptionHistory.current.activeStages.length > 0) {
-      setErrorMessage(
-        "Undo Scan Corrupt before changing coefficient or DQT operations.",
-      );
-      return;
-    }
+    if (isBusy || isLoading || applyController.current) return;
+    if (!ensureCoefficientPhase()) return;
     const history = operationHistory.current;
     if (!history) return;
     updateHistory(mutate(history));
@@ -716,24 +802,24 @@ function App() {
       setBrushCursorPoint(feedback.hoverPoint);
     if (feedback.announcement !== undefined)
       setCanvasKeyboardAnnouncement(feedback.announcement);
-    if (feedback.error !== undefined) setErrorMessage(feedback.error);
+    if (feedback.error !== undefined) setCanvasError(feedback.error);
     if (feedback.selection) {
-      setErrorMessage("");
+      setCanvasError("");
       const { mask, autoApply } = feedback.selection;
       dispatchWorkspace({ type: "set-selection", selection: mask });
-      if (mask && autoApply && autoApplySelectionEffect(mask)) {
-        dispatchWorkspace({ type: "set-selection", selection: null });
-      }
+      requestEffectDraft();
+      if (mask && autoApply) void autoApplySelectionEffect(mask);
     }
     if (feedback.effect) {
       const { ownerId, patch, apply } = feedback.effect;
       if (patch) {
+        requestEffectDraft();
         setEffectSettings((current) => ({
           ...current,
           [ownerId]: mergeSettings(current[ownerId] ?? {}, patch),
         }));
       }
-      if (apply) applyEffect(patch);
+      if (apply) void applyEffect(patch, activeMask, { gesture: true });
     }
   }
 
@@ -747,7 +833,7 @@ function App() {
   }
 
   function onImagePointerDown(event: PointerEvent<HTMLDivElement>) {
-    if (!canvasContext) return;
+    if (!canvasContext || applyController.current || isLoading) return;
     const shouldFocusCanvas = canvasPointer.begin(
       event,
       pointerInput(event),
@@ -776,30 +862,34 @@ function App() {
     setKeyboardCursor(null);
     setMaskDraft(null);
     setBrushCursorPoint(null);
+    setCanvasError("");
   }
 
   function activateTool(tool: MaskTool) {
-    if (!enabledCanvasTools.has(tool)) return;
+    if (applyController.current || !enabledCanvasTools.has(tool)) return;
     resetCanvasInteraction();
     dispatchWorkspace({ type: "activate-tool", tool });
+    if (tool !== toolMode && tool !== "all") requestEffectDraft();
     setCanvasKeyboardAnnouncement(
       `${getMaskToolView(tool).label} tool selected.`,
     );
     if (canvasContext) canvasTools.get(tool)?.activate?.(canvasContext);
-    if (activeToolPanel.current) activeToolPanel.current.open = true;
+    setShowHistory(false);
   }
 
   function activateEffect(effectId: string) {
     const effect = getEffect(effectId);
     if (!effect) return;
+    if (applyController.current) return;
     resetCanvasInteraction();
+    requestEffectDraft();
     setErrorMessage("");
     dispatchWorkspace({
       type: "activate-effect",
       effectId,
       usesMaskTools: effect.view.interaction === "mask",
     });
-    if (activeToolPanel.current) activeToolPanel.current.open = true;
+    setShowHistory(false);
   }
 
   function changeEffectSettings(
@@ -807,8 +897,12 @@ function App() {
     persist = true,
   ) {
     const view = activeView;
-    if (!view || !patch) return;
-    if (persist) canvasPointer.cancel();
+    if (!view || !patch || applyController.current) return;
+    requestEffectDraft();
+    if (persist) {
+      canvasPointer.cancel();
+      setCanvasError("");
+    }
     setEffectSettings((current) => ({
       ...current,
       [view.id]: mergeSettings(current[view.id] ?? {}, patch),
@@ -837,7 +931,9 @@ function App() {
   }
 
   function changeComponent(index: number) {
+    if (applyController.current) return;
     resetCanvasInteraction();
+    requestEffectDraft();
     setComponentIndex(index);
     setErrorMessage("");
     setEffectSettings((current) =>
@@ -866,12 +962,15 @@ function App() {
       setErrorMessage("This effect does not edit coefficient operations.");
       return null;
     }
-    const built = controller.buildOperation({
-      settings: mergeSettings(activeSettings, patch),
-      inspection: document.inspection,
-      componentIndex,
-      mask: view.interaction === "mask" ? mask : null,
-    });
+    const built =
+      !patch && mask === activeMask && currentOperation
+        ? currentOperation
+        : controller.buildOperation({
+            settings: mergeSettings(activeSettings, patch),
+            inspection: document.inspection,
+            componentIndex,
+            mask: view.interaction === "mask" ? mask : null,
+          });
     if (!built.ok) {
       setErrorMessage(built.error.message);
       return null;
@@ -881,171 +980,214 @@ function App() {
 
   function ensureCoefficientPhase(): boolean {
     if (scanCorruptionHistory.current.activeStages.length === 0) return true;
-    setErrorMessage(
-      "Undo Scan Corrupt before changing coefficient or DQT operations.",
-    );
+    setErrorMessage("Undo the damage stages to edit earlier effects.");
     return false;
   }
 
-  function applyEffect(
+  async function applyEffect(
     patch?: Partial<ErasedSettings>,
     mask: SpatialMask | null = activeMask,
-  ): boolean {
-    if (!ensureCoefficientPhase()) return false;
-    const history = operationHistory.current;
-    if (!history || !activeEffect) return false;
-    const { controller } = activeEffect;
-    if (!isJpegOperationController(controller)) return false;
-    const operation = buildActiveOperation(patch, mask);
-    if (!operation) return false;
-    const result = controller.apply(
-      history,
-      operation,
-      history.snapshot.inspection,
-    );
-    updateHistory(result);
-    return result.ok;
-  }
-
-  function changeEffectAutoApply(checked: boolean) {
-    if (effectAutoApplyError || !activeView) return;
-    const effectId = getStorageKey(activeView);
-    let storage: Storage;
-    try {
-      storage = window.localStorage;
-    } catch {
-      setEffectAutoApplyError(
-        "Effect automatic-apply settings are unavailable.",
-      );
-      return;
-    }
-    const next = { ...effectAutoApply, [effectId]: checked };
-    const result = writeBrushAutoApply(storage, next);
-    if (!result.ok) {
-      setEffectAutoApplyError(result.error.message);
-      return;
-    }
-    resetCanvasInteraction();
-    setEffectAutoApply(next);
-    setEffectAutoApplyError("");
-  }
-
-  function autoApplySelectionEffect(mask: SpatialMask): boolean {
+    options?: {
+      readonly gesture?: boolean;
+      readonly autoApply?: "stroke" | "selection";
+      readonly download?: boolean;
+    },
+  ) {
     if (
-      !activeView?.autoApply ||
-      !isMaskEffect ||
-      !effectAutoApply[getStorageKey(activeView)]
-    ) {
-      return false;
-    }
-    return applyEffect(undefined, mask);
-  }
-
-  function markDraftPreviewStale() {
-    previewAbortController.current?.abort();
-    previewCoordinator.current.cancel();
-    setDraftPreviewUrl(null);
-    setDraftPreviewSignature("");
-  }
-
-  async function previewCurrentEffect(patch?: Partial<ErasedSettings>) {
-    if (!document || !historyDocument || !activeView) return;
-    if (!ensureCoefficientPhase()) return;
-    const operation = buildActiveOperation(patch, activeMask);
+      applyController.current ||
+      isBusy ||
+      isLoading ||
+      (!options?.gesture && !canApply) ||
+      !ensureCoefficientPhase()
+    )
+      return;
+    const source = document;
+    const history = operationHistory.current;
+    if (
+      !source ||
+      !history ||
+      !activeEffect ||
+      history.snapshot !== historyDocument
+    )
+      return;
+    const { controller } = activeEffect;
+    if (!isJpegOperationController(controller)) return;
+    const settings = mergeSettings(activeSettings ?? {}, patch);
+    const cached =
+      draftPreview?.signature === getPreviewSignature(settings, mask)
+        ? draftPreview
+        : null;
+    const operation = cached?.operation ?? buildActiveOperation(patch, mask);
     if (!operation) return;
-    const requestSignature = getPreviewSignature(
-      mergeSettings(activeSettings ?? {}, patch),
-    );
-    if (patch) changeEffectSettings(patch, false);
-
-    previewAbortController.current?.abort();
-    const controller = new AbortController();
-    previewAbortController.current = controller;
-    const coordinator = previewCoordinator.current;
-    const token = coordinator.begin(historyDocument.revision);
-    previewRequestSignature.current = requestSignature;
-    setIsDraftPreviewing(true);
+    const base = history.snapshot;
+    const operations = [...base.currentState.jpegOperations, operation];
+    const job = new AbortController();
+    applyController.current = job;
+    discardDraftPreview();
+    setApplying(options?.autoApply ?? "effect");
     setErrorMessage("");
 
-    const geometry: JpegBlockGeometry = {
-      width: document.inspection.width,
-      height: document.inspection.height,
-      components: document.inspection.components.map(
-        ({ id, horizontalSampling, verticalSampling, quantizationTable }) => ({
-          id,
-          horizontalSampling,
-          verticalSampling,
-          quantizationTable,
-        }),
-      ),
-    };
-
     try {
-      const encoded = await encodeJpegCoefficients(
-        document.originalAsset.readBytes(),
-        geometry,
-        [...jpegOperations, operation],
-        controller.signal,
-      );
-      if (controller.signal.aborted) return;
+      const encoded = cached
+        ? {
+            ok: true as const,
+            value: {
+              ...cached.frame,
+              url: cached.frame.url
+                ? createJpegPreviewUrl(cached.frame.bytes)
+                : null,
+            },
+          }
+        : await encodeJpegFrame(source, orientation, operations, job.signal);
+      if (
+        job.signal.aborted ||
+        history !== operationHistory.current ||
+        base !== history.snapshot
+      ) {
+        if (encoded.ok && encoded.value.url)
+          URL.revokeObjectURL(encoded.value.url);
+        return;
+      }
       if (!encoded.ok) {
+        setPreviewFailed(true);
         setErrorMessage(encoded.error.message);
         return;
       }
-      if (
-        !coordinator.isCurrent(
-          token,
-          operationHistory.current?.snapshot.revision ??
-            historyDocument.revision,
-        )
-      ) {
-        return;
-      }
 
-      const previewUrl = createJpegPreviewUrl(encoded.value);
-      const preview = new Image();
-      preview.src = previewUrl;
-      try {
-        await preview.decode();
-      } catch {
-        URL.revokeObjectURL(previewUrl);
-        if (!controller.signal.aborted) {
-          setErrorMessage(
-            "The effect was encoded, but the browser could not decode its preview.",
-          );
-        }
+      const result = controller.apply(history, operation, base.inspection);
+      if (!result.ok) {
+        if (encoded.value.url) URL.revokeObjectURL(encoded.value.url);
+        setErrorMessage(result.error.message);
         return;
       }
-      if (
-        controller.signal.aborted ||
-        !coordinator.isCurrent(
-          token,
-          operationHistory.current?.snapshot.revision ??
-            historyDocument.revision,
-        )
-      ) {
-        URL.revokeObjectURL(previewUrl);
-        return;
+      const added = result.value.operations.at(-1);
+      if (added)
+        setOperationEffectIds((effects) => ({
+          ...effects,
+          [added.id]: activeEffect.view.id,
+        }));
+      updateHistory(result, encoded.value);
+      if (options?.autoApply) {
+        dispatchWorkspace({ type: "set-selection", selection: null });
       }
-      const expected = previewDimensions(document.inspection, orientation);
-      if (
-        preview.naturalWidth !== expected.width ||
-        preview.naturalHeight !== expected.height
-      ) {
-        URL.revokeObjectURL(previewUrl);
-        setErrorMessage(
-          "The effect preview dimensions do not match the image.",
+      if (options?.download) {
+        await downloadJpeg(
+          source,
+          result.value.currentState.jpegOperations,
+          encoded.value.bytes,
+          exportMode,
         );
-        return;
       }
-      setDraftPreviewUrl(previewUrl);
-      setDraftPreviewSignature(requestSignature);
     } catch (error) {
-      if (!controller.signal.aborted) {
+      if (!job.signal.aborted) {
         setErrorMessage(
           error instanceof Error
-            ? `Effect preview failed: ${error.message}`
-            : "Effect preview failed for an unknown reason.",
+            ? error.message
+            : "The effect could not be applied.",
+        );
+      }
+    } finally {
+      if (applyController.current === job) {
+        applyController.current = null;
+        setApplying(null);
+      }
+    }
+  }
+
+  function changeEffectAutoApply(checked: boolean) {
+    if (!autoApplyKey || !activeView?.autoApply || applyController.current)
+      return;
+    resetCanvasInteraction();
+    setEffectAutoApply((current) => ({ ...current, [autoApplyKey]: checked }));
+  }
+
+  async function autoApplySelectionEffect(mask: SpatialMask) {
+    if (!autoApply) return;
+    await applyEffect(undefined, mask, {
+      gesture: true,
+      autoApply: toolMode === "brush" ? "stroke" : "selection",
+    });
+  }
+
+  function discardDraftPreview() {
+    previewAbortController.current?.abort();
+    previewAbortController.current = null;
+    previewCoordinator.current.cancel();
+    setDraftPreview(null);
+    setIsDraftPreviewing(false);
+    setPreviewFailed(false);
+  }
+
+  function requestEffectDraft() {
+    discardDraftPreview();
+    if (scanCorruptionReports.length === 0) setShowCleanEncoded(false);
+    setDraftRequest((current) => (current ?? 0) + 1);
+    setEffectApplied(false);
+  }
+
+  async function previewCurrentEffect(patch?: Partial<ErasedSettings>) {
+    if (
+      !document ||
+      !historyDocument ||
+      !activeView ||
+      isBusy ||
+      applyController.current
+    )
+      return;
+    if (!ensureCoefficientPhase()) return;
+
+    discardDraftPreview();
+    if (patch) {
+      setEffectSettings((current) => ({
+        ...current,
+        [activeView.id]: mergeSettings(current[activeView.id] ?? {}, patch),
+      }));
+      setDraftRequest((current) => (current ?? 0) + 1);
+      setEffectApplied(false);
+    }
+    const operation = buildActiveOperation(patch, activeMask);
+    if (!operation) {
+      setPreviewFailed(true);
+      return;
+    }
+    const signature = getPreviewSignature(
+      mergeSettings(activeSettings ?? {}, patch),
+    );
+    const controller = new AbortController();
+    previewAbortController.current = controller;
+    const coordinator = previewCoordinator.current;
+    const history = operationHistory.current;
+    const token = coordinator.begin(historyDocument.revision);
+    setIsDraftPreviewing(true);
+    setErrorMessage("");
+
+    try {
+      const encoded = await encodeJpegFrame(
+        document,
+        orientation,
+        [...jpegOperations, operation],
+        controller.signal,
+      );
+      if (
+        controller.signal.aborted ||
+        history !== operationHistory.current ||
+        !coordinator.isCurrent(token, history?.snapshot.revision ?? -1)
+      ) {
+        if (encoded.ok && encoded.value.url)
+          URL.revokeObjectURL(encoded.value.url);
+        return;
+      }
+      if (!encoded.ok) {
+        setPreviewFailed(true);
+        setErrorMessage(encoded.error.message);
+        return;
+      }
+      setDraftPreview({ signature, operation, frame: encoded.value });
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setPreviewFailed(true);
+        setErrorMessage(
+          error instanceof Error ? error.message : "The effect preview failed.",
         );
       }
     } finally {
@@ -1060,15 +1202,13 @@ function App() {
     previewCurrentEffectRef.current = () => previewCurrentEffect();
   });
 
-  function clearSelection() {
-    resetCanvasInteraction();
-    dispatchWorkspace({ type: "set-selection", selection: null });
-  }
-
   function resetHistory() {
+    if (isBusy || isLoading || applyController.current) return;
     if (
       !window.confirm(
-        "Reset all operations and clear the current mask? Undo can restore operations, but not the cleared mask.",
+        scanCorruptionReports.length > 0
+          ? "Remove all effects? This clears the current area and all damage stages. Undo can restore ordinary effects."
+          : "Remove all effects? This clears the current area. Undo can restore effects.",
       )
     ) {
       return;
@@ -1089,10 +1229,20 @@ function App() {
     setShowCleanEncoded(false);
     const history = operationHistory.current;
     if (history) updateHistory(history.resetToOriginal());
-    clearSelection();
+    resetCanvasInteraction();
+    if (!isMaskEffect) {
+      dispatchWorkspace({
+        type: "activate-effect",
+        effectId: DEFAULT_EFFECT_ID,
+        usesMaskTools: true,
+      });
+    }
+    dispatchWorkspace({ type: "activate-tool", tool: "all" });
+    dispatchWorkspace({ type: "set-selection", selection: wholeImageMask });
   }
 
   function restoreHistoryMask(mask: SpatialMask) {
+    if (isBusy || isLoading || applyController.current) return;
     if (
       !document ||
       mask.width !== document.inspection.width ||
@@ -1106,26 +1256,27 @@ function App() {
       setErrorMessage(restored.error.message);
       return;
     }
-    if (!getWorkspaceOverlayVisibility(toolMode).mask) {
-      activateEffect(DEFAULT_EFFECT_ID);
-      dispatchWorkspace({
-        type: "activate-tool",
-        tool: restored.value.shapes[0]?.kind === "brush" ? "brush" : "select",
-      });
-    }
+    if (!isMaskEffect) activateEffect(DEFAULT_EFFECT_ID);
+    const areaTool = areaToolForMask(restored.value);
+    dispatchWorkspace({ type: "activate-tool", tool: areaTool });
     resetCanvasInteraction();
-    dispatchWorkspace({ type: "set-selection", selection: restored.value });
+    requestEffectDraft();
+    dispatchWorkspace({
+      type: "set-selection",
+      selection: areaTool === "all" ? wholeImageMask : restored.value,
+    });
     setErrorMessage("");
   }
 
-  const showCorruptedResult = useCallback(
-    async (
-      bytes: Uint8Array,
+  const publishDamageFrame = useCallback(
+    (
+      frame: EncodedJpegFrame,
       reports: readonly ScanCorruptionReport[],
       diagnostic: ScanDecodeDiagnostic,
-      signal: AbortSignal,
     ) => {
-      setEditedBytes(bytes);
+      setEditedBytes(frame.bytes);
+      setEditedPreviewUrl(frame.url);
+      setEditedPreviewError(frame.displayError);
       setScanCorruptionReports(reports);
       setScanDecodeDiagnostic(diagnostic);
       const latestReport = reports.at(-1);
@@ -1137,68 +1288,6 @@ function App() {
           [scanEffect.view.id]: settings,
         }));
       }
-      setShowOriginal(false);
-      setShowCleanEncoded(false);
-      let previewUrl: string;
-      try {
-        previewUrl = createJpegPreviewUrl(bytes);
-      } catch {
-        setEditedPreviewUrl(null);
-        setEditedPreviewError(
-          "A preview could not be created for the corrupted scan. The corrupt bytes remain available to export; the clean encoded preview remains separate.",
-        );
-        setErrorMessage("");
-        setIsEncoding(false);
-        setIsScanCorrupting(false);
-        scanCorruptionController.current = null;
-        const history = operationHistory.current;
-        setHistoryAvailability({
-          canUndo:
-            (history?.canUndo ?? false) ||
-            scanCorruptionHistory.current.canUndo,
-          canRedo:
-            (history?.canRedo ?? false) ||
-            scanCorruptionHistory.current.canRedo,
-        });
-        return;
-      }
-      let previewError = "";
-      try {
-        const preview = new Image();
-        preview.src = previewUrl;
-        await preview.decode();
-        const expected = document
-          ? previewDimensions(document.inspection, orientation)
-          : null;
-        if (
-          document &&
-          expected &&
-          (preview.naturalWidth !== expected.width ||
-            preview.naturalHeight !== expected.height)
-        ) {
-          previewError =
-            "The corrupted JPEG preview dimensions differ from the source image.";
-        }
-      } catch {
-        previewError =
-          "The browser decoder could not render the corrupted scan. The corrupt bytes remain available to export; the clean encoded preview is shown for comparison.";
-      }
-
-      if (signal.aborted) {
-        URL.revokeObjectURL(previewUrl);
-        return;
-      }
-      if (previewError) {
-        URL.revokeObjectURL(previewUrl);
-        setEditedPreviewUrl(null);
-        setEditedPreviewError(previewError);
-      } else {
-        setEditedPreviewUrl(previewUrl);
-        setEditedPreviewError("");
-      }
-      setShowOriginal(false);
-      setShowCleanEncoded(false);
-      setErrorMessage("");
       setIsEncoding(false);
       setIsScanCorrupting(false);
       scanCorruptionController.current = null;
@@ -1210,7 +1299,7 @@ function App() {
           (history?.canRedo ?? false) || scanCorruptionHistory.current.canRedo,
       });
     },
-    [document, orientation],
+    [],
   );
 
   const replayScanStages = useCallback(
@@ -1278,26 +1367,12 @@ function App() {
       setIsEncoding(true);
       setIsScanCorrupting(true);
       setErrorMessage("");
+      setShowOriginal(false);
+      setShowCleanEncoded(false);
       if (!cleanBytes) {
-        const encoded = await encodeJpegCoefficients(
-          document.originalAsset.readBytes(),
-          {
-            width: document.inspection.width,
-            height: document.inspection.height,
-            components: document.inspection.components.map(
-              ({
-                id,
-                horizontalSampling,
-                verticalSampling,
-                quantizationTable,
-              }) => ({
-                id,
-                horizontalSampling,
-                verticalSampling,
-                quantizationTable,
-              }),
-            ),
-          },
+        const encoded = await encodeJpegFrame(
+          document,
+          orientation,
           [],
           controller.signal,
         );
@@ -1309,39 +1384,11 @@ function App() {
           scanCorruptionController.current = null;
           return;
         }
-
-        let previewUrl: string | null = null;
-        let previewError = "";
-        try {
-          previewUrl = createJpegPreviewUrl(encoded.value);
-          const preview = new Image();
-          preview.src = previewUrl;
-          await preview.decode();
-          const expected = previewDimensions(document.inspection, orientation);
-          if (
-            preview.naturalWidth !== expected.width ||
-            preview.naturalHeight !== expected.height
-          ) {
-            previewError =
-              "The clean encoded JPEG preview dimensions differ from the source image.";
-          }
-        } catch {
-          previewError =
-            "The clean encoded JPEG could not be previewed; its bytes remain available.";
-        }
-        if (controller.signal.aborted) {
-          if (previewUrl) URL.revokeObjectURL(previewUrl);
-          return;
-        }
-        if (previewError && previewUrl) {
-          URL.revokeObjectURL(previewUrl);
-          previewUrl = null;
-        }
-        cleanBytes = encoded.value;
+        cleanBytes = encoded.value.bytes;
         cleanEncodedBytes.current = cleanBytes;
-        cleanEncodedPreviewErrorRef.current = previewError;
-        setCleanEncodedPreviewUrl(previewUrl);
-        setCleanEncodedPreviewError(previewError);
+        cleanEncodedPreviewErrorRef.current = encoded.value.displayError;
+        setCleanEncodedPreviewUrl(encoded.value.url);
+        setCleanEncodedPreviewError(encoded.value.displayError);
       }
       const scanController = getScanCorruptionEffect()?.controller;
       if (!scanController) {
@@ -1364,49 +1411,44 @@ function App() {
         scanCorruptionController.current = null;
         return;
       }
+      const frame = await decodeJpegFrame(
+        document,
+        orientation,
+        corrupted.value.bytes,
+        controller.signal,
+      );
+      if (!frame) return;
       if (!commitHistory()) {
-        setErrorMessage("The Scan Corrupt history could not be updated.");
+        if (frame.url) URL.revokeObjectURL(frame.url);
+        setErrorMessage("The JPEG Damage history could not be updated.");
         setIsEncoding(false);
         setIsScanCorrupting(false);
         scanCorruptionController.current = null;
         return;
       }
-      await showCorruptedResult(
-        corrupted.value.bytes,
+      publishDamageFrame(
+        frame,
         corrupted.value.reports,
         corrupted.value.diagnostic,
-        controller.signal,
       );
     },
-    [document, jpegOperations, orientation, showCorruptedResult],
+    [document, jpegOperations.length, orientation, publishDamageFrame],
   );
 
-  useEffect(() => {
-    const stages = pendingProjectStages.current;
-    if (
-      !document ||
-      !stages ||
-      projectStagesReplayStarted.current ||
-      (jpegOperations.length > 0 && !editedBytes)
-    ) {
-      return;
-    }
-
-    projectStagesReplayStarted.current = true;
-    void replayScanStages(stages, () => {
-      scanCorruptionHistory.current.clear();
-      for (const stage of stages) {
-        if (!scanCorruptionHistory.current.record(stage).ok) {
-          scanCorruptionHistory.current.clear();
-          return false;
-        }
-      }
-      pendingProjectStages.current = null;
-      return true;
-    });
-  }, [document, editedBytes, jpegOperations.length, replayScanStages]);
+  function closeEffectDraft() {
+    discardDraftPreview();
+    setDraftRequest(null);
+    setEffectApplied(false);
+  }
 
   function applyScanCorruption(settings: object) {
+    if (
+      isBusy ||
+      isLoading ||
+      applyController.current ||
+      scanCorruptionController.current
+    )
+      return;
     const scan = getScanCorruptionEffect();
     if (!scan) return;
     const history = scanCorruptionHistory.current;
@@ -1418,21 +1460,31 @@ function App() {
     }
     const parameters = scan.controller.toParameters(settings);
     const stages = [...history.activeStages, parameters];
+    closeEffectDraft();
     void replayScanStages(stages, () => history.record(parameters).ok);
   }
 
   function updateLastScanCorruption(settings: object) {
+    if (
+      isBusy ||
+      isLoading ||
+      applyController.current ||
+      scanCorruptionController.current
+    )
+      return;
     const scan = getScanCorruptionEffect();
     const history = scanCorruptionHistory.current;
     if (!scan || history.activeStages.length === 0) return;
     const parameters = scan.controller.toParameters(settings);
     const stages = [...history.activeStages.slice(0, -1), parameters];
+    closeEffectDraft();
     void replayScanStages(stages, () => history.replaceLast(parameters).ok);
   }
 
   function undoScanCorruption() {
     const history = scanCorruptionHistory.current;
     if (!history.canUndo) return false;
+    closeEffectDraft();
     void replayScanStages(history.undoTarget, () => history.commitUndo());
     return true;
   }
@@ -1440,6 +1492,7 @@ function App() {
   function redoScanCorruption() {
     const history = scanCorruptionHistory.current;
     if (!history.canRedo) return false;
+    closeEffectDraft();
     void replayScanStages(history.redoTarget, () => history.commitRedo());
     return true;
   }
@@ -1451,127 +1504,205 @@ function App() {
     scanCorruptionController.current = null;
     setIsScanCorrupting(false);
     setIsEncoding(false);
-    setErrorMessage(
-      "Scan corruption was cancelled; the prior JPEG bytes are unchanged.",
-    );
+    setErrorMessage("Damage cancelled. Showing the previous result.");
   }
 
   function handleUndo() {
+    if (isBusy || isLoading || applyController.current) return;
     if (undoScanCorruption()) return;
     const history = operationHistory.current;
     if (history) updateHistory(history.undo());
   }
 
   function handleRedo() {
+    if (isBusy || isLoading || applyController.current) return;
     if (redoScanCorruption()) return;
     if (scanCorruptionHistory.current.activeStages.length > 0) return;
     const history = operationHistory.current;
     if (history) updateHistory(history.redo());
   }
 
-  async function downloadEditedJpeg() {
-    if (!editedBytes || !document) return;
-    let exportBytes = editedBytes;
-    // Scan Corrupt output is a baseline byte experiment, so progressive
-    // export re-encodes the same operations from the original coefficients.
-    const effectiveMode =
-      scanCorruptionReports.length > 0 ? "baseline" : exportMode;
-    if (effectiveMode === "progressive") {
-      setIsExporting(true);
-      setErrorMessage("");
-      const encoded = await encodeJpegCoefficients(
-        document.originalAsset.readBytes(),
-        {
-          width: document.inspection.width,
-          height: document.inspection.height,
-          components: document.inspection.components.map(
-            ({
-              id,
-              horizontalSampling,
-              verticalSampling,
-              quantizationTable,
-            }) => ({
-              id,
-              horizontalSampling,
-              verticalSampling,
-              quantizationTable,
-            }),
-          ),
-        },
-        jpegOperations,
-        undefined,
-        { mode: "progressive" },
-      );
-      setIsExporting(false);
-      if (!encoded.ok) {
-        setErrorMessage(encoded.error.message);
-        return;
+  async function downloadJpeg(
+    source: ImportedJpeg,
+    operations: readonly JpegGlitchOperation[],
+    bytes: Uint8Array,
+    mode: JpegOutputMode,
+  ) {
+    setIsExporting(true);
+    setErrorMessage("");
+    try {
+      let output = bytes;
+      if (mode === "progressive") {
+        const encoded = await encodeJpegCoefficients(
+          source.originalAsset.readBytes(),
+          jpegGeometry(source),
+          operations,
+          undefined,
+          { mode },
+        );
+        if (!encoded.ok) {
+          setErrorMessage(encoded.error.message);
+          return;
+        }
+        output = encoded.value;
       }
-      exportBytes = encoded.value;
+      const name = source.originalAsset.fileName.replace(/\.[^.]+$/, "");
+      downloadFileUrl(
+        createJpegPreviewUrl(output),
+        `${name}.edited${mode === "progressive" ? ".progressive" : ""}.jpg`,
+      );
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "The JPG could not be downloaded.",
+      );
+    } finally {
+      setIsExporting(false);
     }
-    const output = new ArrayBuffer(exportBytes.byteLength);
-    new Uint8Array(output).set(exportBytes);
-    const url = URL.createObjectURL(new Blob([output], { type: "image/jpeg" }));
-    const link = window.document.createElement("a");
-    link.href = url;
-    link.download = `${document.originalAsset.fileName.replace(/\.[^.]+$/, "")}.edited${effectiveMode === "progressive" ? ".progressive" : ""}.jpg`;
-    link.hidden = true;
-    window.document.body.append(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  async function downloadProjectFile() {
-    if (!document || !historyDocument) return;
+  function downloadEditedJpeg() {
+    if (!document || !editedBytes || isBusy || isExporting) return;
+    void downloadJpeg(
+      document,
+      jpegOperations,
+      editedBytes,
+      scanCorruptionReports.length > 0 ? "baseline" : exportMode,
+    );
+  }
+
+  function downloadCurrentJpeg() {
+    if (currentPreview && !hasScanCorruption) {
+      void applyEffect(undefined, activeMask, { download: true });
+    } else {
+      downloadEditedJpeg();
+    }
+  }
+
+  function projectEdits() {
+    return {
+      operations: operationHistory.current?.snapshot.operations ?? [],
+      draftMask: globalSelectionMask,
+      scanCorruptionStages: scanCorruptionHistory.current.activeStages,
+    };
+  }
+
+  async function downloadProjectFile(): Promise<boolean> {
+    if (!document || !historyDocument || savingProject.current) return false;
+    const history = operationHistory.current;
+    const edits = projectEdits();
+    const snapshot: JgeProjectSaveData = {
+      source: {
+        fileName: document.originalAsset.fileName,
+        sha256: document.originalAsset.sha256,
+        bytes: document.originalAsset.readBytes(),
+      },
+      ...edits,
+    };
+    const key = projectEditsKey(edits);
+    savingProject.current = true;
     setIsSavingProject(true);
     setErrorMessage("");
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
     try {
-      const result = await createJgeProjectFile(
-        {
-          source: {
-            fileName: document.originalAsset.fileName,
-            sha256: document.originalAsset.sha256,
-            bytes: document.originalAsset.readBytes(),
-          },
-          operations: historyDocument.operations,
-          draftMask: globalSelectionMask,
-          scanCorruptionStages:
-            scanCorruptionHistory.current.activeStages.length > 0
-              ? scanCorruptionHistory.current.activeStages
-              : (pendingProjectStages.current ?? []),
-        },
-        { application: APPLICATION_VERSION, codec: JPEG_CODEC_VERSION },
-      );
+      const result = await createJgeProjectFile(snapshot, {
+        application: APPLICATION_VERSION,
+        codec: JPEG_CODEC_VERSION,
+      });
       if (!result.ok) {
         setErrorMessage(result.error.message);
-        return;
+        return false;
       }
-
       const baseName =
         document.originalAsset.fileName
           .replace(/\.[^.]+$/, "")
           .replace(/[\\/:*?"<>|]/g, "_")
           .slice(0, 100) || "project";
-      const url = URL.createObjectURL(result.value);
-      const link = window.document.createElement("a");
-      link.href = url;
-      link.download = `${baseName}.jpglitch`;
-      link.hidden = true;
-      window.document.body.append(link);
-      link.click();
-      link.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      downloadFileUrl(
+        URL.createObjectURL(result.value),
+        `${baseName}.jpglitch`,
+      );
+      if (history === operationHistory.current) lastSavedProject.current = key;
+      return true;
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "The project could not be saved.",
+      );
+      return false;
     } finally {
+      savingProject.current = false;
       setIsSavingProject(false);
     }
+  }
+
+  function openFilePicker(kind: "photo" | "project" | "any") {
+    if (isBusy || isLoading || savingProject.current || !fileInput.current)
+      return;
+    if (fileMenu.current) fileMenu.current.open = false;
+    fileInput.current.accept =
+      kind === "photo"
+        ? PHOTO_TYPES
+        : kind === "project"
+          ? PROJECT_TYPES
+          : `${PHOTO_TYPES},${PROJECT_TYPES}`;
+    fileInput.current.click();
+  }
+
+  function requestOpen(next: RequestedFile) {
+    if (isBusy || applyController.current || savingProject.current) return;
+    setOpenError(null);
+    if (
+      !/\.(jpe?g|jpglitch)$/i.test(next.file.name) &&
+      next.file.type !== "image/jpeg"
+    ) {
+      setOpenError({ message: "Choose a JPG, JPEG or .jpglitch file." });
+      return;
+    }
+    if (
+      document &&
+      projectEditsKey(projectEdits()) !== lastSavedProject.current
+    ) {
+      setRequestedFile(next);
+    } else {
+      void loadFile(next);
+    }
+  }
+
+  async function openExample() {
+    if (isLoading || isFetchingExample) return;
+    setIsFetchingExample(true);
+    setOpenError(null);
+    try {
+      const response = await fetch(examplePhotoUrl("original"));
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const photo = new File([await response.blob()], "example.jpg", {
+        type: "image/jpeg",
+      });
+      requestOpen({ file: photo, example: true });
+    } catch (error) {
+      setOpenError({
+        message: "The example could not be opened. Try opening your own JPG.",
+        detail: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setIsFetchingExample(false);
+    }
+  }
+
+  async function confirmOpen(save: boolean) {
+    if (!requestedFile || savingProject.current) return;
+    if (save && !(await downloadProjectFile())) return;
+    const next = requestedFile;
+    setRequestedFile(null);
+    await loadFile(next);
   }
 
   function onFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.currentTarget.files?.[0];
     event.currentTarget.value = "";
-    if (file) void loadFile(file);
+    if (file) requestOpen({ file });
   }
 
   function onDragEnter(event: DragEvent<HTMLElement>) {
@@ -1592,15 +1723,16 @@ function App() {
     setIsDragging(false);
     const files = Array.from(event.dataTransfer.files);
     if (files.length > 1) {
-      setErrorMessage("Open one JPEG at a time.");
+      setOpenError({ message: "Open one photo or project at a time." });
       return;
     }
-    if (files[0]) void loadFile(files[0]);
+    if (files[0]) requestOpen({ file: files[0] });
   }
 
   const overlayVisibility = getWorkspaceOverlayVisibility(toolMode);
-  const activeMaskForOverlay = overlayVisibility.mask ? activeMask : null;
-  const visibleSelection = overlayVisibility.mask
+  const showAreaOutline = overlayVisibility.mask && toolMode !== "all";
+  const activeMaskForOverlay = showAreaOutline ? activeMask : null;
+  const visibleSelection = showAreaOutline
     ? maskDraft?.kind === "rectangle"
       ? maskDraft.selection
       : getRectangleSelection(activeMaskForOverlay)
@@ -1618,6 +1750,7 @@ function App() {
         ...canvasImageContext,
         orientation,
         keyboardCursor,
+        wholeImageMask: wholeImageMask ?? undefined,
         publish: publishCanvasFeedback,
         cancelGesture: () => canvasPointer.cancel(),
       }
@@ -1672,18 +1805,84 @@ function App() {
     ) ?? [];
   const hasScanCorruption = scanCorruptionReports.length > 0;
   const canApplyScanCorruption =
-    document !== null && (jpegOperations.length === 0 || editedBytes !== null);
+    document !== null &&
+    !isBusy &&
+    !isLoading &&
+    (jpegOperations.length === 0 || editedBytes !== null);
+  const compareBeforeCurrent = Boolean(
+    currentPreview && editedPreviewUrl && !hasScanCorruption,
+  );
+  const beforeVisible =
+    !showOriginal &&
+    (hasScanCorruption
+      ? Boolean(
+          cleanEncodedPreviewUrl && (showCleanEncoded || !editedPreviewUrl),
+        )
+      : showCleanEncoded && compareBeforeCurrent);
+  const afterDamageVisible =
+    hasScanCorruption &&
+    !showOriginal &&
+    !showCleanEncoded &&
+    Boolean(editedPreviewUrl);
   const previewUrlToDisplay = showOriginal
     ? document?.previewUrl
-    : showCleanEncoded
-      ? cleanEncodedPreviewUrl
-      : (draftPreviewUrl ??
-        editedPreviewUrl ??
-        (hasScanCorruption ? cleanEncodedPreviewUrl : document?.previewUrl));
+    : hasScanCorruption
+      ? ((afterDamageVisible ? editedPreviewUrl : cleanEncodedPreviewUrl) ??
+        document?.previewUrl)
+      : ((beforeVisible
+          ? editedPreviewUrl
+          : (draftPreviewUrl ?? editedPreviewUrl)) ?? document?.previewUrl);
+  const showsOriginalFrame = previewUrlToDisplay === document?.previewUrl;
+
+  function getPreviewStatus(): string {
+    if (applying === "stroke") return "Applying stroke…";
+    if (applying === "selection") return "Applying selection…";
+    if (applying) return "Applying effect…";
+    if (isEncoding)
+      return isScanCorrupting ? "Applying damage…" : "Updating result…";
+    if (hasScanCorruption) {
+      if (showOriginal) return "Original photo";
+      if (!showCleanEncoded && !afterDamageVisible) {
+        return `Cannot show the damaged JPG. Showing ${beforeVisible ? "the image before damage" : "the original photo"}.`;
+      }
+      if (beforeVisible) return "Before damage";
+      if (
+        afterDamageVisible &&
+        scanDecodeDiagnostic &&
+        scanDecodeDiagnostic.status !== "complete" &&
+        scanDecodeDiagnostic.status !== "unavailable"
+      ) {
+        return "JPEG opened with warnings. Other apps may display it differently.";
+      }
+      return afterDamageVisible ? "After damage" : "Original photo";
+    }
+    if (showOriginal) return "Original photo";
+    if (beforeVisible) return "Applied result before current effect";
+    if (awaitingPreview) return "Updating preview…";
+    const displayFailure =
+      currentPreview?.frame.displayError || editedPreviewError;
+    if (displayFailure)
+      return `${displayFailure} Showing ${showsOriginalFrame ? "the original" : "the last available image"}.`;
+    if (currentPreview) return "Preview";
+    if (effectApplied) return "Effect applied";
+    if (
+      draftRequest !== null &&
+      isMaskEffect &&
+      activeMask &&
+      !activeView?.autoPreview
+    )
+      return "Preview available";
+    return "";
+  }
 
   useEffect(() => {
     function onWorkspaceKeyDown(event: KeyboardEvent) {
-      if (event.defaultPrevented || saveDialogRef.current?.open) return;
+      if (
+        event.defaultPrevented ||
+        exportOptionsRef.current?.open ||
+        replaceDialogRef.current?.open
+      )
+        return;
       const target = event.target;
       if (
         target instanceof HTMLElement &&
@@ -1703,8 +1902,21 @@ function App() {
         return;
       }
 
+      const shortcut = getWorkspaceShortcut(event);
+      if (shortcut === "select-all") {
+        if (
+          isMaskEffect &&
+          target === previewImageWrap.current &&
+          !applyController.current
+        ) {
+          event.preventDefault();
+          if (!event.repeat) activateTool("all");
+        }
+        return;
+      }
       if (
         canvasContext &&
+        !applyController.current &&
         canvasInteraction?.handleKey?.(
           {
             key: event.key,
@@ -1721,8 +1933,6 @@ function App() {
         event.preventDefault();
         return;
       }
-      const shortcut = getWorkspaceShortcut(event);
-      if (shortcut === "select-all") return;
       if (!event.ctrlKey && !event.metaKey && !event.altKey && document) {
         const key = event.key.toUpperCase();
         const action = topBarActions.find(
@@ -1744,17 +1954,13 @@ function App() {
         return;
       }
       if (!shortcut) return;
-      const targetSelector = {
-        undo: 'button[aria-label="Undo"]',
-        redo: 'button[aria-label="Redo"]',
-        save: 'button[aria-label="Save"]',
-        "open-file": 'button[aria-label="Open file"]',
-      }[shortcut];
-      const button =
-        window.document.querySelector<HTMLButtonElement>(targetSelector);
-      if (!button || button.disabled) return;
       event.preventDefault();
-      button.click();
+      if (event.repeat) return;
+      if (shortcut === "open-file") openFilePicker("any");
+      if (shortcut === "save" && !isLoading && !isBusy)
+        void downloadProjectFile();
+      if (shortcut === "undo") handleUndo();
+      if (shortcut === "redo") handleRedo();
     }
 
     function onWorkspaceKeyUp(event: KeyboardEvent) {
@@ -1781,17 +1987,16 @@ function App() {
   useEffect(() => {
     editorBridge.update({
       changeComponent,
-      changeAutoApply: changeEffectAutoApply,
       setError: (message) => {
         setErrorMessage(message);
       },
       apply: (patch) => {
-        applyEffect(patch);
+        void applyEffect(patch);
       },
       preview: (patch) => {
         void previewCurrentEffect(patch);
       },
-      discardPreview: markDraftPreviewStale,
+      discardPreview: requestEffectDraft,
       applyScan: applyScanCorruption,
       updateLastScan: updateLastScanCorruption,
       cancelScan: cancelScanCorruption,
@@ -1806,15 +2011,21 @@ function App() {
         componentLabels,
         colorModel,
         imageUrl: previewUrlToDisplay ?? null,
+        operationError:
+          currentOperation && !currentOperation.ok
+            ? currentOperation.error.message
+            : "",
         componentIndex,
         hasMask: activeMask !== null,
-        isEncoding,
+        isEncoding: isBusy,
         isPreviewing: isDraftPreviewing,
+        canApply,
         hasScanCorruption,
-        autoApply: activeView
-          ? !!effectAutoApply[getStorageKey(activeView)]
-          : false,
-        autoApplyDisabled: !!effectAutoApplyError,
+        autoApplyPrompt: autoApply
+          ? toolMode === "brush"
+            ? "Paint a stroke to apply the effect."
+            : "Draw a rectangle to apply the effect."
+          : "",
         scanCorruption: {
           canApply: canApplyScanCorruption,
           isCorrupting: isScanCorrupting,
@@ -1822,13 +2033,11 @@ function App() {
           hasJpegOperations: jpegOperations.length > 0,
           reports: scanCorruptionReports,
           diagnostic: scanDecodeDiagnostic,
-          previewError: editedPreviewError,
           apply: editorBridge.applyScan,
           updateLastStage: editorBridge.updateLastScan,
           cancel: editorBridge.cancelScan,
         },
         onChangeComponent: editorBridge.changeComponent,
-        onChangeAutoApply: editorBridge.changeAutoApply,
         onError: editorBridge.setError,
         apply: editorBridge.apply,
         preview: editorBridge.preview,
@@ -1852,86 +2061,121 @@ function App() {
         <div className="topbar-actions">
           {document && (
             <span
-              className="active-file"
+              className={`active-file ${examplePhoto ? "is-example" : ""}`}
               title={document.originalAsset.fileName}
             >
-              {document.originalAsset.fileName}
+              {examplePhoto ? "Example photo" : document.originalAsset.fileName}
             </span>
           )}
-          <div className="history-toolbar" aria-label="Operation history">
-            <button
-              className="history-toolbar-button"
-              type="button"
-              onClick={handleUndo}
-              disabled={!historyAvailability.canUndo || isEncoding}
-              aria-label="Undo"
-              aria-keyshortcuts="Control+Z Meta+Z"
-              title="Undo"
-            >
-              ↶
-            </button>
-            <button
-              className="history-toolbar-button"
-              type="button"
-              onClick={handleRedo}
-              disabled={!historyAvailability.canRedo || isEncoding}
-              aria-label="Redo"
-              aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z Control+Y Meta+Y"
-              title="Redo"
-            >
-              ↷
-            </button>
-          </div>
+          {document && (
+            <div className="history-toolbar" aria-label="Operation history">
+              <button
+                className="history-toolbar-button"
+                type="button"
+                onClick={handleUndo}
+                disabled={!historyAvailability.canUndo || isBusy}
+                aria-label="Undo"
+                aria-keyshortcuts="Control+Z Meta+Z"
+                title="Undo"
+              >
+                ↶
+              </button>
+              <button
+                className="history-toolbar-button"
+                type="button"
+                onClick={handleRedo}
+                disabled={!historyAvailability.canRedo || isBusy}
+                aria-label="Redo"
+                aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z Control+Y Meta+Y"
+                title="Redo"
+              >
+                ↷
+              </button>
+            </div>
+          )}
           <input
             ref={fileInput}
             className="visually-hidden"
             type="file"
-            accept="image/jpeg,.jpg,.jpeg,.jpglitch,application/vnd.jpeg-glitch-editor.project+json"
+            accept={`${PHOTO_TYPES},${PROJECT_TYPES}`}
             aria-label="Choose a JPEG or editor project file"
             tabIndex={-1}
             onChange={onFileChange}
           />
-          <button
-            className="open-button"
-            type="button"
-            aria-label="Open file"
-            onClick={() => fileInput.current?.click()}
-            disabled={isLoading}
-            aria-keyshortcuts="Control+O Meta+O"
-            title="Open a JPEG or .jpglitch project (Ctrl/⌘+O)"
-          >
-            {isLoading ? loadingMessage : "Open file"}
-          </button>
-          {document && (
-            <button
-              className="open-button"
-              type="button"
-              aria-label="Save"
-              onClick={() => setIsSaveDialogOpen(true)}
-              disabled={isSavingProject || isLoading}
-              aria-keyshortcuts="Control+S Meta+S"
-              title="Save as JPEG or .jpglitch (Ctrl/⌘+S)"
-            >
-              {isSavingProject ? "Saving…" : "Save"}
-            </button>
-          )}
+          <details className="file-menu canvas-menu" ref={fileMenu}>
+            <summary className="tool-toggle">File</summary>
+            <div className="canvas-popover file-menu-items">
+              <button
+                type="button"
+                onClick={() => openFilePicker("photo")}
+                disabled={isBusy || isLoading}
+              >
+                Open photo…
+              </button>
+              <button
+                type="button"
+                onClick={() => openFilePicker("project")}
+                disabled={isBusy || isLoading}
+              >
+                Open project…
+              </button>
+              <button
+                type="button"
+                disabled={isBusy || isLoading || isFetchingExample}
+                onClick={() => {
+                  if (fileMenu.current) fileMenu.current.open = false;
+                  void openExample();
+                }}
+              >
+                Try an example
+              </button>
+              <button
+                type="button"
+                aria-keyshortcuts="Control+S Meta+S"
+                disabled={!document || isBusy || isLoading || isSavingProject}
+                onClick={() => {
+                  if (fileMenu.current) fileMenu.current.open = false;
+                  void downloadProjectFile();
+                }}
+              >
+                Save project…
+              </button>
+              <button
+                type="button"
+                disabled={!document || isLoading}
+                onClick={() => {
+                  if (fileMenu.current) fileMenu.current.open = false;
+                  setIsExportOptionsOpen(true);
+                }}
+              >
+                JPEG export options…
+              </button>
+            </div>
+          </details>
           {document && (
             <button
               className="export-button"
               type="button"
-              onClick={downloadEditedJpeg}
-              disabled={!editedBytes || isEncoding}
-              title={
-                hasScanCorruption
-                  ? "Download the entropy-corrupted JPEG bytes; the original remains unchanged"
-                  : "Download the encoded JPEG experiment; the original is unchanged"
+              onClick={downloadCurrentJpeg}
+              disabled={
+                isBusy ||
+                isLoading ||
+                isExporting ||
+                awaitingPreview ||
+                (!currentPreview && !editedBytes)
               }
             >
-              {isEncoding
-                ? isScanCorrupting
-                  ? "Corrupting…"
-                  : "Encoding…"
-                : "Export JPEG"}
+              {isExporting
+                ? "Preparing download…"
+                : hasScanCorruption
+                  ? "Download damaged JPG"
+                  : currentPreview
+                    ? "Apply and download JPG"
+                    : editedBytes
+                      ? draftRequest !== null
+                        ? "Download applied JPG"
+                        : "Download result JPG"
+                      : "Apply an effect first"}
             </button>
           )}
         </div>
@@ -1939,32 +2183,18 @@ function App() {
 
       {document && (
         <dialog
-          ref={saveDialogRef}
+          ref={exportOptionsRef}
           className="save-dialog"
-          aria-labelledby="save-dialog-title"
-          aria-describedby="save-dialog-description"
-          onCancel={(event) => {
-            event.preventDefault();
-            setIsSaveDialogOpen(false);
-          }}
-          onKeyDown={(event) => {
-            if (event.key !== "Escape") return;
-            event.preventDefault();
-            setIsSaveDialogOpen(false);
-          }}
-          onClose={() => setIsSaveDialogOpen(false)}
+          aria-labelledby="export-options-title"
+          onCancel={() => setIsExportOptionsOpen(false)}
+          onClose={() => setIsExportOptionsOpen(false)}
         >
-          <h2 id="save-dialog-title">Choose what to save</h2>
-          <p id="save-dialog-description">
-            Export the current JPEG experiment, or save a .jpglitch project with
-            the exact original JPEG and editable operations. The original file
-            is never overwritten.
-          </p>
+          <h2 id="export-options-title">JPEG export options</h2>
           <label className="save-dialog-mode">
             JPEG output mode
             <select
-              value={scanCorruptionReports.length > 0 ? "baseline" : exportMode}
-              disabled={scanCorruptionReports.length > 0}
+              value={hasScanCorruption ? "baseline" : exportMode}
+              disabled={hasScanCorruption}
               onChange={(event) =>
                 setExportMode(
                   event.target.value === "progressive"
@@ -1973,48 +2203,73 @@ function App() {
                 )
               }
             >
-              <option value="baseline">Baseline (sequential)</option>
+              <option value="baseline">Standard</option>
               <option value="progressive">Progressive</option>
             </select>
           </label>
           <p className="save-dialog-note">
-            {scanCorruptionReports.length > 0
-              ? "Scan Corrupt results are baseline byte experiments and are always saved as baseline."
-              : "Coefficients are written as they are; only the scan layout changes, with no RGB round trip. Progressive output does not depend on the source JPEG type."}
+            {hasScanCorruption
+              ? "JPEG Damage exports the bytes of the current damage stage in Standard mode."
+              : "JPG downloads use the applied edits. Progressive mode re-encodes the JPEG with multiple scans."}
           </p>
+          <details className="advanced-controls">
+            <summary>Encoding details</summary>
+            <p>
+              Progressive and Standard use the same quantized coefficients. EXIF
+              and ICC metadata preservation depends on the encoder.
+            </p>
+          </details>
+          <button
+            className="operation-button"
+            type="button"
+            onClick={() => setIsExportOptionsOpen(false)}
+          >
+            Done
+          </button>
+        </dialog>
+      )}
+      {requestedFile && (
+        <dialog
+          ref={replaceDialogRef}
+          className="save-dialog"
+          aria-labelledby="replace-file-title"
+          onCancel={(event) => {
+            event.preventDefault();
+            if (!isSavingProject) setRequestedFile(null);
+          }}
+        >
+          <h2 id="replace-file-title">Open another file?</h2>
+          <p>
+            Save the current applied edits and area to continue editing later.
+          </p>
+          {errorMessage && (
+            <p className="open-error" role="alert">
+              {errorMessage}
+            </p>
+          )}
           <div className="save-dialog-actions">
             <button
-              className="open-button"
+              className="operation-button"
               type="button"
-              autoFocus
-              disabled={!editedBytes || isEncoding || isExporting}
-              title={
-                editedBytes
-                  ? "Export the current JPEG experiment"
-                  : "Apply a JPEG operation before exporting an image"
-              }
-              onClick={() => {
-                setIsSaveDialogOpen(false);
-                void downloadEditedJpeg();
-              }}
+              disabled={isSavingProject}
+              onClick={() => void confirmOpen(true)}
             >
-              Save image (.jpg)
+              Save project
             </button>
             <button
-              className="open-button"
+              className="operation-button secondary"
               type="button"
-              disabled={isSavingProject || isLoading}
-              onClick={() => {
-                setIsSaveDialogOpen(false);
-                void downloadProjectFile();
-              }}
+              disabled={isSavingProject}
+              onClick={() => void confirmOpen(false)}
             >
-              Save editable project (.jpglitch)
+              Open another file
             </button>
             <button
               className="tool-toggle"
               type="button"
-              onClick={() => setIsSaveDialogOpen(false)}
+              autoFocus
+              disabled={isSavingProject}
+              onClick={() => setRequestedFile(null)}
             >
               Cancel
             </button>
@@ -2030,18 +2285,25 @@ function App() {
         onDragLeave={onDragLeave}
         onDrop={onDrop}
       >
-        {document && (
-          <EffectCatalogPanel
-            groups={EFFECT_MENU}
-            registry={EFFECT_REGISTRY}
-            selectedEffectId={activeView?.id ?? null}
-            hasActiveMask={activeMask !== null}
-            onSelectEffect={activateEffect}
-          />
-        )}
         <div className="canvas-column">
-          <div className="canvas">
-            {visibleErrorMessage && (
+          <div className="workspace-feedback">
+            {(openError || isLoading) && (
+              <section className="file-status" aria-label="Opening a file">
+                {isLoading && <p role="status">{loadingMessage}</p>}
+                {openError && (
+                  <div className="open-error">
+                    <p role="alert">{openError.message}</p>
+                    {openError.detail && (
+                      <details>
+                        <summary>Details</summary>
+                        <p>{openError.detail}</p>
+                      </details>
+                    )}
+                  </div>
+                )}
+              </section>
+            )}
+            {visibleErrorMessage && !requestedFile && (
               <div className="workspace-error-toast" role="alert">
                 <span className="error-icon" aria-hidden="true">
                   !
@@ -2061,46 +2323,14 @@ function App() {
                 </button>
               </div>
             )}
+          </div>
+          <div className="canvas">
             {!document ? (
-              <div className="welcome">
-                <div className="eyebrow">JPEG STRUCTURE · CREATIVE CONTROL</div>
-                <h1>Make room for happy accidents.</h1>
-                <p>
-                  Inspect JPEG structure and quantized DCT coefficients locally.
-                  The original file stays untouched and its pixel preview
-                  remains separate.
-                </p>
-                <button
-                  className="welcome-button"
-                  type="button"
-                  onClick={() => fileInput.current?.click()}
-                  disabled={isLoading}
-                >
-                  Choose a JPEG
-                  <span aria-hidden="true">↗</span>
-                </button>
-                <div className="milestone-note">
-                  <span className="note-index">03</span>
-                  <span>
-                    Drop a JPEG to inspect it, select a region, and apply
-                    reversible JPEG effects.
-                  </span>
-                </div>
-                <nav className="contact-links" aria-label="Contact">
-                  <a href="https://instagram.com/sahdoum">Instagram</a>
-                  <a href="https://t.me/achekhonte">Telegram</a>
-                  <a href="https://github.com/sahdoum">GitHub</a>
-                </nav>
-                {import.meta.env.VITE_GTM_CONTAINER_ID && (
-                  <p className="analytics-notice">
-                    This site uses Google Tag Manager for visit analytics.
-                    Google receives visit data; images are processed locally.{" "}
-                    <a href="https://policies.google.com/privacy">
-                      Google privacy policy
-                    </a>
-                  </p>
-                )}
-              </div>
+              <WelcomeScreen
+                onOpenPhoto={() => openFilePicker("photo")}
+                onTryExample={() => void openExample()}
+                busy={isLoading || isFetchingExample}
+              />
             ) : (
               <div className="preview-workspace">
                 <div className="preview-toolbar">
@@ -2119,113 +2349,150 @@ function App() {
                       setMaskGrid(grid);
                     }}
                     onSelectTool={activateTool}
+                    autoApply={autoApply}
+                    onAutoApplyChange={
+                      activeView?.autoApply && !isBusy
+                        ? changeEffectAutoApply
+                        : undefined
+                    }
+                    hasArea={activeMask !== null}
                   />
-                  {draftPreviewUrl && !showOriginal && !showCleanEncoded && (
-                    <span
-                      className={`preview-state ${isDraftPreviewStale ? "is-stale" : ""}`}
-                      role="status"
-                      title={
-                        isDraftPreviewStale
-                          ? "Parameters changed since this temporary preview."
-                          : "Temporary JPEG-encoded preview; History is unchanged."
-                      }
+                  <div className="preview-view-row">
+                    <div
+                      className="preview-compare"
+                      role="group"
+                      aria-label="Compare images"
                     >
-                      {isDraftPreviewStale ? "Stale" : "Preview"}
-                    </span>
-                  )}
-                  <div className="overlay-controls">
-                    <button
-                      className="tool-toggle"
-                      type="button"
-                      onClick={() =>
-                        setZoom((current) => Math.max(0.25, current - 0.25))
-                      }
-                      aria-label="Zoom out"
-                    >
-                      −
-                    </button>
-                    <span className="zoom-readout">
-                      {Math.round(zoom * 100)}%
-                    </span>
-                    <button
-                      className="tool-toggle"
-                      type="button"
-                      onClick={() =>
-                        setZoom((current) => Math.min(4, current + 0.25))
-                      }
-                      aria-label="Zoom in"
-                    >
-                      +
-                    </button>
-                    <button
-                      className="tool-toggle"
-                      type="button"
-                      onClick={() => setZoom(1)}
-                    >
-                      Fit
-                    </button>
-                    {hasScanCorruption && cleanEncodedPreviewUrl && (
                       <button
                         className="tool-toggle"
                         type="button"
-                        aria-pressed={showCleanEncoded}
+                        aria-pressed={
+                          hasScanCorruption ? showsOriginalFrame : showOriginal
+                        }
                         onClick={() => {
-                          setShowOriginal(false);
-                          setShowCleanEncoded((current) => !current);
-                        }}
-                      >
-                        {showCleanEncoded
-                          ? "Show corrupted"
-                          : "Show clean encoded"}
-                      </button>
-                    )}
-                    {editedBytes && (
-                      <button
-                        className="tool-toggle"
-                        type="button"
-                        aria-pressed={showOriginal}
-                        onClick={() => {
+                          setShowOriginal(true);
                           setShowCleanEncoded(false);
-                          setShowOriginal((current) => !current);
                         }}
                       >
-                        {showOriginal ? "Show edited" : "Show original"}
+                        Original
                       </button>
-                    )}
-                    {isEncoding && (
-                      <span className="encoding-indicator" role="status">
-                        {isScanCorrupting ? "Corrupting scan…" : "Re-encoding…"}
+                      {hasScanCorruption ? (
+                        <>
+                          <button
+                            className="tool-toggle"
+                            type="button"
+                            aria-pressed={beforeVisible}
+                            disabled={!cleanEncodedPreviewUrl}
+                            onClick={() => {
+                              setShowOriginal(false);
+                              setShowCleanEncoded(true);
+                            }}
+                          >
+                            Before damage
+                          </button>
+                          <button
+                            className="tool-toggle"
+                            type="button"
+                            aria-pressed={afterDamageVisible}
+                            disabled={!editedPreviewUrl}
+                            onClick={() => {
+                              setShowOriginal(false);
+                              setShowCleanEncoded(false);
+                            }}
+                          >
+                            After damage
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          className="tool-toggle"
+                          type="button"
+                          aria-pressed={!showOriginal && !beforeVisible}
+                          onClick={() => {
+                            setShowOriginal(false);
+                            setShowCleanEncoded(false);
+                          }}
+                        >
+                          Result
+                        </button>
+                      )}
+                      {compareBeforeCurrent && (
+                        <button
+                          className="tool-toggle"
+                          type="button"
+                          aria-pressed={beforeVisible}
+                          onClick={() => {
+                            setShowOriginal(false);
+                            setShowCleanEncoded(true);
+                          }}
+                        >
+                          Before current effect
+                        </button>
+                      )}
+                    </div>
+                    <span className="preview-state" role="status">
+                      {getPreviewStatus()}
+                    </span>
+                    <div className="overlay-controls">
+                      <button
+                        className="tool-toggle"
+                        type="button"
+                        onClick={() =>
+                          setZoom((current) => Math.max(0.25, current - 0.25))
+                        }
+                        aria-label="Zoom out"
+                      >
+                        −
+                      </button>
+                      <span className="zoom-readout">
+                        {Math.round(zoom * 100)}%
                       </span>
-                    )}
-                    <div className="overlay-checkboxes">
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={showBlocks}
-                          onChange={(event) =>
-                            setShowBlocks(event.currentTarget.checked)
-                          }
-                        />
-                        <span>8×8 DCT</span>
-                      </label>
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={showMcus}
-                          onChange={(event) =>
-                            setShowMcus(event.currentTarget.checked)
-                          }
-                        />
-                        <span>MCUs</span>
-                      </label>
+                      <button
+                        className="tool-toggle"
+                        type="button"
+                        onClick={() =>
+                          setZoom((current) => Math.min(4, current + 0.25))
+                        }
+                        aria-label="Zoom in"
+                      >
+                        +
+                      </button>
+                      <button
+                        className="tool-toggle"
+                        type="button"
+                        onClick={() => setZoom(1)}
+                      >
+                        Fit
+                      </button>
+                      <details className="canvas-menu">
+                        <summary className="tool-toggle">View</summary>
+                        <fieldset className="overlay-checkboxes canvas-popover">
+                          <legend>JPEG grids</legend>
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={showBlocks}
+                              onChange={(event) =>
+                                setShowBlocks(event.currentTarget.checked)
+                              }
+                            />
+                            <span>DCT blocks</span>
+                          </label>
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={showMcus}
+                              onChange={(event) =>
+                                setShowMcus(event.currentTarget.checked)
+                              }
+                            />
+                            <span>MCUs</span>
+                          </label>
+                        </fieldset>
+                      </details>
                     </div>
                   </div>
                 </div>
-                {canvasHint && (
-                  <p id="canvas-tool-help" className="canvas-keyboard-help">
-                    {canvasHint.text} {canvasHint.keyboard}
-                  </p>
-                )}
                 <div
                   className="image-stage"
                   ref={imageStage}
@@ -2258,7 +2525,9 @@ function App() {
                     aria-describedby={
                       canvasHint ? "canvas-tool-help" : undefined
                     }
-                    aria-keyshortcuts={maskToolView?.keyShortcuts}
+                    aria-keyshortcuts={
+                      isMaskEffect ? "Control+A Meta+A" : undefined
+                    }
                     onFocus={() => {
                       setCanvasHasKeyboardFocus(true);
                       if (canvasContext)
@@ -2271,15 +2540,9 @@ function App() {
                       <img
                         className="preview-image"
                         src={previewUrlToDisplay}
-                        alt={`${showOriginal ? "Original" : showCleanEncoded ? "Clean encoded" : draftPreviewUrl ? "Uncommitted effect preview" : hasScanCorruption ? "Entropy-corrupted" : "Re-encoded"} JPEG preview of ${document.originalAsset.fileName}`}
+                        alt={`${showsOriginalFrame ? "Original" : beforeVisible ? (hasScanCorruption ? "Before damage" : "Before the current effect") : previewUrlToDisplay === draftPreviewUrl ? "Effect preview" : hasScanCorruption && previewUrlToDisplay === editedPreviewUrl ? "Damaged" : "Applied"} JPEG of ${document.originalAsset.fileName}`}
                       />
-                    ) : (
-                      <div className="scan-preview-unavailable" role="status">
-                        {cleanEncodedPreviewError ||
-                          editedPreviewError ||
-                          "No decoded preview is available. The clean and corrupted JPEG bytes remain separate from the original."}
-                      </div>
-                    )}
+                    ) : null}
                     <ImageOverlays
                       inspection={document.inspection}
                       orientation={orientation}
@@ -2301,16 +2564,43 @@ function App() {
                       }
                       keyboardCursor={visibleKeyboardCursor}
                       gestureSource={gestureOverlay?.source ?? null}
+                      gestureSourceLabel={gestureOverlay?.sourceLabel}
                       gestureSourceInvalid={
                         gestureOverlay?.sourceInvalid ?? false
                       }
-                      gestureDestination={gestureOverlay?.destination ?? null}
+                      gestureDestinations={
+                        gestureOverlay?.destinations ??
+                        (gestureOverlay?.destination
+                          ? [gestureOverlay.destination]
+                          : [])
+                      }
                       gestureDestinationInvalid={
                         gestureOverlay?.destinationInvalid ?? false
                       }
                     />
                   </div>
                 </div>
+                {(canvasError || canvasHint) && (
+                  <p
+                    id="canvas-tool-help"
+                    className="canvas-keyboard-help"
+                    role={canvasError ? "status" : undefined}
+                  >
+                    {canvasError || canvasHint?.text}
+                    {canvasHint?.keyboard && (
+                      <span className="visually-hidden">
+                        {" "}
+                        {canvasHint.keyboard}
+                      </span>
+                    )}
+                  </p>
+                )}
+                {canvasHint?.keyboard && (
+                  <details className="canvas-shortcuts">
+                    <summary>Canvas shortcuts</summary>
+                    {canvasHint.keyboard}
+                  </details>
+                )}
                 <span
                   className="visually-hidden"
                   role="status"
@@ -2322,92 +2612,100 @@ function App() {
             )}
             {isDragging && (
               <div className="drop-overlay" aria-hidden="true">
-                <span>Drop one JPEG to inspect</span>
+                <span>Drop a JPG or project</span>
               </div>
             )}
           </div>
         </div>
 
-        <aside className="side-panel">
-          <div className="side-panel-content">
-            {projectNotice && (
-              <p className="project-notice" role="status">
-                {projectNotice}
-              </p>
-            )}
-            {document && editor ? (
-              <>
-                <CollapsibleSection
-                  id="active-tool"
-                  title={`${activeToolLabel} settings`}
-                  kicker="ACTIVE TOOL"
-                  className="active-tool-panel"
-                  detailsRef={activeToolPanel}
+        {document && (
+          <EffectCatalogPanel
+            groups={EFFECT_MENU}
+            registry={EFFECT_REGISTRY}
+            selectedEffectId={activeView?.id ?? null}
+            hasActiveMask={activeMask !== null}
+            onSelectEffect={activateEffect}
+          />
+        )}
+        {document && editor && (
+          <aside className="side-panel">
+            {document && editor && (
+              <div className="side-panel-header">
+                <h2>{showHistory ? "History" : activeToolLabel}</h2>
+                <button
+                  className="tool-toggle"
+                  type="button"
+                  aria-pressed={showHistory}
+                  aria-controls="operation-history"
+                  onClick={() => setShowHistory((visible) => !visible)}
                 >
-                  {activeView && activeSettings ? (
-                    <activeView.Panel
-                      settings={activeSettings}
-                      editor={editor}
-                      onChangeSettings={changeEffectSettings}
-                    />
-                  ) : (
-                    <p role="alert">
-                      The selected effect settings are unavailable.
-                    </p>
-                  )}
-                </CollapsibleSection>
-                <CollapsibleSection
-                  id="history"
-                  title="History"
-                  kicker="NON-DESTRUCTIVE OPERATIONS"
-                  count={
-                    (historyDocument?.operations.length ?? 0) +
-                    scanCorruptionReports.length
-                  }
-                  className="history-panel"
-                  initiallyOpen={false}
-                >
-                  <OperationHistoryPanel
-                    operations={historyDocument?.operations ?? []}
-                    scanCorruptionReports={scanCorruptionReports}
-                    hasScanCorruption={hasScanCorruption}
-                    onSetEnabled={(operationId, enabled) =>
-                      mutateHistory((history) =>
-                        history.setEnabled(operationId, enabled),
-                      )
-                    }
-                    onMove={(operationId, index) =>
-                      mutateHistory((history) =>
-                        history.move(operationId, index),
-                      )
-                    }
-                    onDelete={(operationId) =>
-                      mutateHistory((history) => history.delete(operationId))
-                    }
-                    onRestoreMask={restoreHistoryMask}
-                    onReset={resetHistory}
-                  />
-                </CollapsibleSection>
-              </>
-            ) : (
-              <div className="inspector-empty">
-                <span className="empty-index">JPEG GLITCH EDITOR</span>
-                <h2>Open a JPEG to begin</h2>
-                <p>
-                  Choose or drop a JPEG to select an effect and view its
-                  settings. The original bytes remain unchanged.
-                </p>
-                {errorMessage && (
-                  <p className="support-note">
-                    Supported for coefficient inspection: 8-bit baseline
-                    sequential (single interleaved scan) or progressive Huffman
-                    JPEG, grayscale or three-component.
-                  </p>
-                )}
+                  {showHistory
+                    ? "Effect settings"
+                    : `History · ${(historyDocument?.operations.length ?? 0) + scanCorruptionReports.length}`}
+                </button>
               </div>
             )}
-          </div>
-        </aside>
+            <div className="side-panel-content">
+              {projectNotice && (
+                <p className="project-notice" role="status">
+                  {projectNotice}
+                </p>
+              )}
+              {document && editor ? (
+                <>
+                  <div className="active-tool-panel" hidden={showHistory}>
+                    {activeView && activeSettings && (
+                      <>
+                        <p className="effect-summary">
+                          {activeView.description}
+                        </p>
+                        <activeView.Panel
+                          settings={activeSettings}
+                          editor={editor}
+                          onChangeSettings={changeEffectSettings}
+                        />
+                      </>
+                    )}
+                    {currentPreview && (
+                      <p className="project-preview-note">
+                        A project saves the original photo, applied edits and
+                        working area.
+                      </p>
+                    )}
+                  </div>
+                  <div
+                    id="operation-history"
+                    className="history-panel"
+                    hidden={!showHistory}
+                  >
+                    <OperationHistoryPanel
+                      operations={historyDocument?.operations ?? []}
+                      effectIds={operationEffectIds}
+                      scanCorruptionReports={scanCorruptionReports}
+                      hasScanCorruption={hasScanCorruption}
+                      isBusy={isBusy || isLoading}
+                      onSetEnabled={(operationId, enabled) =>
+                        mutateHistory((history) =>
+                          history.setEnabled(operationId, enabled),
+                        )
+                      }
+                      onMove={(operationId, index) =>
+                        mutateHistory((history) =>
+                          history.move(operationId, index),
+                        )
+                      }
+                      onDelete={(operationId) =>
+                        mutateHistory((history) => history.delete(operationId))
+                      }
+                      onRestoreMask={restoreHistoryMask}
+                      onReset={resetHistory}
+                    />
+                  </div>
+                </>
+              ) : null}
+            </div>
+          </aside>
+        )}
       </section>
     </main>
   );

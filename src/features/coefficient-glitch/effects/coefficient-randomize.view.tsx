@@ -15,9 +15,8 @@ export const CoefficientRandomizeSettings: CoefficientRecipeStep = {
 export const CoefficientRandomizeView: EffectView<CoefficientRecipeStep> =
   defineCoefficientView({
     id: "coefficient-randomize",
-    label: "Randomize Coefficients",
-    description:
-      "Replace selected quantized DCT coefficients with seeded values.",
+    label: "Random Texture",
+    description: "Adds repeatable random texture to the area.",
     iconPaths: [
       "M4 6h4l3 6 3-6h6",
       "M4 18h4l3-6 3 6h6",
@@ -29,14 +28,18 @@ export const CoefficientRandomizeView: EffectView<CoefficientRecipeStep> =
     showBandMatrix: true,
     Fields: (props) => (
       <>
-        <CoefficientNumberField
-          {...props}
-          label="Random coefficient range"
-          min={1}
-          max={2047}
-        />
+        {!props.advanced && (
+          <CoefficientNumberField
+            {...props}
+            label="Variation range"
+            min={1}
+            max={2047}
+          />
+        )}
         <SeedField
-          label="Deterministic seed"
+          showValue={Boolean(props.advanced)}
+          showNewVariation={!props.advanced}
+          label="Seed"
           value={props.settings.seed}
           onChange={(value) => props.onChangeSettings({ seed: Number(value) })}
         />

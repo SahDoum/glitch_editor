@@ -13,6 +13,7 @@ export type CanvasTool = MaskTool | "effect";
 
 export interface WorkspaceState {
   readonly activeTool: CanvasTool;
+  readonly areaTool: MaskTool;
   readonly activeEffectId: string | null;
   readonly selectionMask: SpatialMask | null;
   readonly activeMaskId: string | null;
@@ -55,6 +56,20 @@ export function getWorkspaceOverlayVisibility(
   return { mask: tool !== "effect" };
 }
 
+export function areaToolForMask(mask: SpatialMask | null): MaskTool {
+  const shape = mask?.shapes[0];
+  if (!mask || !shape) return "all";
+  if (shape.kind === "brush") return "brush";
+  if (
+    shape.x === 0 &&
+    shape.y === 0 &&
+    shape.width === mask.width &&
+    shape.height === mask.height
+  )
+    return "all";
+  return "select";
+}
+
 export function getEffectMask(
   state: WorkspaceState,
   savedMasks: readonly NamedSpatialMask[],
@@ -79,14 +94,11 @@ export type WorkspaceAction =
 
 export const initialWorkspaceState: WorkspaceState = Object.freeze({
   activeTool: "all",
+  areaTool: "all",
   activeEffectId: null,
   selectionMask: null,
   activeMaskId: null,
 });
-
-function isMaskTool(tool: CanvasTool): tool is MaskTool {
-  return tool !== "effect";
-}
 
 export function workspaceReducer(
   state: WorkspaceState,
@@ -97,14 +109,18 @@ export function workspaceReducer(
       return {
         ...state,
         activeEffectId: action.effectId,
-        activeTool: action.usesMaskTools
-          ? isMaskTool(state.activeTool)
-            ? state.activeTool
-            : "all"
-          : "effect",
+        activeTool: action.usesMaskTools ? state.areaTool : "effect",
       };
-    case "activate-tool":
-      return { ...state, activeTool: action.tool };
+    case "activate-tool": {
+      const clearArea = state.areaTool === "all" && action.tool !== "all";
+      return {
+        ...state,
+        activeTool: action.tool,
+        areaTool: action.tool,
+        selectionMask: clearArea ? null : state.selectionMask,
+        activeMaskId: clearArea ? null : state.activeMaskId,
+      };
+    }
     case "set-selection":
       return {
         ...state,

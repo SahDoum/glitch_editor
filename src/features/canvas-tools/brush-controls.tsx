@@ -6,7 +6,7 @@ export function BrushControls({
 }: CanvasToolControlsProps) {
   return (
     <label className="canvas-context-field">
-      <span>Brush · {brushSize} image px</span>
+      <span>Brush size · {brushSize} px</span>
       <input
         type="range"
         min="4"

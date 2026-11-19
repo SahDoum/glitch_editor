@@ -14,9 +14,8 @@ export const AcLowPassSettings: CoefficientRecipeStep = {
 export const AcLowPassView: EffectView<CoefficientRecipeStep> =
   defineCoefficientView({
     id: "ac-low-pass",
-    label: "AC Low-pass",
-    description:
-      "Keep DC and AC below a configurable u+v cutoff; remove higher AC.",
+    label: "Smooth Details",
+    description: "Softens fine detail within JPEG blocks.",
     iconPaths: ["M3 17h4l3-7 3 4 3-9 5 2", "M3 21h18"],
     defaultSettings: AcLowPassSettings,
     historyModes: ["low-pass"],
@@ -24,7 +23,7 @@ export const AcLowPassView: EffectView<CoefficientRecipeStep> =
       <CoefficientRangeField
         {...props}
         labelId="ac-cutoff-label"
-        label={`AC frequency cutoff · ${props.settings.strength}`}
+        label={`Detail retention · ${props.settings.strength}`}
         min={1}
         max={14}
         step={1}
