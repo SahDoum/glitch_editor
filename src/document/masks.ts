@@ -39,7 +39,7 @@ export type SpatialMaskShape =
       readonly points: readonly { readonly x: number; readonly y: number }[];
     };
 
-const MAX_BRUSH_POINTS = 10_000;
+export const MAX_BRUSH_POINTS = 10_000;
 
 function isValidDimensions(width: number, height: number): boolean {
   return (
@@ -301,34 +301,9 @@ export function createBrushMaskFromStrokes(
   imageWidth: number,
   imageHeight: number,
 ): Result<SpatialMask> {
-  const nonEmptyStrokes = strokes.filter((stroke) => stroke.length > 0);
-  if (
-    nonEmptyStrokes.length === 0 ||
-    nonEmptyStrokes.reduce((total, stroke) => total + stroke.length, 0) >
-      MAX_BRUSH_POINTS
-  ) {
-    return failure({
-      code: "INVALID_INPUT",
-      message: "The image-space brush mask is invalid.",
-    });
-  }
-
-  const shapes: SpatialMaskShape[] = [];
-  for (const stroke of nonEmptyStrokes) {
-    const mask = createBrushMask(stroke, radius, imageWidth, imageHeight);
-    if (!mask.ok) return mask;
-    shapes.push(...mask.value.shapes);
-  }
-
-  return success(
-    Object.freeze({
-      schemaVersion: 1,
-      id: crypto.randomUUID(),
-      width: imageWidth,
-      height: imageHeight,
-      shapes: Object.freeze(shapes),
-    }),
-  );
+  // The coverage functions treat these as independent samples. Interpolation
+  // happens within each stroke before storage, so a single shape keeps gaps.
+  return createBrushMask(strokes.flat(), radius, imageWidth, imageHeight);
 }
 
 export function copySpatialMask(mask: SpatialMask): Result<SpatialMask> {

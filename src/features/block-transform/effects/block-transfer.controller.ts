@@ -119,31 +119,48 @@ function destinationGesture(): EffectGesture<BlockTransferSettings> {
       return { patch: { destination: block.ok ? block.value : null } };
     },
     end(context, point): Outcome {
-      if (!point) return {};
+      const cleared = { destination: null };
+      if (!point) return { patch: cleared };
       const block = getComponentBlockPoint(
         context.inspection,
         context.componentIndex,
         point,
       );
-      if (!block.ok) return { error: block.error.message };
+      if (!block.ok) {
+        return { patch: cleared, error: block.error.message };
+      }
       const operation = getBlockTransferOperation(
         context.inspection,
         context.componentIndex,
         context.settings,
         block.value,
       );
+      const valid = Boolean(
+        operation && isBlockTransferParameters(operation, context.inspection),
+      );
       return {
         patch: { destination: block.value },
-        apply:
-          operation !== null &&
-          isBlockTransferParameters(operation, context.inspection),
+        apply: valid,
+        error: valid
+          ? ""
+          : context.settings.action === "swap"
+            ? "Swap needs two separate, in-bounds regions."
+            : "The selected block region exceeds the bounded transfer size.",
       };
     },
-    cancel: () => ({}),
+    cancel: () => ({ destination: null }),
   };
 }
 
 const gestures: EffectGestureController<BlockTransferSettings> = {
+  getHint({ settings }) {
+    return settings.source
+      ? {
+          text: "Drag to position the destination. Release over a valid area to apply.",
+          keyboard: "Press R to choose a new source.",
+        }
+      : { text: "Drag to select a source region on the DCT grid." };
+  },
   begin(context: Context, point) {
     const block = getComponentBlockPoint(
       context.inspection,

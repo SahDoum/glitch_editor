@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { CanvasPointerInput } from "../../src/features/canvas-tools/types";
 import {
   getEffect,
   getJpegOperationEffect,
@@ -11,12 +12,12 @@ import type {
 import { ScanCorruptEffect } from "../../src/features/scan-corrupt/scan-corrupt.controller";
 import { inspectJpeg } from "../../src/jpeg/inspect";
 import { EFFECT_REGISTRY } from "../../src/features/effects/registry";
+import { bindEffectCanvasInteraction } from "../../src/ui/canvas-interactions";
+import { CanvasPointerSession } from "../../src/ui/canvas-pointer-session";
 
-async function inspection() {
+async function inspection(fileName = "synthetic-color-444.jpg") {
   const bytes = new Uint8Array(
-    await readFile(
-      new URL("../fixtures/synthetic-color-444.jpg", import.meta.url),
-    ),
+    await readFile(new URL(`../fixtures/${fileName}`, import.meta.url)),
   );
   const result = inspectJpeg(bytes);
   if (!result.ok) throw new Error("fixture");
@@ -60,7 +61,7 @@ describe("block transfer and repeat gestures", () => {
       const end = destination.gesture?.end(context(), { x: 9, y: 1 }, true);
       settings = { ...settings, ...end?.patch };
       expect(settings.destination).toEqual({ x: 1, y: 0 });
-      if (id === "block-transfer") expect(end?.apply).toBe(true);
+      expect(Boolean(end?.apply)).toBe(id === "block-transfer");
       const built = getJpegOperationEffect(id)!.controller.buildOperation({
         settings,
         inspection: info,
@@ -98,7 +99,7 @@ describe("block transfer and repeat gestures", () => {
       expect(settings.destination).toBeNull();
     });
 
-    it(`${id}: drag selects a source, a second drag applies, reset clears it`, async () => {
+    it(`${id}: the hint changes on completed source selection and reset`, async () => {
       const { inspection: info } = await inspection();
       const { effect, gestures } = gestureEffect(id);
       const view = effect.view;
@@ -109,16 +110,23 @@ describe("block transfer and repeat gestures", () => {
         componentIndex: 0,
       });
 
+      const sourceHint = gestures.getHint(context());
+      expect(sourceHint?.text).toContain("source");
       const first = gestures.begin(context(), { x: 8, y: 8 });
       expect(first.gesture).not.toBeNull();
       settings = { ...settings, ...first.outcome.patch };
       expect(settings.draft).not.toBeNull();
       const moved = first.gesture?.move(context(), { x: 10, y: 10 }, true);
       settings = { ...settings, ...moved?.patch };
+      expect(gestures.getHint(context())).toEqual(sourceHint);
       const ended = first.gesture?.end(context(), { x: 10, y: 10 }, true);
       settings = { ...settings, ...ended?.patch };
       expect(settings.source).not.toBeNull();
       expect(ended?.apply).toBeFalsy();
+      expect(gestures.getHint(context())).toMatchObject({
+        text: expect.stringContaining("destination"),
+        keyboard: expect.stringContaining("R"),
+      });
 
       const reset = view
         .getTopBarActions?.(settings)
@@ -128,6 +136,7 @@ describe("block transfer and repeat gestures", () => {
       settings = { ...settings, ...reset?.patch };
       expect(settings.source).toBeNull();
       expect(settings.draft).toBeNull();
+      expect(gestures.getHint(context())).toEqual(sourceHint);
       expect(
         view.getTopBarActions?.(settings).find((a) => a.id === "reset-source")
           ?.disabled,
@@ -145,7 +154,7 @@ describe("block transfer and repeat gestures", () => {
     });
   }
 
-  it("cancel returns a patch that clears the in-progress drag", async () => {
+  it("clears a Transfer source draft and preserves the source when a destination is cancelled", async () => {
     const { inspection: info } = await inspection();
     const { effect, gestures } = gestureEffect("block-transfer");
     const start = gestures.begin(
@@ -156,7 +165,122 @@ describe("block transfer and repeat gestures", () => {
       },
       { x: 8, y: 8 },
     );
-    expect(start.gesture?.cancel()).toBeDefined();
+    expect(start.gesture?.cancel()).toEqual({
+      draft: null,
+      draftOutOfBounds: false,
+    });
+    const source = { x: 1, y: 1, width: 1, height: 1 };
+    const settings = { ...effect.view.defaultSettings, source };
+    const destination = gestures.begin(
+      { settings, inspection: info, componentIndex: 0 },
+      { x: 1, y: 1 },
+    );
+    expect({ ...settings, ...destination.gesture?.cancel() }).toMatchObject({
+      source,
+      destination: null,
+    });
+  });
+
+  it("clips the Copy contour and applies the pointer-up destination exactly once", async () => {
+    const { inspection: info } = await inspection();
+    const { effect, gestures } = gestureEffect("block-transfer");
+    const controller = getJpegOperationEffect("block-transfer")!.controller;
+    let settings: Loose = {
+      ...effect.view.defaultSettings,
+      source: { x: 0, y: 0, width: 2, height: 1 },
+    };
+    const context = () => ({ inspection: info, componentIndex: 0, settings });
+    const apply = vi.fn();
+    const interaction = bindEffectCanvasInteraction(
+      gestures,
+      context(),
+      (outcome) => {
+        settings = { ...settings, ...outcome.patch };
+        if (outcome.apply) apply(outcome.patch);
+      },
+    );
+    const input = (x: number, y: number): CanvasPointerInput => ({
+      clientPoint: { x, y },
+      image: { point: { x, y }, inside: true },
+    });
+    const gesture = interaction.begin(input(1, 9));
+    if (!gesture) throw new Error("Expected a destination gesture");
+    const pointer = new CanvasPointerSession();
+    pointer.begin(1, gesture, vi.fn(), () => pointer.cancel(1));
+    pointer.move(1, input(2, 9));
+    expect(gestures.getOverlay(context())?.destination?.width).toBe(16);
+    pointer.end(1, input(9, 9));
+    pointer.end(1, input(9, 9));
+    expect(apply).toHaveBeenCalledExactlyOnceWith({
+      destination: { x: 1, y: 1 },
+    });
+    expect(gestures.getOverlay(context())).toMatchObject({
+      destination: { x: 8, y: 8, width: 8, height: 8 },
+      destinationInvalid: false,
+    });
+    expect(
+      controller.buildOperation({ ...context(), mask: null }),
+    ).toMatchObject({
+      ok: true,
+      value: { destinationX: 1, destinationY: 1, width: 1, height: 1 },
+    });
+  });
+
+  it("marks a partially overlapping Swap as invalid and retains the source for another drop", async () => {
+    const { inspection: info } = await inspection("synthetic-texture-420.jpg");
+    const { effect, gestures } = gestureEffect("block-transfer");
+    const source = { x: 0, y: 0, width: 2, height: 1 };
+    const settings: Loose = {
+      ...effect.view.defaultSettings,
+      action: "swap",
+      source,
+    };
+    const context = { inspection: info, componentIndex: 0, settings };
+    const point = { x: 9, y: 1 };
+    const { gesture } = gestures.begin(context, point);
+    const end = gesture?.end(context, point, true);
+    expect(end).toMatchObject({
+      apply: false,
+      error: expect.stringContaining("separate"),
+    });
+    expect(end?.patch).not.toHaveProperty("source");
+    expect(
+      gestures.getOverlay({
+        ...context,
+        settings: { ...settings, ...end?.patch },
+      }),
+    ).toMatchObject({
+      source: { x: 0, y: 0, width: 16, height: 8 },
+      destinationInvalid: true,
+    });
+  });
+
+  it("checks the Repeat contour against every requested destination", async () => {
+    const { inspection: info } = await inspection();
+    const { effect, gestures } = gestureEffect("block-repeat");
+    const controller = getJpegOperationEffect("block-repeat")!.controller;
+    const context = {
+      inspection: info,
+      componentIndex: 0,
+      settings: {
+        ...effect.view.defaultSettings,
+        source: { x: 0, y: 0, width: 1, height: 1 },
+        destination: { x: 1, y: 0 },
+        count: 2,
+      },
+    };
+    expect(gestures.getOverlay(context)).toMatchObject({
+      destination: { x: 8, y: 0, width: 8, height: 8 },
+      destinationInvalid: true,
+    });
+    expect(controller.buildOperation({ ...context, mask: null }).ok).toBe(
+      false,
+    );
+    const valid = { ...context, settings: { ...context.settings, count: 1 } };
+    expect(gestures.getOverlay(valid)).toMatchObject({
+      destinationInvalid: false,
+    });
+    expect(controller.buildOperation({ ...valid, mask: null }).ok).toBe(true);
   });
 });
 

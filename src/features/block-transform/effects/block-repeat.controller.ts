@@ -25,6 +25,24 @@ import { BlockRepeatView, type BlockRepeatSettings } from "./block-repeat.view";
 type Context = GestureContext<BlockRepeatSettings>;
 type Outcome = GestureOutcome<BlockRepeatSettings>;
 
+function getBlockRepeatOperation({
+  settings,
+  componentIndex,
+}: Context): BlockRepeatOperation | null {
+  const { source, destination, count } = settings;
+  return source && destination
+    ? {
+        kind: blockRepeatOperation.kind,
+        componentIndex,
+        sourceX: source.x,
+        sourceY: source.y,
+        offsetX: destination.x - source.x,
+        offsetY: destination.y - source.y,
+        repetitions: count,
+      }
+    : null;
+}
+
 function getDestination(context: Context, start: ImagePoint, end: ImagePoint) {
   const component = context.inspection.components[context.componentIndex];
   const source = context.settings.source;
@@ -99,6 +117,14 @@ function destinationGesture(
 }
 
 const gestures: EffectGestureController<BlockRepeatSettings> = {
+  getHint({ settings }) {
+    return settings.source
+      ? {
+          text: "Drag from the source block to the first destination, then choose Apply block repeat.",
+          keyboard: "Press R to choose a new source.",
+        }
+      : { text: "Drag within one visible DCT block to select the source." };
+  },
   begin(context, point) {
     const block = getComponentBlockPoint(
       context.inspection,
@@ -134,14 +160,18 @@ const gestures: EffectGestureController<BlockRepeatSettings> = {
       outcome: { patch: { destination: null }, error: "" },
     };
   },
-  getOverlay({ settings, inspection, componentIndex }) {
+  getOverlay(context) {
+    const { settings, inspection, componentIndex } = context;
+    const operation = getBlockRepeatOperation(context);
     return {
       source: getBlockRegionSelection(
         inspection,
         componentIndex,
         settings.draft ?? settings.source,
       ),
-      sourceInvalid: false,
+      sourceInvalid:
+        settings.draft !== null &&
+        (settings.draft.width !== 1 || settings.draft.height !== 1),
       destination: settings.destination
         ? getBlockRegionSelection(inspection, componentIndex, {
             ...settings.destination,
@@ -149,7 +179,8 @@ const gestures: EffectGestureController<BlockRepeatSettings> = {
             height: 1,
           })
         : null,
-      destinationInvalid: false,
+      destinationInvalid:
+        operation !== null && !isBlockRepeatParameters(operation, inspection),
     };
   },
 };
@@ -170,29 +201,18 @@ export class BlockRepeatController extends BlockEffectController<
     );
   }
 
-  buildOperation({
-    settings,
-    inspection,
-    componentIndex,
-  }: EffectOperationContext<BlockRepeatSettings>): Result<BlockRepeatOperation> {
-    const { source, destination } = settings;
-    if (!source || !destination) {
+  buildOperation(
+    context: EffectOperationContext<BlockRepeatSettings>,
+  ): Result<BlockRepeatOperation> {
+    const operation = getBlockRepeatOperation(context);
+    if (!operation) {
       return failure({
         code: "INVALID_INPUT",
         message:
           "Drag to select one source block, then drag from it to a destination block.",
       });
     }
-    const operation: BlockRepeatOperation = {
-      kind: this.operation.kind,
-      componentIndex,
-      sourceX: source.x,
-      sourceY: source.y,
-      offsetX: destination.x - source.x,
-      offsetY: destination.y - source.y,
-      repetitions: settings.count,
-    };
-    return isBlockRepeatParameters(operation, inspection)
+    return isBlockRepeatParameters(operation, context.inspection)
       ? success(operation)
       : failure({
           code: "INVALID_INPUT",

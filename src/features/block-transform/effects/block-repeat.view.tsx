@@ -45,7 +45,7 @@ export const BlockRepeatView: EffectView<BlockRepeatSettings> = {
     {
       id: "reset-source",
       label: "New source",
-      title: "Choose a new source block (R)",
+      title: "Choose a new source block",
       shortcut: "R",
       disabled: !settings.source && !settings.draft,
       patch: NO_BLOCK_REPEAT_SOURCE,
@@ -60,9 +60,7 @@ export const BlockRepeatView: EffectView<BlockRepeatSettings> = {
     return (
       <BlockTransformFrame editor={editor} requiresMask={false}>
         <p className="coefficient-note">
-          Drag within one visible DCT block to select the source. Then drag from
-          that block to the first destination; copies continue in the same
-          block-grid direction and spacing.
+          Copies continue in the same block-grid direction and spacing.
         </p>
         {source && (
           <p className="selection-readout">

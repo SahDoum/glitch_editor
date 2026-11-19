@@ -129,7 +129,7 @@ describe("spatial selections and masks", () => {
     });
   });
 
-  it("keeps brush strokes separated when a pointer path leaves the image", () => {
+  it("stores separated brush samples as one valid brush shape", () => {
     const mask = createBrushMaskFromStrokes(
       [
         [
@@ -154,11 +154,6 @@ describe("spatial selections and masks", () => {
             points: [
               { x: 2, y: 3 },
               { x: 5, y: 3 },
-            ],
-          },
-          {
-            kind: "brush",
-            points: [
               { x: 15, y: 3 },
               { x: 18, y: 3 },
             ],
@@ -166,6 +161,7 @@ describe("spatial selections and masks", () => {
         ],
       },
     });
+    if (mask.ok) expect(isSpatialMask(mask.value)).toBe(true);
   });
 
   it("copies rectangle and brush snapshots with new identities and independent geometry", () => {

@@ -833,7 +833,7 @@ h1 {
 
 .canvas-keyboard-help {
   flex: 0 0 auto;
-  margin: 8px 0 0;
+  margin: 0 0 8px;
   color: #b7bdb9;
   font-size: 11px;
   line-height: 1.5;

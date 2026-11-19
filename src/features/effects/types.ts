@@ -1,4 +1,5 @@
 import type { ComponentType, ReactNode } from "react";
+import type { CanvasToolHint } from "../canvas-tools/types";
 import type { JpegEditableState } from "../../application/jpeg-document";
 import type { CorruptedEncodedJpeg } from "../../application/scan-corruption";
 import type {
@@ -25,7 +26,6 @@ export type EffectId =
   | "posterization"
   | "ringing"
   | "engraving"
-  | "engraving-vertical"
   | "coefficient-randomize"
   | "ac-scale"
   | "dc-offset"
@@ -52,14 +52,8 @@ export type MaskTool = "all" | "brush" | "select";
  */
 export type EffectInteraction = "mask" | "gesture" | "panel";
 
-export interface MaskToolDeclaration {
-  readonly id: MaskTool;
-  readonly label: string;
-  readonly shortcut: string;
-}
-
 export interface EffectToolbarConfig {
-  readonly tools: readonly MaskToolDeclaration[];
+  readonly tools: readonly MaskTool[];
   readonly showSnapGrid: boolean;
 }
 
@@ -223,6 +217,7 @@ export interface EffectGestureController<Settings> {
     point: ImagePoint,
   ): GestureStart<Settings>;
   getOverlay(context: GestureContext<Settings>): GestureOverlay | null;
+  getHint(context: GestureContext<Settings>): CanvasToolHint | null;
 }
 
 interface EffectControllerBase<Settings> {
