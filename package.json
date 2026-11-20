@@ -29,7 +29,8 @@
     "precheck": "node scripts/check-node.mjs",
     "check": "npm run format:check && npm run lint && npm test && npm run build",
     "test:worker": "node scripts/smoke-built-worker.mjs",
-    "benchmark:codec": "node scripts/benchmark-codec-reuse.mjs"
+    "benchmark:codec": "node scripts/benchmark-codec-reuse.mjs",
+    "generate:examples": "node scripts/generate-example-assets.mjs"
   },
   "dependencies": {
     "react": "19.3.1",

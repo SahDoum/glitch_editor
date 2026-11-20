@@ -1,0 +1,35 @@
+{
+  "original": "original.jpg",
+  "effects": [
+    {
+      "name": "pixelate",
+      "output": "pixelate.jpg",
+      "component": 0,
+      "mode": "zero",
+      "domain": "ac",
+      "frequencyBand": "all",
+      "strength": 0,
+      "seed": 1
+    },
+    {
+      "name": "engraving",
+      "output": "engraving.jpg",
+      "component": 0,
+      "mode": "engrave-horizontal",
+      "domain": "ac",
+      "frequencyBand": "all",
+      "strength": 4,
+      "seed": 1
+    },
+    {
+      "name": "ringing",
+      "output": "ringing.jpg",
+      "component": 0,
+      "mode": "ringing-boost",
+      "domain": "ac",
+      "frequencyBand": "all",
+      "strength": 4,
+      "seed": 1
+    }
+  ]
+}
