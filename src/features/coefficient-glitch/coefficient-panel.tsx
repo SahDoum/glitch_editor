@@ -11,6 +11,7 @@ import {
   type DctFrequencyChoice,
 } from "../../ui/dct-basis-matrix";
 import {
+  getCoefficientFrequencyChoices,
   getCoefficientRangeOptions,
   RadioChoiceGroup,
 } from "../../ui/tool-controls";
@@ -110,21 +111,12 @@ export function CoefficientBandMatrix({
   settings,
   onChangeSettings,
 }: Pick<CoefficientPanelProps, "settings" | "onChangeSettings">) {
-  const choices: readonly DctFrequencyChoice[] = getCoefficientRangeOptions(
-    settings.mode,
-  ).map(({ value }) =>
-    value === "dc" ? "dc" : (value.slice(3) as DctFrequencyChoice),
-  );
+  const choices = getCoefficientFrequencyChoices(settings.mode);
   if (choices.length === 0) return null;
   const selectedChoice: DctFrequencyChoice =
     settings.domain === "dc" ? "dc" : settings.frequencyBand;
   return (
     <DctBasisMatrix
-      target={
-        settings.domain === "dc"
-          ? { kind: "dc" }
-          : { kind: "band", band: settings.frequencyBand }
-      }
       selectedChoice={selectedChoice}
       availableChoices={choices}
       onSelect={(choice) =>

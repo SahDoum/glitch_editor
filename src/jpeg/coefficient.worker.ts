@@ -1,4 +1,8 @@
-import type createLibjpegCoefficients from "./codec/libjpeg-coefficients.js";
+import {
+  getCoefficientCodec as getCodec,
+  resetCodecLoader,
+} from "./codec-loader";
+import { openCoefficientInput } from "./codec-input";
 import { getOperationController } from "./codec-controllers/registry";
 import { failure, success } from "../shared/result";
 import {
@@ -19,80 +23,15 @@ const CODEC_ERRORS: Record<number, string> = {
   [-8]: "The local block shift exceeds 262,144 destination blocks. Use a smaller mask.",
   [-9]: "There was not enough memory to prepare the JPEG codec command.",
 };
-// Bump when the generated codec changes so older cached WASM cannot be reused.
-const CODEC_VERSION = "progressive-1";
-
-let codecPromise: ReturnType<typeof createLibjpegCoefficients> | null = null;
 let isOpen = false;
 let requestQueue = Promise.resolve();
-
-function getCodec() {
-  const moduleUrl = new URL(
-    `${import.meta.env.BASE_URL}codec/libjpeg-coefficients.js?v=${CODEC_VERSION}`,
-    self.location.origin,
-  ).href;
-  codecPromise ??= import(/* @vite-ignore */ moduleUrl).then((module) => {
-    const createCodec = (
-      module as { default: typeof createLibjpegCoefficients }
-    ).default;
-    return createCodec({
-      locateFile(path) {
-        return path.endsWith(".wasm")
-          ? new URL(
-              `${import.meta.env.BASE_URL}codec/libjpeg-coefficients.wasm?v=${CODEC_VERSION}`,
-              self.location.origin,
-            ).href
-          : path;
-      },
-    }).then((codec) => {
-      const requiredExports = [
-        "_coefficient_open",
-        "_coefficient_read_block",
-        "_coefficient_apply",
-        "_coefficient_repeat_block",
-        "_coefficient_permute_blocks",
-        "_coefficient_shift_blocks",
-        "_coefficient_transfer_blocks",
-        "_coefficient_set_quantization",
-        "_coefficient_encode",
-        "_coefficient_output_pointer",
-        "_coefficient_output_size",
-        "_coefficient_close",
-      ];
-      if (
-        requiredExports.some(
-          (name) => typeof Reflect.get(codec, name) !== "function",
-        )
-      ) {
-        throw new Error("The generated JPEG codec is outdated.");
-      }
-      return codec;
-    });
-  });
-  return codecPromise;
-}
 
 async function handleEncodeRequest(
   request: Extract<CoefficientWorkerRequest, { type: "encode" }>,
 ): Promise<CoefficientWorkerResponse> {
   const codec = await getCodec();
-  const inputPointer = codec._malloc(request.bytes.byteLength);
-  if (inputPointer === 0) {
-    return {
-      id: request.id,
-      result: failure({
-        code: "PROCESSING_FAILED",
-        message: "There was not enough memory to prepare JPEG re-encoding.",
-      }),
-    };
-  }
-
   try {
-    codec.HEAPU8.set(new Uint8Array(request.bytes), inputPointer);
-    let status = codec._coefficient_open(
-      inputPointer,
-      request.bytes.byteLength,
-    );
+    let status = openCoefficientInput(codec, request.bytes);
     if (status !== 0) {
       return {
         id: request.id,
@@ -177,7 +116,6 @@ async function handleEncodeRequest(
     };
   } finally {
     codec._coefficient_close();
-    codec._free(inputPointer);
     isOpen = false;
   }
 }
@@ -191,44 +129,25 @@ async function handleRequest(
 
   const codec = await getCodec();
   if (request.type === "open") {
-    const inputPointer = codec._malloc(request.bytes.byteLength);
-    if (inputPointer === 0) {
+    const status = openCoefficientInput(codec, request.bytes);
+    if (status !== 0) {
+      isOpen = false;
+      const message =
+        CODEC_ERRORS[status] ??
+        "libjpeg-turbo could not open this JPEG for coefficient inspection.";
       return {
         id: request.id,
         result: failure({
-          code: "PROCESSING_FAILED",
-          message: "There was not enough memory to read JPEG coefficients.",
+          code: status === -2 ? "UNSUPPORTED_FORMAT" : "PROCESSING_FAILED",
+          message,
         }),
       };
     }
-
-    try {
-      codec.HEAPU8.set(new Uint8Array(request.bytes), inputPointer);
-      const status = codec._coefficient_open(
-        inputPointer,
-        request.bytes.byteLength,
-      );
-      if (status !== 0) {
-        isOpen = false;
-        const message =
-          CODEC_ERRORS[status] ??
-          "libjpeg-turbo could not open this JPEG for coefficient inspection.";
-        return {
-          id: request.id,
-          result: failure({
-            code: status === -2 ? "UNSUPPORTED_FORMAT" : "PROCESSING_FAILED",
-            message,
-          }),
-        };
-      }
-      isOpen = true;
-      return {
-        id: request.id,
-        result: success({ type: "opened" }),
-      };
-    } finally {
-      codec._free(inputPointer);
-    }
+    isOpen = true;
+    return {
+      id: request.id,
+      result: success({ type: "opened" }),
+    };
   }
 
   if (!isOpen) {
@@ -311,7 +230,7 @@ self.addEventListener("message", (event: MessageEvent<unknown>) => {
       }
     } catch {
       isOpen = false;
-      codecPromise = null;
+      resetCodecLoader();
       self.postMessage({
         id: request.id,
         result: failure({

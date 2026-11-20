@@ -2,7 +2,7 @@ import type createLibjpegCoefficients from "../codec/libjpeg-coefficients.js";
 import type { JpegGlitchOperation } from "../../operations/jpeg-glitch";
 import {
   getMaskBlockCoverage,
-  getMaskBlockCoverageAtLeastHalf,
+  type MaskCoveragePolicy,
   type JpegBlockGeometry,
 } from "../block-geometry";
 import type { SpatialMask } from "../../document/masks";
@@ -82,7 +82,7 @@ export abstract class OperationController<
     geometry: JpegBlockGeometry,
     componentIndex: number,
     mask: SpatialMask,
-    atLeastHalf: boolean,
+    policy: MaskCoveragePolicy,
     execute: (pointer: number, size: number) => number,
   ): Result<number> {
     const component = geometry.components[componentIndex];
@@ -92,9 +92,7 @@ export abstract class OperationController<
         message: "The selected JPEG component is invalid.",
       });
     }
-    const coverage = atLeastHalf
-      ? getMaskBlockCoverageAtLeastHalf(mask, geometry, component.id)
-      : getMaskBlockCoverage(mask, geometry, component.id);
+    const coverage = getMaskBlockCoverage(mask, geometry, component.id, policy);
     if (!coverage.ok) return coverage;
     return this.withWasmMemory(codec, coverage.value, (pointer) =>
       execute(pointer, coverage.value.byteLength),

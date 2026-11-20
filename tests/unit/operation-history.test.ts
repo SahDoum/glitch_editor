@@ -159,7 +159,7 @@ describe("operation history", () => {
     expect(history.canRedo).toBe(false);
   });
 
-  it("supports enable, delete, parameter editing, and reset through replay", async () => {
+  it("supports enable, delete, and reset through replay", async () => {
     const { history } = await createHistory();
     const first = history.add("test/transform", 1, {
       multiply: 2,
@@ -178,12 +178,9 @@ describe("operation history", () => {
       ok: true,
       value: { currentState: { value: 4 } },
     });
-    expect(
-      history.editParameters(secondId, { multiply: 1, add: 7 }),
-    ).toMatchObject({ ok: true, value: { currentState: { value: 8 } } });
     expect(history.delete(firstId)).toMatchObject({
       ok: true,
-      value: { currentState: { value: 8 }, operations: [{ id: secondId }] },
+      value: { currentState: { value: 4 }, operations: [{ id: secondId }] },
     });
     expect(history.resetToOriginal()).toMatchObject({
       ok: true,

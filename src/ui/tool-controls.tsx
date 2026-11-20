@@ -19,43 +19,46 @@ export type ChoiceOption<T extends ChoiceValue> = {
 
 export type CoefficientRangeChoice = "dc" | `ac:${GlitchFrequencyBand}`;
 
+export type CoefficientFrequencyChoice = "dc" | GlitchFrequencyBand;
+
+export function getCoefficientFrequencyChoices(
+  mode: CoefficientGlitchMode,
+): readonly CoefficientFrequencyChoice[] {
+  if (
+    [
+      "offset",
+      "dc-steps",
+      "low-pass",
+      "ringing-boost",
+      "engrave-horizontal",
+      "engrave-vertical",
+    ].includes(mode)
+  )
+    return [];
+  return [
+    ...(mode !== "invert" && mode !== "isolate" ? ["dc" as const] : []),
+    ...GLITCH_FREQUENCY_BANDS.filter(
+      (band) => mode !== "isolate" || band !== "all",
+    ),
+  ];
+}
+
 export function getCoefficientRangeOptions(
   mode: CoefficientGlitchMode,
 ): ChoiceOption<CoefficientRangeChoice>[] {
-  if (
-    mode === "offset" ||
-    mode === "dc-steps" ||
-    mode === "low-pass" ||
-    mode === "ringing-boost" ||
-    mode === "engrave-horizontal" ||
-    mode === "engrave-vertical"
-  )
-    return [];
-
-  return [
-    ...(mode !== "invert" && mode !== "isolate"
-      ? [
-          {
-            value: "dc" as const,
-            label: "DC",
-            hint: "Block-average coefficient",
-          },
-        ]
-      : []),
-    ...GLITCH_FREQUENCY_BANDS.filter(
-      (band) => mode !== "isolate" || band !== "all",
-    ).map((band) => {
-      const range = DCT_FREQUENCY_BAND_RANGES[band];
-      return {
-        value: `ac:${band}` as const,
-        label:
-          band === "all"
-            ? "AC All"
-            : `AC ${band[0]?.toUpperCase()}${band.slice(1)}`,
-        hint: `u+v ${range.minimum}–${range.maximum}`,
-      };
-    }),
-  ];
+  return getCoefficientFrequencyChoices(mode).map((choice) => {
+    if (choice === "dc")
+      return { value: "dc", label: "DC", hint: "Block-average coefficient" };
+    const range = DCT_FREQUENCY_BAND_RANGES[choice];
+    return {
+      value: `ac:${choice}`,
+      label:
+        choice === "all"
+          ? "AC All"
+          : `AC ${choice[0]?.toUpperCase()}${choice.slice(1)}`,
+      hint: `u+v ${range.minimum}–${range.maximum}`,
+    };
+  });
 }
 
 export function RadioChoiceGroup<T extends ChoiceValue>({

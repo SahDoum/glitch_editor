@@ -241,33 +241,45 @@ export function snapImagePointToGrid(
   });
 }
 
-export function getJpegComponentBlockGrid(
+/** Visible block dimensions in frame pixels; excludes MCU padding. */
+export function getJpegComponentGeometry(
   inspection: JpegBlockGeometry,
   componentId: number,
-): JpegComponentBlockGrid | null {
+):
+  | (JpegComponentBlockGrid & { blockWidth: number; blockHeight: number })
+  | null {
   const component = inspection.components.find(
     (candidate) => candidate.id === componentId,
   );
   if (!component) return null;
-
-  const maxHorizontalSampling = Math.max(
-    ...inspection.components.map(
-      ({ horizontalSampling }) => horizontalSampling,
-    ),
-  );
-  const maxVerticalSampling = Math.max(
-    ...inspection.components.map(({ verticalSampling }) => verticalSampling),
-  );
+  let maxHorizontalSampling = 0;
+  let maxVerticalSampling = 0;
+  for (const candidate of inspection.components) {
+    maxHorizontalSampling = Math.max(
+      maxHorizontalSampling,
+      candidate.horizontalSampling,
+    );
+    maxVerticalSampling = Math.max(
+      maxVerticalSampling,
+      candidate.verticalSampling,
+    );
+  }
+  const blockWidth = (8 * maxHorizontalSampling) / component.horizontalSampling;
+  const blockHeight = (8 * maxVerticalSampling) / component.verticalSampling;
   return {
-    columns: Math.ceil(
-      (inspection.width * component.horizontalSampling) /
-        (8 * maxHorizontalSampling),
-    ),
-    rows: Math.ceil(
-      (inspection.height * component.verticalSampling) /
-        (8 * maxVerticalSampling),
-    ),
+    columns: Math.ceil(inspection.width / blockWidth),
+    rows: Math.ceil(inspection.height / blockHeight),
+    blockWidth,
+    blockHeight,
   };
+}
+
+export function getJpegComponentBlockGrid(
+  inspection: JpegBlockGeometry,
+  componentId: number,
+): JpegComponentBlockGrid | null {
+  const geometry = getJpegComponentGeometry(inspection, componentId);
+  return geometry ? { columns: geometry.columns, rows: geometry.rows } : null;
 }
 
 export function mapJpegBlockCoordinate(
@@ -535,38 +547,32 @@ export function mapJpegBlockRegionToImageSelection(
   });
 }
 
+export type MaskCoveragePolicy = "any-intersection" | "at-least-half";
+
 export function getMaskBlockCoverage(
   mask: SpatialMask,
   inspection: JpegBlockGeometry,
   componentId: number,
+  policy: MaskCoveragePolicy = "any-intersection",
 ): Result<Uint8Array> {
+  if (policy === "at-least-half") {
+    return getMaskBlockCoverageAtLeastHalf(mask, inspection, componentId);
+  }
   if (mask.width !== inspection.width || mask.height !== inspection.height) {
     return failure({
       code: "INVALID_INPUT",
       message: "The spatial mask dimensions do not match the JPEG image.",
     });
   }
-  const grid = getJpegComponentBlockGrid(inspection, componentId);
-  const component = inspection.components.find(
-    (candidate) => candidate.id === componentId,
-  );
-  if (!grid || !component) {
+  const grid = getJpegComponentGeometry(inspection, componentId);
+  if (!grid) {
     return failure({
       code: "INVALID_INPUT",
       message: "The selected JPEG component is invalid.",
     });
   }
 
-  const maxHorizontalSampling = Math.max(
-    ...inspection.components.map(
-      ({ horizontalSampling }) => horizontalSampling,
-    ),
-  );
-  const maxVerticalSampling = Math.max(
-    ...inspection.components.map(({ verticalSampling }) => verticalSampling),
-  );
-  const blockWidth = (8 * maxHorizontalSampling) / component.horizontalSampling;
-  const blockHeight = (8 * maxVerticalSampling) / component.verticalSampling;
+  const { blockWidth, blockHeight } = grid;
   const coverage = new Uint8Array(grid.columns * grid.rows);
 
   for (const shape of mask.shapes) {
@@ -695,40 +701,35 @@ export function getMaskBlockCoverageAtLeastHalf(
       message: "The spatial mask dimensions do not match the JPEG image.",
     });
   }
-  const grid = getJpegComponentBlockGrid(inspection, componentId);
-  const component = inspection.components.find(
-    (candidate) => candidate.id === componentId,
-  );
-  if (!grid || !component) {
+  const grid = getJpegComponentGeometry(inspection, componentId);
+  if (!grid) {
     return failure({
       code: "INVALID_INPUT",
       message: "The selected JPEG component is invalid.",
     });
   }
 
-  const maxHorizontalSampling = Math.max(
-    ...inspection.components.map(
-      ({ horizontalSampling }) => horizontalSampling,
-    ),
-  );
-  const maxVerticalSampling = Math.max(
-    ...inspection.components.map(({ verticalSampling }) => verticalSampling),
-  );
-  const blockWidth = (8 * maxHorizontalSampling) / component.horizontalSampling;
-  const blockHeight = (8 * maxVerticalSampling) / component.verticalSampling;
+  const { blockWidth, blockHeight } = grid;
   const selected = new Uint8Array(grid.columns * grid.rows);
   const shape = mask.shapes[0];
   if (!shape) return success(selected);
 
   if (shape.kind === "rectangle") {
-    const intersecting = getMaskBlockCoverage(mask, inspection, componentId);
-    if (!intersecting.ok) return intersecting;
-    for (let blockY = 0; blockY < grid.rows; blockY += 1) {
+    const startX = Math.max(0, Math.floor(shape.x / blockWidth));
+    const startY = Math.max(0, Math.floor(shape.y / blockHeight));
+    const endX = Math.min(
+      grid.columns,
+      Math.ceil((shape.x + shape.width) / blockWidth),
+    );
+    const endY = Math.min(
+      grid.rows,
+      Math.ceil((shape.y + shape.height) / blockHeight),
+    );
+    for (let blockY = startY; blockY < endY; blockY += 1) {
       const top = blockY * blockHeight;
       const bottom = Math.min(inspection.height, top + blockHeight);
-      for (let blockX = 0; blockX < grid.columns; blockX += 1) {
+      for (let blockX = startX; blockX < endX; blockX += 1) {
         const index = blockY * grid.columns + blockX;
-        if (intersecting.value[index] === 0) continue;
         const left = blockX * blockWidth;
         const right = Math.min(inspection.width, left + blockWidth);
         const overlapWidth = Math.max(

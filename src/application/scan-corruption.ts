@@ -1,8 +1,8 @@
 import { failure, success, type Result } from "../shared/result";
+import { isWorkerResult } from "./worker-response";
 import type {
   ScanDecodeDiagnostic,
   ScanCorruptionWorkerRequest,
-  ScanCorruptionWorkerResponse,
 } from "../jpeg/scan-corruption-worker-protocol";
 import {
   isScanCorruptionParameters,
@@ -42,6 +42,27 @@ export class ScanCorruptionHistory {
     return Object.freeze([...(this.future.at(-1) ?? this.active)]);
   }
 
+  /** Publish the exact stage snapshot that completed in the worker as one action. */
+  commitStages(stages: readonly ScanCorruptionParameters[]): Result<undefined> {
+    if (
+      !Array.isArray(stages) ||
+      stages.length === 0 ||
+      stages.length > MAX_SCAN_CORRUPTION_STAGES ||
+      !stages.every(isScanCorruptionParameters)
+    ) {
+      return failure({
+        code: "INVALID_INPUT",
+        message:
+          "The completed Scan Corrupt stages are invalid or exceed the eight-stage limit.",
+      });
+    }
+    const snapshot = stages.map((stage) => Object.freeze({ ...stage }));
+    this.past.push(this.active);
+    this.active = snapshot;
+    this.future.length = 0;
+    return success(undefined);
+  }
+
   record(parameters: ScanCorruptionParameters): Result<undefined> {
     if (
       !isScanCorruptionParameters(parameters) ||
@@ -53,10 +74,7 @@ export class ScanCorruptionHistory {
           "The Scan Corrupt stage is invalid or the eight-stage limit was reached.",
       });
     }
-    this.past.push(this.active);
-    this.active = [...this.active, Object.freeze({ ...parameters })];
-    this.future.length = 0;
-    return success(undefined);
+    return this.commitStages([...this.active, parameters]);
   }
 
   replaceLast(parameters: ScanCorruptionParameters): Result<undefined> {
@@ -66,13 +84,7 @@ export class ScanCorruptionHistory {
         message: "There is no valid Scan Corrupt stage to update.",
       });
     }
-    this.past.push(this.active);
-    this.active = [
-      ...this.active.slice(0, -1),
-      Object.freeze({ ...parameters }),
-    ];
-    this.future.length = 0;
-    return success(undefined);
+    return this.commitStages([...this.active.slice(0, -1), parameters]);
   }
 
   commitUndo(): boolean {
@@ -96,6 +108,96 @@ export class ScanCorruptionHistory {
     this.past.length = 0;
     this.future.length = 0;
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNonnegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isDiagnostic(value: unknown): value is ScanDecodeDiagnostic {
+  return (
+    isRecord(value) &&
+    value.decoder === "libjpeg-turbo" &&
+    typeof value.status === "string" &&
+    ["complete", "warnings", "incomplete", "failed", "unavailable"].includes(
+      value.status,
+    ) &&
+    isNonnegativeInteger(value.decodedRows) &&
+    isNonnegativeInteger(value.expectedRows) &&
+    value.decodedRows <= value.expectedRows &&
+    isNonnegativeInteger(value.warningCount) &&
+    isNonnegativeInteger(value.warningFlags) &&
+    typeof value.message === "string"
+  );
+}
+
+function parseWorkerResponse(
+  response: unknown,
+  byteLength: number,
+  stages: readonly ScanCorruptionParameters[],
+): Result<CorruptedEncodedJpeg> {
+  const invalid = () =>
+    failure({
+      code: "PROCESSING_FAILED" as const,
+      message: "The Scan Corrupt worker returned an invalid response.",
+    });
+  if (
+    !isRecord(response) ||
+    response.id !== 0 ||
+    !isWorkerResult(response.result, isRecord)
+  ) {
+    return invalid();
+  }
+  const result = response.result;
+  if (!result.ok) return result;
+  const value = result.value;
+  if (
+    value.type !== "corrupted" ||
+    !(value.bytes instanceof ArrayBuffer) ||
+    value.bytes.byteLength !== byteLength ||
+    !Array.isArray(value.reports) ||
+    value.reports.length !== stages.length ||
+    !isDiagnostic(value.diagnostic)
+  )
+    return invalid();
+  const reports: ScanCorruptionReport[] = [];
+  for (const [index, report] of value.reports.entries()) {
+    const stage = stages[index]!;
+    if (
+      !isRecord(report) ||
+      !isScanCorruptionParameters(report) ||
+      report.mode !== stage.mode ||
+      report.count !== stage.count ||
+      report.rangeStart !== stage.rangeStart ||
+      report.rangeEnd !== stage.rangeEnd ||
+      report.seed !== stage.seed ||
+      !isNonnegativeInteger(report.scanStartOffset) ||
+      !isNonnegativeInteger(report.scanEndOffset) ||
+      report.scanStartOffset >= report.scanEndOffset ||
+      report.scanEndOffset > byteLength ||
+      report.changedBytes !== stage.count ||
+      !isNonnegativeInteger(report.changedBits) ||
+      report.changedBits < stage.count ||
+      report.changedBits > stage.count * (stage.mode === "bit-flip" ? 1 : 8)
+    )
+      return invalid();
+    reports.push({
+      ...stage,
+      scanStartOffset: report.scanStartOffset,
+      scanEndOffset: report.scanEndOffset,
+      changedBytes: stage.count,
+      changedBits: report.changedBits,
+    });
+  }
+  return success({
+    bytes: new Uint8Array(value.bytes),
+    reports,
+    diagnostic: value.diagnostic,
+  });
 }
 
 export function corruptEncodedJpeg(
@@ -134,6 +236,8 @@ export function corruptEncodedJpeg(
     );
   }
 
+  const requestedStages = stages.map((stage) => Object.freeze({ ...stage }));
+  const byteLength = cleanEncodedBytes.byteLength;
   let worker: Worker;
   try {
     worker = new Worker(
@@ -155,6 +259,9 @@ export function corruptEncodedJpeg(
       if (settled) return;
       settled = true;
       signal?.removeEventListener("abort", onAbort);
+      worker.onmessage = null;
+      worker.onerror = null;
+      worker.onmessageerror = null;
       worker.terminate();
       resolve(result);
     };
@@ -172,58 +279,9 @@ export function corruptEncodedJpeg(
     }
 
     signal?.addEventListener("abort", onAbort, { once: true });
-    worker.onmessage = (event: MessageEvent<ScanCorruptionWorkerResponse>) => {
-      if (event.data.id !== 0) {
-        finish(
-          failure({
-            code: "PROCESSING_FAILED",
-            message: "The Scan Corrupt worker returned an unexpected response.",
-          }),
-        );
-        return;
-      }
-      const { result } = event.data;
-      if (!result.ok) {
-        finish(result);
-        return;
-      }
-      if (
-        result.value.type !== "corrupted" ||
-        !(result.value.bytes instanceof ArrayBuffer) ||
-        result.value.bytes.byteLength !== cleanEncodedBytes.byteLength ||
-        !Array.isArray(result.value.reports) ||
-        result.value.reports.length !== stages.length ||
-        typeof result.value.diagnostic !== "object" ||
-        result.value.diagnostic === null ||
-        result.value.diagnostic.decoder !== "libjpeg-turbo" ||
-        ![
-          "complete",
-          "warnings",
-          "incomplete",
-          "failed",
-          "unavailable",
-        ].includes(result.value.diagnostic.status) ||
-        !Number.isSafeInteger(result.value.diagnostic.decodedRows) ||
-        !Number.isSafeInteger(result.value.diagnostic.expectedRows) ||
-        !Number.isSafeInteger(result.value.diagnostic.warningCount) ||
-        !Number.isSafeInteger(result.value.diagnostic.warningFlags) ||
-        typeof result.value.diagnostic.message !== "string"
-      ) {
-        finish(
-          failure({
-            code: "PROCESSING_FAILED",
-            message: "The Scan Corrupt worker returned an invalid response.",
-          }),
-        );
-        return;
-      }
-      finish(
-        success({
-          bytes: new Uint8Array(result.value.bytes),
-          reports: result.value.reports,
-          diagnostic: result.value.diagnostic,
-        }),
-      );
+    worker.onmessage = (event: MessageEvent<unknown>) => {
+      if (settled) return;
+      finish(parseWorkerResponse(event.data, byteLength, requestedStages));
     };
     worker.onerror = (event) => {
       event.preventDefault();
@@ -250,7 +308,7 @@ export function corruptEncodedJpeg(
         id: 0,
         type: "corrupt",
         bytes: inputBuffer,
-        stages,
+        stages: requestedStages,
       };
       worker.postMessage(request, [inputBuffer]);
     } catch {

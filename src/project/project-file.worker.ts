@@ -1,13 +1,16 @@
 import { failure } from "../shared/result";
 import { readJgeProjectText } from "./project-file";
 
-interface ProjectReadWorkerRequest {
-  readonly id: number;
-  readonly file: File;
-}
+import type {
+  ProjectReadWorkerRequest,
+  ProjectReadWorkerResponse,
+} from "./project-worker-protocol";
 
 const workerScope = self as typeof self & {
-  postMessage(message: unknown, transfer?: Transferable[]): void;
+  postMessage(
+    message: ProjectReadWorkerResponse,
+    transfer?: Transferable[],
+  ): void;
 };
 
 function isProjectReadRequest(
@@ -16,8 +19,6 @@ function isProjectReadRequest(
   return (
     typeof value === "object" &&
     value !== null &&
-    "id" in value &&
-    value.id === 0 &&
     "file" in value &&
     value.file instanceof File
   );
@@ -27,7 +28,7 @@ workerScope.addEventListener("message", (event: MessageEvent<unknown>) => {
   void (async () => {
     if (!isProjectReadRequest(event.data)) {
       workerScope.postMessage({
-        id: 0,
+        type: "result",
         result: failure({
           code: "INVALID_INPUT",
           message: "The project loading request was invalid.",
@@ -37,7 +38,7 @@ workerScope.addEventListener("message", (event: MessageEvent<unknown>) => {
     }
 
     workerScope.postMessage({
-      id: event.data.id,
+      type: "progress",
       progress: "Reading project…",
     });
     let serialized: string;
@@ -45,7 +46,7 @@ workerScope.addEventListener("message", (event: MessageEvent<unknown>) => {
       serialized = await event.data.file.text();
     } catch {
       workerScope.postMessage({
-        id: event.data.id,
+        type: "result",
         result: failure({
           code: "PROCESSING_FAILED",
           message: "The selected project file could not be read.",
@@ -55,15 +56,15 @@ workerScope.addEventListener("message", (event: MessageEvent<unknown>) => {
     }
 
     workerScope.postMessage({
-      id: event.data.id,
+      type: "progress",
       progress: "Verifying project…",
     });
     const result = await readJgeProjectText(serialized);
     if (!result.ok) {
-      workerScope.postMessage({ id: event.data.id, result });
+      workerScope.postMessage({ type: "result", result });
       return;
     }
     const bytes = result.value.source.bytes;
-    workerScope.postMessage({ id: event.data.id, result }, [bytes.buffer]);
+    workerScope.postMessage({ type: "result", result }, [bytes.buffer]);
   })();
 });

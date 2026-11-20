@@ -1,5 +1,5 @@
 import type { MaskTool } from "../features/canvas-tools/types";
-import type { NamedSpatialMask, SpatialMask } from "../document/masks";
+import type { SpatialMask } from "../document/masks";
 
 export function getHistoryDisplayEntries<T>(
   operations: readonly T[],
@@ -16,7 +16,6 @@ export interface WorkspaceState {
   readonly areaTool: MaskTool;
   readonly activeEffectId: string | null;
   readonly selectionMask: SpatialMask | null;
-  readonly activeMaskId: string | null;
 }
 
 export interface WorkspaceOverlayVisibility {
@@ -70,16 +69,6 @@ export function areaToolForMask(mask: SpatialMask | null): MaskTool {
   return "select";
 }
 
-export function getEffectMask(
-  state: WorkspaceState,
-  savedMasks: readonly NamedSpatialMask[],
-): SpatialMask | null {
-  return state.activeMaskId
-    ? (savedMasks.find(({ mask }) => mask.id === state.activeMaskId)?.mask ??
-        null)
-    : state.selectionMask;
-}
-
 export type WorkspaceAction =
   | {
       readonly type: "activate-effect";
@@ -89,7 +78,6 @@ export type WorkspaceAction =
     }
   | { readonly type: "activate-tool"; readonly tool: MaskTool }
   | { readonly type: "set-selection"; readonly selection: SpatialMask | null }
-  | { readonly type: "select-mask"; readonly maskId: string | null }
   | { readonly type: "reset-document" };
 
 export const initialWorkspaceState: WorkspaceState = Object.freeze({
@@ -97,7 +85,6 @@ export const initialWorkspaceState: WorkspaceState = Object.freeze({
   areaTool: "all",
   activeEffectId: null,
   selectionMask: null,
-  activeMaskId: null,
 });
 
 export function workspaceReducer(
@@ -118,17 +105,13 @@ export function workspaceReducer(
         activeTool: action.tool,
         areaTool: action.tool,
         selectionMask: clearArea ? null : state.selectionMask,
-        activeMaskId: clearArea ? null : state.activeMaskId,
       };
     }
     case "set-selection":
       return {
         ...state,
         selectionMask: action.selection,
-        activeMaskId: action.selection ? null : state.activeMaskId,
       };
-    case "select-mask":
-      return { ...state, activeMaskId: action.maskId };
     case "reset-document":
       return {
         ...initialWorkspaceState,

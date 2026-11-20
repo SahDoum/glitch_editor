@@ -79,4 +79,34 @@ describe("coefficient effect settings persistence", () => {
       });
     },
   );
+  it("keeps the last valid settings of both effects after an invalid empty Low-pass input", () => {
+    const storage = createStorage();
+    const valid = {
+      lowpass: {
+        domain: "ac" as const,
+        mode: "low-pass" as const,
+        frequencyBand: "all" as const,
+        strength: 3,
+        seed: 1,
+      },
+      scale: {
+        domain: "ac" as const,
+        mode: "scale" as const,
+        frequencyBand: "all" as const,
+        strength: 2,
+        seed: 2,
+      },
+    };
+    expect(writeCoefficientEffectSettings(storage, valid).ok).toBe(true);
+    expect(
+      writeCoefficientEffectSettings(storage, {
+        ...valid,
+        lowpass: { ...valid.lowpass, strength: Number("") },
+      }).ok,
+    ).toBe(false);
+    expect(readCoefficientEffectSettings(storage)).toEqual({
+      ok: true,
+      value: valid,
+    });
+  });
 });

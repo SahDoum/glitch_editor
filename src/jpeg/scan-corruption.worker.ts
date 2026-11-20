@@ -1,4 +1,5 @@
 import type createLibjpegCoefficients from "./codec/libjpeg-coefficients.js";
+import { getDiagnosticCodec as getCodec } from "./codec-loader";
 import { failure } from "../shared/result";
 import type {
   ScanDecodeDiagnostic,
@@ -17,31 +18,6 @@ const workerScope = self as typeof self & {
     transfer?: Transferable[],
   ): void;
 };
-
-let codecPromise: ReturnType<typeof createLibjpegCoefficients> | null = null;
-
-function getCodec() {
-  const moduleUrl = new URL(
-    `${import.meta.env.BASE_URL}codec/libjpeg-coefficients.js`,
-    self.location.origin,
-  ).href;
-  codecPromise ??= import(/* @vite-ignore */ moduleUrl).then((module) => {
-    const createCodec = (
-      module as { default: typeof createLibjpegCoefficients }
-    ).default;
-    return createCodec({
-      locateFile(path) {
-        return path.endsWith(".wasm")
-          ? new URL(
-              `${import.meta.env.BASE_URL}codec/libjpeg-coefficients.wasm`,
-              self.location.origin,
-            ).href
-          : path;
-      },
-    });
-  });
-  return codecPromise;
-}
 
 function unavailableDiagnostic(message: string): ScanDecodeDiagnostic {
   return {
@@ -64,23 +40,6 @@ async function diagnoseDecode(
   } catch {
     return unavailableDiagnostic(
       "The libjpeg-turbo diagnostic decoder could not be loaded.",
-    );
-  }
-
-  const requiredExports = [
-    "_coefficient_decode_diagnostic",
-    "_coefficient_decode_diagnostic_warning_count",
-    "_coefficient_decode_diagnostic_warning_flags",
-    "_coefficient_decode_diagnostic_decoded_rows",
-    "_coefficient_decode_diagnostic_expected_rows",
-  ];
-  if (
-    requiredExports.some(
-      (name) => typeof Reflect.get(codec, name) !== "function",
-    )
-  ) {
-    return unavailableDiagnostic(
-      "The JPEG codec must be rebuilt to provide decode diagnostics.",
     );
   }
 
@@ -173,8 +132,9 @@ workerScope.addEventListener(
     }
 
     const diagnostic = await diagnoseDecode(result.value.bytes);
-    const output = new ArrayBuffer(result.value.bytes.byteLength);
-    new Uint8Array(output).set(result.value.bytes);
+    // corruptEntropyScan owns an exactly sized Uint8Array allocation. Transfer
+    // that allocation directly; the worker no longer needs its bytes.
+    const output = result.value.bytes.buffer as ArrayBuffer;
     workerScope.postMessage(
       {
         id: event.data.id,

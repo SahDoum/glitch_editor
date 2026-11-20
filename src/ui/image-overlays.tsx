@@ -1,3 +1,5 @@
+import { useMemo, useSyncExternalStore } from "react";
+import type { CanvasVisualState } from "./canvas-visual-state";
 import {
   previewDimensions,
   previewOrientationTransform,
@@ -52,31 +54,32 @@ export function ImageOverlays({
     mask?.width === inspection.width && mask.height === inspection.height
       ? mask.shapes.some((shape) => shape.kind === "brush")
       : false;
-  const activeBrushCoverage =
-    mask && hasActiveBrush
-      ? getMaskBlockCoveragePath(mask, inspection, componentId)
-      : null;
-  const brushPoints = brushDraft.flat();
-  const draftBrushMask: SpatialMask | null =
-    brushPoints.length > 0
-      ? {
-          schemaVersion: 1,
-          id: "brush-draft",
-          width: inspection.width,
-          height: inspection.height,
-          shapes: [
-            {
-              kind: "brush",
-              mode: "add",
-              radius: brushRadius,
-              points: brushPoints,
-            },
-          ],
-        }
-      : null;
-  const draftBrushCoverage = draftBrushMask
-    ? getMaskBlockCoveragePath(draftBrushMask, inspection, componentId)
-    : null;
+  const activeBrushCoverage = useMemo(
+    () =>
+      mask && hasActiveBrush
+        ? getMaskBlockCoveragePath(mask, inspection, componentId)
+        : null,
+    [mask, hasActiveBrush, inspection, componentId],
+  );
+  const draftBrushCoverage = useMemo(() => {
+    const brushPoints = brushDraft.flat();
+    if (brushPoints.length === 0) return null;
+    const draftBrushMask: SpatialMask = {
+      schemaVersion: 1,
+      id: "brush-draft",
+      width: inspection.width,
+      height: inspection.height,
+      shapes: [
+        {
+          kind: "brush",
+          mode: "add",
+          radius: brushRadius,
+          points: brushPoints,
+        },
+      ],
+    };
+    return getMaskBlockCoveragePath(draftBrushMask, inspection, componentId);
+  }, [brushDraft, brushRadius, inspection, componentId]);
 
   const dimensions = previewDimensions(inspection, orientation);
   return (
@@ -213,3 +216,45 @@ export function ImageOverlays({
     </svg>
   );
 }
+
+export function CanvasOverlays({
+  visualState,
+  showAreaOutline,
+  keyboardFocused,
+  ...props
+}: Omit<
+  Parameters<typeof ImageOverlays>[0],
+  "brushDraft" | "brushCursorPoint"
+> & {
+  visualState: CanvasVisualState;
+  showAreaOutline: boolean;
+  keyboardFocused: boolean;
+}) {
+  const visual = useSyncExternalStore(
+    visualState.subscribe,
+    visualState.getSnapshot,
+    visualState.getSnapshot,
+  );
+  return (
+    <ImageOverlays
+      {...props}
+      selection={
+        showAreaOutline && visual.draft?.kind === "rectangle"
+          ? visual.draft.selection
+          : props.selection
+      }
+      brushDraft={
+        visual.draft?.kind === "brush" ? visual.draft.strokes : NO_BRUSH_DRAFT
+      }
+      brushCursorPoint={visual.hoverPoint}
+      brushRadius={
+        visual.draft?.kind === "brush" ? visual.draft.radius : props.brushRadius
+      }
+      keyboardCursor={
+        keyboardFocused ? (visual.keyboardCursor ?? props.keyboardCursor) : null
+      }
+    />
+  );
+}
+
+const NO_BRUSH_DRAFT: readonly (readonly ImagePoint[])[] = Object.freeze([]);

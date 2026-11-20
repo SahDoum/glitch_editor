@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_BRUSH_POINTS,
   createFullImageMask,
   createRectangleSelection,
   createSpatialMask,
@@ -170,6 +171,19 @@ describe("spatial selections and masks", () => {
     if (!copied.ok) throw new Error(copied.error.message);
     expect(copied.value.shapes).toEqual(mask.value.shapes);
     expect(copied.value.id).not.toBe(mask.value.id);
+  });
+
+  it("enforces one total brush point budget across disconnected segments", () => {
+    const segment = Array.from({ length: MAX_BRUSH_POINTS / 2 }, () => ({
+      x: 4,
+      y: 4,
+    }));
+    const valid = createBrushMaskFromStrokes([segment, segment], 2, 8, 8);
+    if (!valid.ok) throw new Error(valid.error.message);
+    expect(isSpatialMask(valid.value)).toBe(true);
+    expect(
+      createBrushMaskFromStrokes([segment, segment, [{ x: 4, y: 4 }]], 2, 8, 8),
+    ).toMatchObject({ ok: false, error: { code: "INVALID_INPUT" } });
   });
 
   it("copies rectangle and brush snapshots with new identities and independent geometry", () => {

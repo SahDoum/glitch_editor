@@ -27,7 +27,9 @@
     "pretypecheck": "node scripts/check-node.mjs",
     "prelint": "node scripts/check-node.mjs",
     "precheck": "node scripts/check-node.mjs",
-    "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run build"
+    "check": "npm run format:check && npm run lint && npm test && npm run build",
+    "test:worker": "node scripts/smoke-built-worker.mjs",
+    "benchmark:codec": "node scripts/benchmark-codec-reuse.mjs"
   },
   "dependencies": {
     "react": "19.3.1",

@@ -1,51 +1,42 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
+  DctBasisMatrix,
   getDctFrequencyChoice,
-  isDctCoefficientTargeted,
 } from "../../src/ui/dct-basis-matrix";
+import { getCoefficientFrequencyChoices } from "../../src/ui/tool-controls";
 
-describe("DCT frequency selector", () => {
-  it("maps coefficient coordinates to the corresponding selectable zone", () => {
+describe("DCT basis matrix", () => {
+  it("maps basis cells to the same DC / AC frequency zones", () => {
     expect(getDctFrequencyChoice(0, 0)).toBe("dc");
     expect(getDctFrequencyChoice(1, 1)).toBe("low");
     expect(getDctFrequencyChoice(3, 2)).toBe("mid");
     expect(getDctFrequencyChoice(7, 7)).toBe("high");
   });
 
-  it("maps the actual AC band ranges and special operation targets", () => {
-    expect(isDctCoefficientTargeted(0, 0, { kind: "dc" })).toBe(true);
-    expect(isDctCoefficientTargeted(1, 1, { kind: "band", band: "low" })).toBe(
-      true,
+  it("renders all 64 cells with DC selected for Zero and unavailable for AC-only isolation", () => {
+    const zero = renderToStaticMarkup(
+      createElement(DctBasisMatrix, {
+        selectedChoice: "dc",
+        availableChoices: getCoefficientFrequencyChoices("zero"),
+        onSelect: () => {},
+      }),
     );
-    expect(isDctCoefficientTargeted(3, 3, { kind: "band", band: "mid" })).toBe(
-      false,
+    expect(zero.match(/role="gridcell"/g)).toHaveLength(64);
+    expect(zero.match(/aria-pressed="true"/g)).toHaveLength(1);
+    expect(zero).toContain('aria-label="u 0, v 0, DC" aria-pressed="true"');
+    const isolation = renderToStaticMarkup(
+      createElement(DctBasisMatrix, {
+        selectedChoice: "low",
+        availableChoices: getCoefficientFrequencyChoices("isolate"),
+        onSelect: () => {},
+      }),
     );
-    expect(
-      isDctCoefficientTargeted(3, 3, { kind: "low-pass", cutoff: 5 }),
-    ).toBe(true);
-    expect(
-      isDctCoefficientTargeted(0, 4, {
-        kind: "engraving",
-        direction: "horizontal",
-      }),
-    ).toBe(true);
-    expect(
-      isDctCoefficientTargeted(0, 4, {
-        kind: "engraving",
-        direction: "vertical",
-      }),
-    ).toBe(false);
-    expect(
-      isDctCoefficientTargeted(4, 0, {
-        kind: "engraving",
-        direction: "vertical",
-      }),
-    ).toBe(true);
-    expect(
-      isDctCoefficientTargeted(4, 0, {
-        kind: "engraving",
-        direction: "horizontal",
-      }),
-    ).toBe(false);
+    expect(isolation).toContain(
+      'aria-label="u 0, v 0, DC" aria-pressed="false" disabled=""',
+    );
+    expect(isolation.match(/aria-pressed="true"/g)).toHaveLength(5);
+    expect(isolation).toContain("AC low");
   });
 });

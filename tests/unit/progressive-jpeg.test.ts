@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { inspectJpeg } from "../../src/jpeg/inspect";
@@ -11,6 +10,11 @@ import {
   withOpenCodec,
   type CodecSession,
 } from "../helpers/codec-harness";
+
+import {
+  decodeIndependently,
+  independentDecoder,
+} from "../helpers/independent-decoder";
 
 async function fixture(file: string): Promise<Uint8Array> {
   return new Uint8Array(
@@ -54,12 +58,8 @@ async function coefficientsOf(bytes: Uint8Array): Promise<Int16Array[]> {
   return result.value!;
 }
 
-function decodeToPixels(bytes: Uint8Array): Buffer | null {
-  const result = spawnSync("djpeg", ["-pnm"], {
-    input: bytes,
-    maxBuffer: 16 * 1024 * 1024,
-  });
-  if (result.error) return null;
+function decodeToPixels(bytes: Uint8Array): Buffer {
+  const result = decodeIndependently(bytes);
   expect(result.status, result.stderr?.toString()).toBe(0);
   return result.stdout;
 }
@@ -155,13 +155,12 @@ describe("progressive JPEG export", () => {
     },
   );
 
-  it.each(FIXTURES)(
+  it.skipIf(!independentDecoder).each(FIXTURES)(
     "%s: an independent decoder renders identical pixels for both output modes",
     async (name) => {
       const source = await fixture(`${name}-progressive.jpg`);
       const baseline = decodeToPixels(await reencode(source, "baseline"));
       const progressive = decodeToPixels(await reencode(source, "progressive"));
-      if (baseline === null || progressive === null) return;
       expect(progressive.length).toBeGreaterThan(0);
       expect(progressive.equals(baseline)).toBe(true);
     },
@@ -244,14 +243,20 @@ describe("operations on progressive inputs", () => {
           expect(inspectJpeg(output).ok).toBe(true);
         }
       }
-
-      const pixelsBaseline = decodeToPixels(reference);
-      const pixelsProgressive = decodeToPixels(
-        await reencode(progressiveSource, "progressive", edit),
-      );
-      if (pixelsBaseline && pixelsProgressive) {
-        expect(pixelsProgressive.equals(pixelsBaseline)).toBe(true);
-      }
     },
   );
 });
+
+// Pixel equivalence is an independent check, distinct from coefficient parity.
+it.skipIf(!independentDecoder)(
+  "independently decodes edited baseline and progressive output identically",
+  async () => {
+    const source = await fixture("synthetic-texture-420-progressive.jpg");
+    const edit = (session: CodecSession) => {
+      expect(applyToAllBlocks(session, 0, SCALE, AC, BAND_ALL, 2, 1)).toBe(0);
+    };
+    expect(decodeToPixels(await reencode(source, "progressive", edit))).toEqual(
+      decodeToPixels(await reencode(source, "baseline", edit)),
+    );
+  },
+);

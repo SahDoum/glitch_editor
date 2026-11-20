@@ -14,7 +14,6 @@ export default defineConfig(({ mode }) => {
     test: {
       include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
       pool: "threads",
-      maxWorkers: 1,
       fileParallelism: false,
     },
   };

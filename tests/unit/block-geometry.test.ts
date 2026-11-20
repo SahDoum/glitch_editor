@@ -561,6 +561,104 @@ describe("JPEG block coordinates", () => {
     ).toMatchObject({ ok: true, value: new Uint8Array([0]) });
   });
 
+  it("makes intersection and half-area brush policies explicit", () => {
+    const geometry = {
+      width: 8,
+      height: 8,
+      components: [
+        {
+          id: 1,
+          horizontalSampling: 1,
+          verticalSampling: 1,
+          quantizationTable: 0,
+        },
+      ],
+    };
+    const mask = createBrushMask([{ x: 4, y: 4 }], 2, 8, 8);
+    if (!mask.ok) throw new Error(mask.error.message);
+    expect(
+      getMaskBlockCoverage(mask.value, geometry, 1, "any-intersection"),
+    ).toEqual({ ok: true, value: Uint8Array.of(1) });
+    expect(
+      getMaskBlockCoverage(mask.value, geometry, 1, "at-least-half"),
+    ).toEqual({ ok: true, value: Uint8Array.of(0) });
+  });
+
+  it("matches a full visible-grid rectangle reference for fractional edges and subsampling", () => {
+    const geometry = {
+      width: 41,
+      height: 27,
+      components: [
+        {
+          id: 1,
+          horizontalSampling: 2,
+          verticalSampling: 2,
+          quantizationTable: 0,
+        },
+        {
+          id: 2,
+          horizontalSampling: 1,
+          verticalSampling: 1,
+          quantizationTable: 1,
+        },
+      ],
+    };
+    let state = 123;
+    const random = () => {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      return state / 0x100000000;
+    };
+    for (let trial = 0; trial < 1000; trial += 1) {
+      const selection = createRectangleSelection(
+        random() * 41,
+        random() * 27,
+        random() * 41,
+        random() * 27,
+        41,
+        27,
+      );
+      if (!selection.ok || !selection.value) throw new Error("selection");
+      const mask = createSpatialMask(selection.value, 41, 27);
+      if (!mask.ok) throw new Error(mask.error.message);
+      const shape = selection.value;
+      for (const component of geometry.components) {
+        const size = component.id === 1 ? 8 : 16;
+        const columns = Math.ceil(41 / size),
+          rows = Math.ceil(27 / size);
+        const expected = new Uint8Array(columns * rows);
+        for (let y = 0; y < rows; y += 1) {
+          for (let x = 0; x < columns; x += 1) {
+            const left = x * size,
+              top = y * size;
+            const right = Math.min(41, left + size),
+              bottom = Math.min(27, top + size);
+            const overlap =
+              Math.max(
+                0,
+                Math.min(right, shape.x + shape.width) -
+                  Math.max(left, shape.x),
+              ) *
+              Math.max(
+                0,
+                Math.min(bottom, shape.y + shape.height) -
+                  Math.max(top, shape.y),
+              );
+            expected[y * columns + x] =
+              overlap >= ((right - left) * (bottom - top)) / 2 ? 1 : 0;
+          }
+        }
+        expect(
+          getMaskBlockCoverage(
+            mask.value,
+            geometry,
+            component.id,
+            "at-least-half",
+          ),
+        ).toEqual({ ok: true, value: expected });
+      }
+    }
+  });
+
   it("uses sampled brush coverage when selecting blocks for permutation", async () => {
     const inspection = inspectJpeg(
       await fixtureBytes("synthetic-color-420.jpg"),

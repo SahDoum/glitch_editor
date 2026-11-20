@@ -1,0 +1,1429 @@
+{
+  "source": "e497517:src/jpeg/scan-corruption.ts; unchanged legacy algorithm",
+  "cases": [
+    {
+      "fixture": "synthetic-color-420.jpg",
+      "stages": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12
+        }
+      ],
+      "bytesBase64": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAAQABADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDEr6jorx2vkM7zv/XPk9z2fs79ea/NbyVrWK4a4a2t+1/e2tbpfe/mf//Z",
+      "reports": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 2
+        }
+      ]
+    },
+    {
+      "fixture": "synthetic-color-420.jpg",
+      "stages": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43
+        }
+      ],
+      "bytesBase64": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAAQABADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDEr6jorx2vkM7zv/XPk9z2fs79ea/Nb/5rWK4a4a2t+1/e2snpfe/mf//Z",
+      "reports": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 11
+        }
+      ]
+    },
+    {
+      "fixture": "synthetic-color-420.jpg",
+      "stages": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 74
+        }
+      ],
+      "bytesBase64": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAAQABADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDEr6jorx2vkM7zv/XPk9z2ft79ea/Nb/5rWK4a4a2t+1/e2snpfc/mf//Z",
+      "reports": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 11
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 74,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 2
+        }
+      ]
+    },
+    {
+      "fixture": "synthetic-color-420.jpg",
+      "stages": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 74
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 105
+        }
+      ],
+      "bytesBase64": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAAQABADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDEr8rorx2vkM7zv/XPk9z2ft79ea/Nb/5rWK4a4a2t+1/e2j/pfc/mf//Z",
+      "reports": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 11
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 74,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 105,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 9
+        }
+      ]
+    },
+    {
+      "fixture": "synthetic-color-420.jpg",
+      "stages": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 74
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 105
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 136
+        }
+      ],
+      "bytesBase64": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAAQABADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDEr0rorx2vkM7zP/XPk9z2ft79ea/Nb/5rWK4a4a2t+1/e2j/pfc/mf//Z",
+      "reports": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 11
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 74,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 105,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 9
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 136,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 2
+        }
+      ]
+    },
+    {
+      "fixture": "synthetic-color-420.jpg",
+      "stages": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 74
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 105
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 136
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 167
+        }
+      ],
+      "bytesBase64": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAAQABADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDEr0rorx2vkM7zP/XPk9z2ft79ea/Nb/5rWK4a4a2t+1/e2srpfc/mI//Z",
+      "reports": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 11
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 74,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 105,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 9
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 136,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 167,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 10
+        }
+      ]
+    },
+    {
+      "fixture": "synthetic-color-420.jpg",
+      "stages": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 74
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 105
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 136
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 167
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 198
+        }
+      ],
+      "bytesBase64": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAAQABADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDEr0rorx2vkM7zP/XPk9z3ft79ea/Nb/prWK4a4a2t+1/e2srpfc/mI//Z",
+      "reports": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 11
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 74,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 105,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 9
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 136,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 167,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 10
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 198,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 2
+        }
+      ]
+    },
+    {
+      "fixture": "synthetic-color-420.jpg",
+      "stages": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 74
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 105
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 136
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 167
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 198
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 229
+        }
+      ],
+      "bytesBase64": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAAQABADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDEr0rorx2vkM7zP/XPk9z3yN79ea/Nb/prWK4a4Uit+1/e2srpfc/mI//Z",
+      "reports": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 11
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 74,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 105,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 9
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 136,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 167,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 10
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 198,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 229,
+          "scanStartOffset": 623,
+          "scanEndOffset": 664,
+          "changedBytes": 2,
+          "changedBits": 10
+        }
+      ]
+    },
+    {
+      "fixture": "synthetic-grayscale.jpg",
+      "stages": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12
+        }
+      ],
+      "bytesBase64": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/wAALCAAIAAgBAREA/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9oACAEBAAA/AE/4ZX/6h2/Dlf/Z",
+      "reports": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 2
+        }
+      ]
+    },
+    {
+      "fixture": "synthetic-grayscale.jpg",
+      "stages": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43
+        }
+      ],
+      "bytesBase64": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/wAALCAAIAAgBAREA/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9oACAEBAAA/AE/4ZeD6h2/DD//Z",
+      "reports": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 10
+        }
+      ]
+    },
+    {
+      "fixture": "synthetic-grayscale.jpg",
+      "stages": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 74
+        }
+      ],
+      "bytesBase64": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/wAALCAAIAAgBAREA/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9oACAEBAAA/AE+4ZOD6h2/DD//Z",
+      "reports": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 10
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 74,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 2
+        }
+      ]
+    },
+    {
+      "fixture": "synthetic-grayscale.jpg",
+      "stages": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 74
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 105
+        }
+      ],
+      "bytesBase64": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/wAALCAAIAAgBAREA/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9oACAEBAAA/AE+46ZT6h2/DD//Z",
+      "reports": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 10
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 74,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 105,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 8
+        }
+      ]
+    },
+    {
+      "fixture": "synthetic-grayscale.jpg",
+      "stages": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 74
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 105
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 136
+        }
+      ],
+      "bytesBase64": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/wAALCAAIAAgBAREA/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9oACAEBAAA/AM+46JT6h2/DD//Z",
+      "reports": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 10
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 74,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 105,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 8
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 136,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 2
+        }
+      ]
+    },
+    {
+      "fixture": "synthetic-grayscale.jpg",
+      "stages": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 74
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 105
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 136
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 167
+        }
+      ],
+      "bytesBase64": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/wAALCAAIAAgBAREA/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9oACAEBAAA/AM+46JT6h4DDPv/Z",
+      "reports": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 10
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 74,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 105,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 8
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 136,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 167,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 10
+        }
+      ]
+    },
+    {
+      "fixture": "synthetic-grayscale.jpg",
+      "stages": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 74
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 105
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 136
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 167
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 198
+        }
+      ],
+      "bytesBase64": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/wAALCAAIAAgBAREA/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9oACAEBAAA/AM+46JTqhoDDPv/Z",
+      "reports": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 10
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 74,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 105,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 8
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 136,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 167,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 10
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 198,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 2
+        }
+      ]
+    },
+    {
+      "fixture": "synthetic-grayscale.jpg",
+      "stages": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 74
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 105
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 136
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 167
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 198
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 229
+        }
+      ],
+      "bytesBase64": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/wAALCAAIAAgBAREA/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9oACAEBAAA/ACG46JTqhoBAPv/Z",
+      "reports": [
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 12,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 43,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 10
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 74,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 105,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 8
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 136,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 167,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 10
+        },
+        {
+          "mode": "bit-flip",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 198,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 2
+        },
+        {
+          "mode": "byte-replacement",
+          "count": 2,
+          "rangeStart": 0,
+          "rangeEnd": 1,
+          "seed": 229,
+          "scanStartOffset": 328,
+          "scanEndOffset": 337,
+          "changedBytes": 2,
+          "changedBits": 9
+        }
+      ]
+    }
+  ]
+}

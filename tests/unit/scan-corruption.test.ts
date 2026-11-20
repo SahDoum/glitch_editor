@@ -1,6 +1,6 @@
-import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import golden from "../fixtures/scan-corruption-golden.json";
 import { ScanCorruptionHistory } from "../../src/application/scan-corruption";
 import { inspectJpeg } from "../../src/jpeg/inspect";
 import {
@@ -14,6 +14,11 @@ import {
   MAX_SCAN_CORRUPTION_STAGES,
   type ScanCorruptionParameters,
 } from "../../src/jpeg/scan-corruption";
+
+import {
+  decodeIndependently,
+  independentDecoder,
+} from "../helpers/independent-decoder";
 
 async function fixtureBytes(fileName = "synthetic-color-420.jpg") {
   return new Uint8Array(
@@ -90,19 +95,16 @@ describe("entropy-coded scan corruption", () => {
     expect(source).toEqual(before);
   });
 
-  it.skipIf(!process.env.JPEG_INDEPENDENT_DECODER)(
-    "keeps a clean JPEG independently decodable and retains a seeded corruption that fails decoding",
+  it.skipIf(!independentDecoder)(
+    "keeps the clean JPEG decodable and retains corrupted bytes across differing decoder recovery",
     async () => {
-      const decoder = process.env.JPEG_INDEPENDENT_DECODER!;
       const cleanBytes = await fixtureBytes();
+      const original = cleanBytes.slice();
       const decode = (bytes: Uint8Array) =>
-        spawnSync(decoder, ["-outfile", "/dev/null", "/dev/stdin"], {
-          input: bytes,
-          encoding: "utf8",
-        });
+        decodeIndependently(bytes, ["-outfile", "/dev/null", "/dev/stdin"]);
       const cleanDecode = decode(cleanBytes);
       expect(cleanDecode.error).toBeUndefined();
-      expect(cleanDecode.status, cleanDecode.stderr).toBe(0);
+      expect(cleanDecode.status, cleanDecode.stderr.toString()).toBe(0);
 
       const corruption = {
         ...baseParameters,
@@ -116,12 +118,18 @@ describe("entropy-coded scan corruption", () => {
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       const retainedCorruptBytes = result.value.bytes;
+      const expectedCorruptBytes = retainedCorruptBytes.slice();
       const corruptedDecode = decode(retainedCorruptBytes);
       expect(corruptedDecode.error).toBeUndefined();
-      expect(
+      // Recovery is decoder-specific. djpeg exits 0 on success, 1 on a
+      // decoding error and 2 for warnings; adapters use the same exit contract.
+      // Process launch errors, signals and unrelated exit codes remain failures.
+      expect(corruptedDecode.signal).toBeNull();
+      expect([0, 1, 2], corruptedDecode.stderr.toString()).toContain(
         corruptedDecode.status,
-        "The corrupted JPEG must fail decoding",
-      ).not.toBe(0);
+      );
+      expect(retainedCorruptBytes).toEqual(expectedCorruptBytes);
+      expect(cleanBytes).toEqual(original);
       expect(retainedCorruptBytes).not.toEqual(cleanBytes);
       expect(retainedCorruptBytes).toHaveLength(cleanBytes.byteLength);
       expect(
@@ -135,16 +143,17 @@ describe("entropy-coded scan corruption", () => {
       const undoBytes = cleanBytes.slice();
       const undoDecode = decode(undoBytes);
       expect(undoDecode.error).toBeUndefined();
-      expect(undoDecode.status, corruptedDecode.stderr).toBe(0);
+      expect(undoDecode.status, undoDecode.stderr.toString()).toBe(0);
       expect(undoBytes).toEqual(cleanBytes);
       expect(history.canRedo).toBe(true);
       expect(history.commitRedo()).toBe(true);
       const redoBytes = corruptEntropyScan(cleanBytes, history.activeStages);
       expect(redoBytes.ok).toBe(true);
       if (!redoBytes.ok) return;
-      expect(redoBytes.value.bytes).toEqual(retainedCorruptBytes);
+      expect(redoBytes.value.bytes).toEqual(expectedCorruptBytes);
+      expect(cleanBytes).toEqual(original);
       console.info(
-        `Independent decoder: clean fixture decoded; Scan Corrupt seed ${corruption.seed} produced a retained ${retainedCorruptBytes.byteLength}-byte JPEG that failed decoding.`,
+        `Independent decoder: clean fixture decoded; Scan Corrupt seed ${corruption.seed} retained ${retainedCorruptBytes.byteLength} exact corrupted bytes; recovery exit status ${corruptedDecode.status}.`,
       );
     },
   );
@@ -281,6 +290,53 @@ describe("entropy-coded scan corruption", () => {
     expect(first.value.bytes).toEqual(second.value.bytes);
     expect(first.value.reports.map(({ seed }) => seed)).toEqual([12, 77]);
     expectInspected(first.value.bytes);
+  });
+
+  it.each(golden.cases)(
+    "matches legacy bytes and reports: $fixture, $stages.length stages",
+    async ({ fixture, stages, bytesBase64, reports }) => {
+      const source = await fixtureBytes(fixture);
+      const original = source.slice();
+      expect(
+        stages.every(
+          (stage) =>
+            stage.mode === "bit-flip" || stage.mode === "byte-replacement",
+        ),
+      ).toBe(true);
+      const result = corruptEntropyScan(
+        source,
+        stages as ScanCorruptionParameters[],
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error(result.error.message);
+      expect(result.value.bytes).toEqual(
+        new Uint8Array(Buffer.from(bytesBase64, "base64")),
+      );
+      expect(result.value.reports).toEqual(reports);
+      expect(source).toEqual(original);
+    },
+  );
+
+  it("does not publish partial mutations when a later stage has too few eligible bytes", async () => {
+    const source = await fixtureBytes();
+    const original = source.slice();
+    const result = corruptEntropyScan(source, [
+      baseParameters,
+      {
+        ...baseParameters,
+        count: 256,
+        rangeStart: 0.99,
+      },
+    ]);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_INPUT" },
+    });
+    expect(result).not.toHaveProperty("value");
+    expect(source).toEqual(original);
+    expect(corruptEntropyScan(source, [baseParameters])).toEqual(
+      corruptEntropyScan(original, [baseParameters]),
+    );
   });
 
   it("rejects malformed, trailing, unsupported, or invalid corruption requests", async () => {

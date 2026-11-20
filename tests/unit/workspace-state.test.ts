@@ -5,7 +5,6 @@ import {
 } from "../../src/document/masks";
 import {
   initialWorkspaceState,
-  getEffectMask,
   getHistoryDisplayEntries,
   getWorkspaceOverlayVisibility,
   getWorkspaceShortcut,
@@ -180,105 +179,30 @@ describe("workspace state", () => {
     );
   });
 
-  it("selects named masks independently from the mask draft", () => {
-    const mask = createSpatialMask(
-      {
-        kind: "rectangle",
-        coordinateSpace: "image-pixel",
-        x: 0,
-        y: 0,
-        width: 8,
-        height: 8,
-      },
-      16,
-      16,
-    );
-    if (!mask.ok) throw new Error("Expected mask");
+  it("uses the current draft for mask effects and preserves it across gesture effects", () => {
+    const rectangle = createRectangleSelection(1, 2, 8, 9, 16, 16);
+    if (!rectangle.ok || !rectangle.value) throw new Error("selection");
+    const mask = createSpatialMask(rectangle.value, 16, 16);
+    if (!mask.ok) throw new Error("mask");
     const draft = workspaceReducer(initialWorkspaceState, {
       type: "set-selection",
       selection: mask.value,
     });
-    const selected = workspaceReducer(draft, {
-      type: "select-mask",
-      maskId: "saved-mask-id",
-    });
-    const effectTool = workspaceReducer(selected, {
+    const gesture = workspaceReducer(draft, {
       type: "activate-effect",
-      effectId: "pixelate",
+      effectId: "block-transfer",
+      usesMaskTools: false,
+    });
+    const shuffle = workspaceReducer(gesture, {
+      type: "activate-effect",
+      effectId: "block-shuffle",
       usesMaskTools: true,
     });
-
-    expect(effectTool.selectionMask).toBe(mask.value);
-    expect(effectTool.activeMaskId).toBe("saved-mask-id");
-    expect(getWorkspaceOverlayVisibility("brush")).toEqual({ mask: true });
+    expect(gesture.selectionMask).toBe(mask.value);
+    expect(shuffle.selectionMask).toBe(mask.value);
+    expect(shuffle.activeTool).toBe("all");
   });
-
-  it("uses the latest draft by default and allows explicitly selecting a saved mask", () => {
-    const first = createSpatialMask(
-      {
-        kind: "rectangle",
-        coordinateSpace: "image-pixel",
-        x: 0,
-        y: 0,
-        width: 8,
-        height: 8,
-      },
-      16,
-      16,
-    );
-    const second = createSpatialMask(
-      {
-        kind: "rectangle",
-        coordinateSpace: "image-pixel",
-        x: 8,
-        y: 8,
-        width: 8,
-        height: 8,
-      },
-      16,
-      16,
-    );
-    if (!first.ok || !second.ok) throw new Error("Expected masks");
-    const saved = [{ name: "Saved", mask: first.value }];
-    const draft = workspaceReducer(initialWorkspaceState, {
-      type: "set-selection",
-      selection: second.value,
-    });
-    for (const effectId of ["pixelate", "block-shuffle"]) {
-      const effect = workspaceReducer(draft, {
-        type: "activate-effect",
-        effectId,
-        usesMaskTools: true,
-      });
-      expect(getEffectMask(effect, saved)).toBe(second.value);
-    }
-
-    const selected = workspaceReducer(draft, {
-      type: "select-mask",
-      maskId: first.value.id,
-    });
-    expect(getEffectMask(selected, saved)).toBe(first.value);
-    expect(getEffectMask(selected, [])).toBeNull();
-    const switchedBack = workspaceReducer(selected, {
-      type: "select-mask",
-      maskId: null,
-    });
-    expect(getEffectMask(switchedBack, saved)).toBe(second.value);
-    const newDraft = workspaceReducer(selected, {
-      type: "set-selection",
-      selection: second.value,
-    });
-    expect(newDraft.activeMaskId).toBeNull();
-    expect(getEffectMask(newDraft, saved)).toBe(second.value);
-    expect(
-      getEffectMask(
-        workspaceReducer(newDraft, { type: "set-selection", selection: null }),
-        saved,
-      ),
-    ).toBeNull();
-  });
-
-  it("resets document-specific state but keeps the active effect", () => {
+  it("resets document state and preserves gesture tool selection", () => {
     const changed = {
       ...initialWorkspaceState,
       activeEffectId: "pixelate",

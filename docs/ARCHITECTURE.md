@@ -71,6 +71,11 @@ toolbar views and optional controls. Effects declare allowed tool IDs. The
 toolbar and keyboard shortcuts use the same activation path. The editor
 creates one instance of each registered controller per workspace.
 
+Pointer-frequency draft, hover, and keyboard-cursor presentation updates live
+in `CanvasVisualState`; only `CanvasOverlays` subscribes to them. Committed mask
+projection is memoized by immutable mask and component geometry. Brush sampling
+frequency is unchanged.
+
 The UI normalizes pointer input to original JPEG frame coordinates and binds
 one captured pointer to the gesture from the active interaction. All, Brush,
 Select, pan and the effect adapter implement the same contract. It exposes
@@ -157,6 +162,15 @@ reusable component in `ui/dct-basis-matrix.tsx`.
 
 Coordinates import, document lifecycle, selection, operation dispatch, preview requests, export, and error presentation.
 
+`EditorDocumentSession` owns coefficient-history transitions and the terminal
+Scan Corrupt phase. It validates transitions before mutation, captures one
+snapshot for Save before asynchronous work, and prepares immutable scan lists
+whose commits are single-use and bound to the current session/history. Undo and
+Redo use the same transition owner. Worker cancellation remains active through
+browser decoding; an obsolete completion cannot publish into a new session.
+Progressive export uses one synchronous in-flight guard and is cancelled when
+opening another file.
+
 ### `document/`
 
 Owns immutable source assets, document metadata, current editable representation, masks/selections, operation stack, and revision identifiers.
@@ -167,8 +181,8 @@ empty local area, and temporarily switching to a gesture or panel effect
 keeps the local area and tool. Opening a project restores the tool from
 the geometry of the saved mask.
 The interface uses the current draft for mask-consuming JPEG effects and no
-longer exposes named masks. The underlying named-mask operation remains
-available for compatibility with existing operation data. Effects embed an
+longer exposes named masks. The current project schema accepts only the registered JPEG operation kinds;
+legacy named-mask and multi-step recipe commands are rejected. Effects embed an
 immutable mask snapshot and ID in their parameters; editing the draft cannot
 alter an existing operation. History can restore a snapshot as a
 newly identified draft without modifying the operation or creating a history
@@ -186,8 +200,10 @@ snapped pixels as block or MCU coordinates. Brush overlays render each full
 visible component DCT block selected by the existing mask-coverage mapping,
 without circular edges or partial blocks. The DCT/MCU setting controls sample
 snapping; the overlay therefore shows the component blocks an effect will
-change. This is a view of the existing image-pixel mask and does not change
-its stored shape or operation coverage.
+change. Coverage is explicit: ordinary coefficient edits use any intersection, while
+Shift and Shuffle require at least half of the visible block area. Rectangle
+coverage visits only intersecting rows and columns, accounting for partial edge
+blocks. These policies preserve existing operation semantics.
 
 The workspace has an Effects catalog, canvas, and contextual effect
 settings. History opens in the settings column without discarding the form.
@@ -198,7 +214,8 @@ Import prepares the replacement and replays any project operations before
 replacing the current document.
 
 Coefficient effect settings are validated and saved separately per effect in
-browser `localStorage`; they are not serialized into `.jpglitch` projects.
+browser `localStorage`; both reading and writing validate the complete settings
+snapshot before replacing stored data. They are not serialized into `.jpglitch` projects.
 Applied operations retain their own immutable parameter snapshots in History.
 Other UI settings are not guaranteed to persist across reloads.
 
@@ -237,9 +254,12 @@ The current `.jpglitch` version 2 format is JSON with an embedded Base64 copy
 of the immutable original JPEG, its SHA-256 digest and byte length, versioned
 operation records, the current draft mask, and terminal Scan Corrupt
 parameters. Project input is size-bounded and parsed, decoded, and integrity
-checked in a Web Worker before its source is passed through the normal JPEG
-import and inspection path. Reopening validates operations against the
-registered definitions and replays them from the embedded source. The project
+checked in a Web Worker before its source is passed through the shared JPEG import path. The verified source carries its inspection together
+with the exact bytes and SHA-256; import reuses it and computes orientation,
+color interpretation, and browser preview without another hash or parse. Reopening validates operations against
+the static operation-controller table and validates the complete active plan
+against the embedded JPEG before restoring the session. The same validation
+runs before writing a project; size limits use UTF-8 bytes in both directions. The project
 does not serialize preview bytes or an undo/redo timeline; JPEG output is
 recomputed using the recorded application and codec versions.
 
@@ -263,14 +283,15 @@ is also expected on re-encoded previews. Invalid or ambiguous EXIF orientation
 metadata is rejected rather than risking edits in the wrong location.
 
 `OriginalAsset` keeps private byte storage and exposes copy-returning reads.
-The immutable editable document tracks its monotonic revision, named
-image-pixel masks, and versioned operation history separately from the source
+The immutable editable document tracks its monotonic revision
+and versioned operation history separately from the source
 JPEG. A spatial mask is mapped to visible component DCT blocks only in the
 JPEG worker; it is not itself a DCT-block coordinate or coefficient array.
-User experiment recipes are validated parameter data stored in local browser
-storage, not executable code or project-document state. A multi-step recipe
-is represented by one history entry and expands to its ordered coefficient
-operations during document replay.
+Coefficient effect steps are validated parameter data. Old custom-brush and
+recipe persistence paths have been removed; existing browser storage is left
+untouched. A mask keeps its version-1 single-shape representation: one rectangle
+or one brush containing sampled centers from all disconnected stroke segments.
+Flattening sampled centers does not interpolate across gaps.
 
 ## 4. JPEG engine boundary
 
@@ -307,6 +328,15 @@ registry entry. The worker validates operations and work limits, then resolves
 each `kind` to that controller in order. The controller maps image-pixel masks
 to component DCT-block masks and owns the WASM call and temporary-memory
 cleanup. Functions and controller instances do not cross `postMessage`.
+
+Both codec workers load the same versioned JS/WASM URLs under the configured
+publication base path and validate the required ABI at the loading boundary.
+The temporary WASM input allocation is freed immediately after opening because
+the bridge has copied it. Production encoding still opens coefficients for each
+request: the current bridge finishes decompression during writing and cannot
+restore a coefficient checkpoint through its present ABI. Reproducible reuse
+measurements and the checkpoint feasibility result are recorded in
+[the codec benchmark](../.agent-tasks/codec-performance/BENCHMARK.md).
 
 The Scan Corrupt worker reuses the pinned codec to decode the corrupted output
 one scanline at a time. It reports rows returned, decoder warnings, and
@@ -355,13 +385,17 @@ Operation definitions should provide:
 
 Do not assume operations commute. Reordering requires recomputation of downstream results.
 
-The current operation stack uses a version-1 serialized schema and resolves
-each operation by exact type/version in `OperationRegistry`. Every stack
-change replays enabled operations from the initial editable representation in
-order; failed validation or execution leaves the prior document intact.
-Undo/redo stores immutable document frames, while document revisions continue
-to increase so preview results from earlier revisions cannot be mistaken for
-current output. A supplied 32-bit seed creates a repeatable random stream.
+JPEG history uses the static, exhaustive operation-controller table keyed by
+`JpegGlitchOperation.kind`. A single planning pass validates all records and
+builds the ordered active typed command list, enforcing the aggregate command
+and work limits before publishing a history transition. Disabled records remain
+in history but are excluded from the executable plan. JPEG planning does not
+invoke generic state executors or construct JavaScript random generators; the
+codec receives the recorded seed. The generic history container remains for
+immutable frames and Undo/Redo. Record creation metadata stays unchanged during
+planning, while document revisions increase monotonically. The project
+serialization boundary uses schema version 2 and one operation-envelope parser;
+version 1 projects are rejected explicitly.
 
 The planned Block Transform family operates on quantized DCT coefficients in
 one component of one JPEG. Copy, swap, repeat, and shuffle read from explicit
@@ -393,8 +427,10 @@ stages, an unsigned 32-bit seed, a normalized scan-relative range, and 100
 MiB of cumulative input-byte work per replay. Input/output stay within the
 existing 50 MiB JPEG limit. Changed values cannot become `0xFF`; existing
 `0xFF` bytes, their following byte-stuffing bytes, restart markers, marker
-segments, SOI, EOI, and file length are preserved. The worker reparses and
-compares marker boundaries after every stage. Undo, redo, and an explicit
+segments, SOI, EOI, and file length are preserved. The engine owns one private working buffer and reuses the verified structure
+from the previous stage. It parses once initially and once after each stage
+(N+1 inspections), comparing marker boundaries before publishing the result.
+The worker transfers that output buffer directly. Undo, redo, and an explicit
 last-stage parameter update replay the entire byte-stage list from the clean
 encoded result. This validates structural boundaries, not Huffman decodability
 or browser-independent visual recovery; a preview failure remains an
@@ -471,7 +507,11 @@ effects offer a manual preview. Changing a draft replaces its visible preview
 with the last result or original and cancels the obsolete worker request.
 A file opening starts a new session, even when the source bytes match.
 Apply commits one operation after encoding succeeds. A matching draft can
-supply its encoded bytes directly for Apply and download. Undo and Redo
+supply its encoded bytes directly for Apply and download. The per-source
+encoding cache also joins an in-flight request for the identical ordered plan
+and retains at most two byte results. A semantic plan identity prevents history
+changes that leave active commands unchanged from triggering encoding. Browser
+decode status and Blob URL ownership remain separate from encoded bytes. Undo and Redo
 recompute the committed stack. Scan Corrupt renders its own terminal stages.
 
 The UI must distinguish:

@@ -5,3 +5,6 @@ coverage/
 .env
 .env.*
 !.env.example
+
+# Local agent scratch files and browser test artifacts.
+work/

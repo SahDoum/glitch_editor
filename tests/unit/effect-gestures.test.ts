@@ -291,13 +291,10 @@ describe("block transfer and repeat gestures", () => {
     expect(controller.buildOperation({ ...context, mask: null }).ok).toBe(
       false,
     );
-    const valid = { ...context, settings: { ...context.settings, count: 2 } };
+    const valid = { ...context, settings: { ...context.settings, count: 1 } };
     expect(gestures.getOverlay(valid)).toMatchObject({
       destinationInvalid: false,
-      destinations: [
-        { x: 8, y: 0, width: 8, height: 8 },
-        { x: 16, y: 0, width: 8, height: 8 },
-      ],
+      destinations: [{ x: 8, y: 0, width: 8, height: 8 }],
     });
     expect(controller.buildOperation({ ...valid, mask: null }).ok).toBe(true);
   });

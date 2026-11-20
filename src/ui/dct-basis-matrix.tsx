@@ -1,18 +1,4 @@
-import {
-  DCT_FREQUENCY_BAND_RANGES,
-  type DctFrequencyBand,
-} from "../operations/dct";
-
-export type DctMatrixTarget =
-  | { readonly kind: "dc" }
-  | { readonly kind: "band"; readonly band: DctFrequencyBand }
-  | { readonly kind: "low-pass"; readonly cutoff: number }
-  | { readonly kind: "ringing" }
-  | {
-      readonly kind: "engraving";
-      readonly direction: "horizontal" | "vertical";
-    }
-  | null;
+import type { DctFrequencyBand } from "../operations/dct";
 
 export type DctFrequencyChoice = "dc" | DctFrequencyBand;
 
@@ -27,60 +13,28 @@ export function getDctFrequencyChoice(
   return "high";
 }
 
-export function isDctCoefficientTargeted(
-  u: number,
-  v: number,
-  target: DctMatrixTarget,
-): boolean {
-  if (!target) return false;
-  if (target.kind === "dc") return u === 0 && v === 0;
-  if (target.kind === "band") {
-    const { minimum, maximum } = DCT_FREQUENCY_BAND_RANGES[target.band];
-    return u + v >= minimum && u + v <= maximum;
-  }
-  if (target.kind === "low-pass") return u + v > target.cutoff;
-  if (target.kind === "ringing") return u + v >= 3;
-  if (target.kind === "engraving") {
-    return target.direction === "horizontal" ? v > 0 : u > 0;
-  }
-  return false;
-}
-
 export function DctBasisMatrix({
-  target,
   selectedChoice,
   availableChoices,
   onSelect,
 }: {
-  target: DctMatrixTarget;
   selectedChoice: DctFrequencyChoice | null;
   availableChoices: readonly DctFrequencyChoice[];
-  onSelect?(choice: DctFrequencyChoice): void;
+  onSelect(choice: DctFrequencyChoice): void;
 }) {
-  const interactive = onSelect !== undefined;
   const targetLabel =
-    target?.kind === "band"
-      ? `AC ${target.band}`
-      : target?.kind === "dc"
-        ? "DC"
-        : target?.kind === "low-pass"
-          ? `AC cutoff ${target.cutoff}`
-          : target?.kind === "ringing"
-            ? "Ringing"
-            : target?.kind === "engraving"
-              ? `Engraving · ${target.direction}`
-              : "No frequency target";
+    selectedChoice === "dc"
+      ? "DC"
+      : selectedChoice
+        ? `AC ${selectedChoice}`
+        : "No frequency target";
 
   return (
     <section className="dct-basis-panel" aria-label="DCT frequency selector">
       <div className="dct-basis-heading">
         <div>
           <h3>8×8 DCT basis</h3>
-          <p>
-            {interactive
-              ? "Click a cell to select its DC / AC frequency zone."
-              : "The highlighted cells show the operation's frequency target."}
-          </p>
+          <p>Click a cell to select its DC / AC frequency zone.</p>
         </div>
         <span className="dct-target-label" aria-live="polite">
           {targetLabel}
@@ -99,14 +53,12 @@ export function DctBasisMatrix({
           const isSelected =
             selectedChoice === choice ||
             (selectedChoice === "all" && choice !== "dc");
-          const isTargeted = isDctCoefficientTargeted(u, v, target);
           return (
             <button
               className={[
                 "dct-frequency-cell",
                 isAvailable ? "is-available" : "is-inactive",
                 isSelected ? "is-selected" : "",
-                !interactive && isTargeted ? "is-targeted" : "",
               ]
                 .filter(Boolean)
                 .join(" ")}
@@ -114,9 +66,9 @@ export function DctBasisMatrix({
               type="button"
               role="gridcell"
               aria-label={`u ${u}, v ${v}, ${choice === "dc" ? "DC" : `AC ${choice}`}`}
-              aria-pressed={interactive ? isSelected : undefined}
-              disabled={!isAvailable || !interactive}
-              onClick={() => onSelect?.(choice)}
+              aria-pressed={isSelected}
+              disabled={!isAvailable}
+              onClick={() => onSelect(choice)}
             />
           );
         })}

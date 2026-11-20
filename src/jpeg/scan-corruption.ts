@@ -108,31 +108,13 @@ function copyBytes(source: Uint8Array): Uint8Array {
   return copy;
 }
 
+// The caller owns this private working buffer and the verified inspection from
+// the previous stage. A failed replay never publishes partially edited bytes.
 function applyStage(
-  input: Uint8Array,
+  output: Uint8Array,
+  inspection: JpegInspection,
   parameters: ScanCorruptionParameters,
-): Result<{ bytes: Uint8Array; report: ScanCorruptionReport }> {
-  if (!isScanCorruptionParameters(parameters)) {
-    return failure({
-      code: "INVALID_INPUT",
-      message: "Scan Corrupt parameters are outside their supported bounds.",
-    });
-  }
-  if (input.byteLength === 0 || input.byteLength > MAX_JPEG_BYTES) {
-    return failure({
-      code: "INVALID_INPUT",
-      message: "Scan Corrupt requires an encoded JPEG no larger than 50 MiB.",
-    });
-  }
-
-  const inspectionResult = inspectJpeg(input);
-  if (!inspectionResult.ok) return inspectionResult;
-  const inspection = inspectionResult.value;
-  const boundaryError = scanBoundaryError(input, inspection);
-  if (boundaryError) {
-    return failure({ code: "UNSUPPORTED_FORMAT", message: boundaryError });
-  }
-
+): Result<{ inspection: JpegInspection; report: ScanCorruptionReport }> {
   const scan = inspection.scans[0]!;
   const scanStartOffset = scan.entropyRanges[0]!.startOffset;
   const scanEndOffset = scan.entropyRanges.at(-1)!.endOffset;
@@ -151,8 +133,8 @@ function applyStage(
     const start = Math.max(range.startOffset, selectedStart);
     const end = Math.min(range.endOffset, selectedEnd);
     for (let offset = start; offset < end; offset += 1) {
-      const byte = input[offset]!;
-      if (byte === 0xff || input[offset - 1] === 0xff) continue;
+      const byte = output[offset]!;
+      if (byte === 0xff || output[offset - 1] === 0xff) continue;
 
       eligibleCount += 1;
       if (selectedOffsets.length < parameters.count) {
@@ -175,7 +157,6 @@ function applyStage(
     });
   }
 
-  const output = copyBytes(input);
   let changedBits = 0;
   for (const offset of selectedOffsets) {
     const originalByte = output[offset]!;
@@ -215,10 +196,7 @@ function applyStage(
         "The corrupted output failed structural validation; the clean encoded result was preserved.",
     });
   }
-  if (
-    output.byteLength !== input.byteLength ||
-    markerSignature(outputInspection.value) !== markerSignature(inspection)
-  ) {
+  if (markerSignature(outputInspection.value) !== markerSignature(inspection)) {
     return failure({
       code: "PROCESSING_FAILED",
       message:
@@ -227,7 +205,7 @@ function applyStage(
   }
 
   return success({
-    bytes: output,
+    inspection: outputInspection.value,
     report: {
       ...parameters,
       scanStartOffset,
@@ -249,6 +227,7 @@ export function corruptEntropyScan(
     !Array.isArray(stages) ||
     stages.length < 1 ||
     stages.length > MAX_SCAN_CORRUPTION_STAGES ||
+    !stages.every(isScanCorruptionParameters) ||
     bytes.byteLength * stages.length > MAX_SCAN_CORRUPTION_WORK_BYTES
   ) {
     return failure({
@@ -258,12 +237,20 @@ export function corruptEntropyScan(
     });
   }
 
-  let current = copyBytes(bytes);
+  const initialInspection = inspectJpeg(bytes);
+  if (!initialInspection.ok) return initialInspection;
+  const boundaryError = scanBoundaryError(bytes, initialInspection.value);
+  if (boundaryError) {
+    return failure({ code: "UNSUPPORTED_FORMAT", message: boundaryError });
+  }
+
+  const current = copyBytes(bytes);
+  let inspection = initialInspection.value;
   const reports: ScanCorruptionReport[] = [];
   for (const stage of stages) {
-    const result = applyStage(current, stage);
+    const result = applyStage(current, inspection, stage);
     if (!result.ok) return result;
-    current = result.value.bytes;
+    inspection = result.value.inspection;
     reports.push(result.value.report);
   }
 

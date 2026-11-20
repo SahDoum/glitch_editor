@@ -37,8 +37,11 @@ import {
   readPersistedEffectSettings,
   type PersistedEffectSettings,
 } from "./features/effects/settings-persistence";
-import { importJpeg, type ImportedJpeg } from "./application/import-jpeg";
-import { readJpegOrientation } from "./application/preview-orientation";
+import {
+  importJpeg,
+  importVerifiedProjectJpeg,
+  type ImportedJpeg,
+} from "./application/import-jpeg";
 import {
   createJgeProjectFile,
   readJgeProjectFile,
@@ -46,15 +49,18 @@ import {
   type JgeProjectSaveData,
 } from "./project/project-file";
 import { projectEditsKey } from "./project/project-edits";
-import {
-  type JpegBlockCoordinate,
-  type JpegSelectionGrid,
-} from "./jpeg/block-geometry";
+import { type JpegSelectionGrid } from "./jpeg/block-geometry";
 import { copySpatialMask, type SpatialMask } from "./document/masks";
 import type { ProjectDocument } from "./document/model";
 import { OperationHistory } from "./operations/history";
 import type { JpegGlitchOperation } from "./operations/jpeg-glitch";
+import { EditorDocumentSession } from "./application/editor-document-session";
 import { EditorBridge } from "./features/effects/editor-bridge";
+import {
+  EncodingPlanCache,
+  EncodingPlanIdentity,
+  encodingPlanKey,
+} from "./application/encoding-plan";
 import { PreviewCoordinator } from "./application/preview-coordinator";
 import {
   areaToolForMask,
@@ -65,13 +71,9 @@ import {
   type MaskTool,
 } from "./ui/workspace-state";
 import { getRectangleSelection } from "./ui/selection-overlay";
-import {
-  ScanCorruptionHistory,
-  type CorruptedEncodedJpeg,
-} from "./application/scan-corruption";
+import { type CorruptedEncodedJpeg } from "./application/scan-corruption";
 import { downloadFileUrl } from "./ui/download-file";
 import {
-  MAX_SCAN_CORRUPTION_STAGES,
   type ScanCorruptionParameters,
   type ScanCorruptionReport,
 } from "./jpeg/scan-corruption";
@@ -93,18 +95,16 @@ import type {
   CanvasContext,
   CanvasFeedback,
   CanvasInteraction,
-  ImagePoint,
-  MaskDraft,
   MaskToolContext,
 } from "./features/canvas-tools/types";
 import { CanvasPointer, getCanvasPointerInput } from "./ui/canvas-pointer";
 import { EffectCanvasInteraction } from "./ui/canvas-tool-gestures";
 import { CanvasToolbar } from "./ui/canvas-toolbar";
-import { ImageOverlays } from "./ui/image-overlays";
+import { CanvasVisualState } from "./ui/canvas-visual-state";
+import { CanvasOverlays } from "./ui/image-overlays";
 import { OperationHistoryPanel } from "./ui/operation-history";
 import {
   getJpegComponentLabels,
-  identifyJpegColorModel,
   type JpegComponentLabel,
 } from "./jpeg/color-model";
 
@@ -197,6 +197,7 @@ function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [exportMode, setExportMode] = useState<JpegOutputMode>("baseline");
   const [isExporting, setIsExporting] = useState(false);
+  const exportController = useRef<AbortController | null>(null);
   const [projectNotice, setProjectNotice] = useState("");
   const [isEncoding, setIsEncoding] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -204,8 +205,6 @@ function App() {
   const [showMcus, setShowMcus] = useState(false);
   const [showOriginal, setShowOriginal] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
-  const [keyboardCursor, setKeyboardCursor] =
-    useState<JpegBlockCoordinate | null>(null);
   const [canvasHasKeyboardFocus, setCanvasHasKeyboardFocus] = useState(false);
   const [canvasKeyboardAnnouncement, setCanvasKeyboardAnnouncement] =
     useState("");
@@ -239,11 +238,8 @@ function App() {
     Readonly<Record<string, boolean>>
   >({});
   const [zoom, setZoom] = useState(1);
-  const [maskDraft, setMaskDraft] = useState<MaskDraft | null>(null);
   const [canvasError, setCanvasError] = useState("");
-  const [brushCursorPoint, setBrushCursorPoint] = useState<ImagePoint | null>(
-    null,
-  );
+  const [canvasVisualState] = useState(() => new CanvasVisualState());
   const fileInput = useRef<HTMLInputElement>(null);
   const requestId = useRef(0);
   const previewCoordinator = useRef(new PreviewCoordinator());
@@ -255,10 +251,7 @@ function App() {
   const previewCurrentEffectRef = useRef<(() => Promise<void>) | null>(null);
   const dragDepth = useRef(0);
   const importController = useRef<AbortController | null>(null);
-  const operationHistory = useRef<OperationHistory<JpegEditableState> | null>(
-    null,
-  );
-  const scanCorruptionHistory = useRef(new ScanCorruptionHistory());
+  const editorSession = useRef(new EditorDocumentSession());
   const cleanEncodedBytes = useRef<Uint8Array | null>(null);
   const scanCorruptionController = useRef<AbortController | null>(null);
   const lastSavedProject = useRef("");
@@ -268,8 +261,17 @@ function App() {
   const spacePanActive = useRef(false);
   const imageStage = useRef<HTMLDivElement>(null);
   const previewImageWrap = useRef<HTMLDivElement>(null);
-  const jpegOperations =
+  const [encodingCache] = useState(() => new EncodingPlanCache());
+  const [planIdentity] = useState(() => new EncodingPlanIdentity());
+  const rawJpegOperations =
     historyDocument?.currentState.jpegOperations ?? EMPTY_JPEG_OPERATIONS;
+  const jpegOperations = useMemo(
+    () => planIdentity.resolve(rawJpegOperations),
+    [planIdentity, rawJpegOperations],
+  );
+  useEffect(() => {
+    encodingCache.keepCommitted(document, encodingPlanKey(jpegOperations));
+  }, [encodingCache, document, jpegOperations]);
   const activeEffect = getEffect(activeEffectId ?? DEFAULT_EFFECT_ID);
   const activeView = activeEffect?.view;
   const activeSettings = activeView ? effectSettings[activeView.id] : undefined;
@@ -286,25 +288,8 @@ function App() {
   const maskToolView = maskToolId ? getMaskToolView(maskToolId) : null;
   const componentCount = document?.inspection.components.length ?? 0;
   const documentHash = document?.originalAsset.sha256;
-  const orientation = useMemo(() => {
-    if (!document) return 1;
-    const result = readJpegOrientation(
-      document.originalAsset.readBytes(),
-      document.inspection,
-    );
-    if (!result.ok) throw new Error(result.error.message);
-    return result.value;
-  }, [document]);
-  const colorModel = useMemo(
-    () =>
-      document
-        ? identifyJpegColorModel(
-            document.originalAsset.readBytes(),
-            document.inspection,
-          )
-        : null,
-    [document],
-  );
+  const orientation = document?.orientation ?? 1;
+  const colorModel = document?.colorModel ?? null;
   const componentLabels = useMemo(
     () =>
       colorModel
@@ -312,20 +297,29 @@ function App() {
         : ([] as readonly JpegComponentLabel[]),
     [colorModel, componentCount],
   );
-  function getPreviewSignature(
-    settings: ErasedSettings | undefined,
-    mask = activeMask,
-  ) {
-    return JSON.stringify({
+  const getPreviewSignature = useCallback(
+    (settings: ErasedSettings | undefined, mask = activeMask) =>
+      JSON.stringify({
+        documentSession,
+        revision: historyDocument?.revision ?? 0,
+        effectId: activeView?.id ?? null,
+        componentIndex,
+        settings,
+        mask: isMaskEffect ? mask : null,
+      }),
+    [
+      activeMask,
       documentSession,
-      revision: historyDocument?.revision ?? 0,
-      effectId: activeView?.id ?? null,
+      historyDocument?.revision,
+      activeView?.id,
       componentIndex,
-      settings,
-      maskId: isMaskEffect ? (mask?.id ?? null) : null,
-    });
-  }
-  const effectPreviewSignature = getPreviewSignature(activeSettings);
+      isMaskEffect,
+    ],
+  );
+  const effectPreviewSignature = useMemo(
+    () => getPreviewSignature(activeSettings),
+    [getPreviewSignature, activeSettings],
+  );
   const currentPreview =
     draftPreview?.signature === effectPreviewSignature ? draftPreview : null;
   const draftPreviewUrl = currentPreview?.frame.url;
@@ -338,7 +332,7 @@ function App() {
   const awaitingPreview =
     isDraftPreviewing ||
     (needsAutomaticPreview && !currentPreview && !previewFailed);
-  const currentOperation = (() => {
+  const currentOperation = useMemo(() => {
     if (
       !document ||
       !activeEffect ||
@@ -354,7 +348,14 @@ function App() {
       componentIndex,
       mask: activeMask,
     });
-  })();
+  }, [
+    document,
+    activeEffect,
+    activeSettings,
+    isMaskEffect,
+    activeMask,
+    componentIndex,
+  ]);
   const canApply =
     draftRequest !== null &&
     !isBusy &&
@@ -412,25 +413,24 @@ function App() {
     [document],
   );
 
+  const previewUrls = useRef(new Set<string>());
+  useEffect(() => {
+    const next = new Set(
+      [
+        editedPreviewUrl,
+        draftPreview?.frame.url,
+        cleanEncodedPreviewUrl,
+      ].filter((url): url is string => Boolean(url)),
+    );
+    for (const url of previewUrls.current)
+      if (!next.has(url)) URL.revokeObjectURL(url);
+    previewUrls.current = next;
+  }, [editedPreviewUrl, draftPreview, cleanEncodedPreviewUrl]);
   useEffect(
     () => () => {
-      if (editedPreviewUrl) URL.revokeObjectURL(editedPreviewUrl);
+      for (const url of previewUrls.current) URL.revokeObjectURL(url);
     },
-    [editedPreviewUrl],
-  );
-
-  useEffect(
-    () => () => {
-      if (draftPreview?.frame.url) URL.revokeObjectURL(draftPreview.frame.url);
-    },
-    [draftPreview],
-  );
-
-  useEffect(
-    () => () => {
-      if (cleanEncodedPreviewUrl) URL.revokeObjectURL(cleanEncodedPreviewUrl);
-    },
-    [cleanEncodedPreviewUrl],
+    [],
   );
 
   useEffect(() => {
@@ -442,30 +442,35 @@ function App() {
     setEditedBytes(frame.bytes);
     setEditedPreviewUrl((previous) => frame.url ?? previous);
     setEditedPreviewError(frame.displayError);
-    setCleanEncodedPreviewUrl(
-      frame.url ? createJpegPreviewUrl(frame.bytes) : null,
-    );
+    setCleanEncodedPreviewUrl(frame.url);
     setCleanEncodedPreviewError(frame.displayError);
     setIsEncoding(false);
   }, []);
 
   useEffect(() => {
     if (!document || jpegOperations.length === 0) return;
-    if (renderedOperations.current === jpegOperations) return;
+    if (
+      renderedOperations.current &&
+      encodingPlanKey(renderedOperations.current) ===
+        encodingPlanKey(jpegOperations)
+    )
+      return;
 
     const controller = new AbortController();
-    const history = operationHistory.current;
+    const history = editorSession.current.history;
     void (async () => {
       const encoded = await encodeJpegFrame(
         document,
         orientation,
         jpegOperations,
         controller.signal,
+        encodingCache,
       );
       if (
         controller.signal.aborted ||
-        history !== operationHistory.current ||
-        jpegOperations !== history?.snapshot.currentState.jpegOperations
+        history !== editorSession.current.history ||
+        encodingPlanKey(jpegOperations) !==
+          encodingPlanKey(history?.snapshot.currentState.jpegOperations ?? [])
       ) {
         if (encoded.ok && encoded.value.url) {
           URL.revokeObjectURL(encoded.value.url);
@@ -485,20 +490,31 @@ function App() {
     })();
 
     return () => controller.abort();
-  }, [document, jpegOperations, orientation, publishCoefficientFrame]);
+  }, [
+    document,
+    jpegOperations,
+    orientation,
+    publishCoefficientFrame,
+    encodingCache,
+  ]);
 
   useEffect(
     () => () => {
+      encodingCache.clear();
+      exportController.current?.abort();
       importController.current?.abort();
       scanCorruptionController.current?.abort();
       previewAbortController.current?.abort();
       applyController.current?.abort();
     },
-    [],
+    [encodingCache],
   );
 
   async function loadFile({ file, example = false }: RequestedFile) {
     const currentRequest = ++requestId.current;
+    exportController.current?.abort();
+    exportController.current = null;
+    setIsExporting(false);
     importController.current?.abort();
     const controller = new AbortController();
     importController.current = controller;
@@ -513,7 +529,6 @@ function App() {
     let accepted = false;
     try {
       let projectData: JgeProjectData | null = null;
-      let jpegFile = file;
       if (isProjectFile) {
         const savedProject = await readJgeProjectFile(
           file,
@@ -525,27 +540,19 @@ function App() {
         if (controller.signal.aborted) return;
         if (!savedProject.ok) throw new Error(savedProject.error.message);
         projectData = savedProject.value;
-        const buffer = new ArrayBuffer(projectData.source.bytes.byteLength);
-        new Uint8Array(buffer).set(projectData.source.bytes);
-        jpegFile = new File([buffer], projectData.source.fileName, {
-          type: "image/jpeg",
-        });
         setLoadingMessage("Opening embedded photo…");
       }
 
-      const imported = await importJpeg(jpegFile, controller.signal);
+      const imported = await (projectData
+        ? importVerifiedProjectJpeg(projectData.source, controller.signal)
+        : importJpeg(file, controller.signal));
       if (imported.ok) source = imported.value;
       if (controller.signal.aborted) return;
       if (!imported.ok) throw new Error(imported.error.message);
 
       const history = createJpegDocumentSession(imported.value);
       if (!history.ok) throw new Error(history.error.message);
-      const sourceOrientation = readJpegOrientation(
-        imported.value.originalAsset.readBytes(),
-        imported.value.inspection,
-      );
-      if (!sourceOrientation.ok)
-        throw new Error(sourceOrientation.error.message);
+      const sourceOrientation = imported.value.orientation;
       const wholeMask = createWholeImageMask(imported.value.inspection);
       if (!wholeMask.ok) throw new Error(wholeMask.error.message);
       const initialSelectionMask = projectData?.draftMask ?? wholeMask.value;
@@ -569,7 +576,7 @@ function App() {
           setLoadingMessage("Replaying project…");
           const encoded = await encodeJpegFrame(
             imported.value,
-            sourceOrientation.value,
+            sourceOrientation,
             operations,
             controller.signal,
           );
@@ -590,7 +597,7 @@ function App() {
             damaged = replayed.value;
             damagedFrame = await decodeJpegFrame(
               imported.value,
-              sourceOrientation.value,
+              sourceOrientation,
               damaged.bytes,
               controller.signal,
             );
@@ -600,9 +607,9 @@ function App() {
       }
       scanCorruptionController.current?.abort();
       scanCorruptionController.current = null;
-      scanCorruptionHistory.current.clear();
       cleanEncodedBytes.current = null;
-      operationHistory.current = history.value;
+      encodingCache.clear();
+      editorSession.current.open(history.value);
       setHistoryDocument(history.value.snapshot);
       applyController.current?.abort();
       applyController.current = null;
@@ -650,7 +657,6 @@ function App() {
       setBrushSize(32);
       setEffectAutoApply({});
       setMaskGrid("dct");
-      dispatchWorkspace({ type: "select-mask", maskId: null });
       setShowBlocks(false);
       setShowMcus(false);
       setShowOriginal(false);
@@ -673,8 +679,7 @@ function App() {
         publishCoefficientFrame(cleanFrame);
       }
       if (damaged && damagedFrame) {
-        for (const stage of savedStages)
-          scanCorruptionHistory.current.record(stage);
+        editorSession.current.restoreScanStages(savedStages);
         publishDamageFrame(damagedFrame, damaged.reports, damaged.diagnostic);
       }
       accepted = true;
@@ -726,25 +731,12 @@ function App() {
     setEffectApplied(Boolean(appliedFrame));
     const previousJpegOperations = historyDocument?.currentState.jpegOperations;
     const nextOperations = result.value.currentState.jpegOperations;
-    if (nextOperations !== previousJpegOperations) {
-      if (scanCorruptionHistory.current.activeStages.length > 0) {
-        const rolledBack = operationHistory.current?.undo();
-        if (rolledBack?.ok) setHistoryDocument(rolledBack.value);
-        const history = operationHistory.current;
-        setHistoryAvailability({
-          canUndo:
-            (history?.canUndo ?? false) ||
-            scanCorruptionHistory.current.canUndo,
-          canRedo:
-            (history?.canRedo ?? false) ||
-            scanCorruptionHistory.current.canRedo,
-        });
-        setErrorMessage("Undo the damage stages to edit earlier effects.");
-        return;
-      }
+    if (
+      encodingPlanKey(nextOperations) !==
+      encodingPlanKey(previousJpegOperations ?? [])
+    ) {
       scanCorruptionController.current?.abort();
       scanCorruptionController.current = null;
-      scanCorruptionHistory.current.clear();
       cleanEncodedBytes.current = null;
       renderedOperations.current = null;
       setScanCorruptionReports([]);
@@ -766,12 +758,14 @@ function App() {
     }
     setErrorMessage("");
     setHistoryDocument(result.value);
-    const history = operationHistory.current;
+    const history = editorSession.current.history;
     setHistoryAvailability({
       canUndo:
-        (history?.canUndo ?? false) || scanCorruptionHistory.current.canUndo,
+        (history?.canUndo ?? false) ||
+        editorSession.current.scanHistory.canUndo,
       canRedo:
-        (history?.canRedo ?? false) || scanCorruptionHistory.current.canRedo,
+        (history?.canRedo ?? false) ||
+        editorSession.current.scanHistory.canRedo,
     });
   }
 
@@ -782,17 +776,13 @@ function App() {
   ) {
     if (isBusy || isLoading || applyController.current) return;
     if (!ensureCoefficientPhase()) return;
-    const history = operationHistory.current;
+    const history = editorSession.current.history;
     if (!history) return;
-    updateHistory(mutate(history));
+    updateHistory(editorSession.current.mutate(mutate));
   }
 
   function publishCanvasFeedback(feedback: CanvasFeedback) {
-    if (feedback.draft !== undefined) setMaskDraft(feedback.draft);
-    if (feedback.keyboardCursor !== undefined)
-      setKeyboardCursor(feedback.keyboardCursor);
-    if (feedback.hoverPoint !== undefined)
-      setBrushCursorPoint(feedback.hoverPoint);
+    canvasVisualState.publish(feedback);
     if (feedback.announcement !== undefined)
       setCanvasKeyboardAnnouncement(feedback.announcement);
     if (feedback.error !== undefined) setCanvasError(feedback.error);
@@ -852,9 +842,7 @@ function App() {
   function resetCanvasInteraction() {
     canvasPointer.cancel();
     for (const tool of canvasTools.values()) tool.reset?.();
-    setKeyboardCursor(null);
-    setMaskDraft(null);
-    setBrushCursorPoint(null);
+    canvasVisualState.reset();
     setCanvasError("");
   }
 
@@ -972,7 +960,7 @@ function App() {
   }
 
   function ensureCoefficientPhase(): boolean {
-    if (scanCorruptionHistory.current.activeStages.length === 0) return true;
+    if (editorSession.current.coefficientPhase) return true;
     setErrorMessage("Undo the damage stages to edit earlier effects.");
     return false;
   }
@@ -995,7 +983,7 @@ function App() {
     )
       return;
     const source = document;
-    const history = operationHistory.current;
+    const history = editorSession.current.history;
     if (
       !source ||
       !history ||
@@ -1021,20 +1009,16 @@ function App() {
     setErrorMessage("");
 
     try {
-      const encoded = cached
-        ? {
-            ok: true as const,
-            value: {
-              ...cached.frame,
-              url: cached.frame.url
-                ? createJpegPreviewUrl(cached.frame.bytes)
-                : null,
-            },
-          }
-        : await encodeJpegFrame(source, orientation, operations, job.signal);
+      const encoded = await encodeJpegFrame(
+        source,
+        orientation,
+        operations,
+        job.signal,
+        encodingCache,
+      );
       if (
         job.signal.aborted ||
-        history !== operationHistory.current ||
+        history !== editorSession.current.history ||
         base !== history.snapshot
       ) {
         if (encoded.ok && encoded.value.url)
@@ -1047,7 +1031,9 @@ function App() {
         return;
       }
 
-      const result = controller.apply(history, operation, base.inspection);
+      const result = editorSession.current.mutate((current) =>
+        controller.apply(current, operation, base.inspection),
+      );
       if (!result.ok) {
         if (encoded.value.url) URL.revokeObjectURL(encoded.value.url);
         setErrorMessage(result.error.message);
@@ -1149,7 +1135,7 @@ function App() {
     const controller = new AbortController();
     previewAbortController.current = controller;
     const coordinator = previewCoordinator.current;
-    const history = operationHistory.current;
+    const history = editorSession.current.history;
     const token = coordinator.begin(historyDocument.revision);
     setIsDraftPreviewing(true);
     setErrorMessage("");
@@ -1160,10 +1146,11 @@ function App() {
         orientation,
         [...jpegOperations, operation],
         controller.signal,
+        encodingCache,
       );
       if (
         controller.signal.aborted ||
-        history !== operationHistory.current ||
+        history !== editorSession.current.history ||
         !coordinator.isCurrent(token, history?.snapshot.revision ?? -1)
       ) {
         if (encoded.ok && encoded.value.url)
@@ -1206,9 +1193,9 @@ function App() {
     ) {
       return;
     }
+    encodingCache.clear();
     scanCorruptionController.current?.abort();
     scanCorruptionController.current = null;
-    scanCorruptionHistory.current.clear();
     cleanEncodedBytes.current = null;
     setScanCorruptionReports([]);
     setScanDecodeDiagnostic(null);
@@ -1220,8 +1207,8 @@ function App() {
     setIsEncoding(false);
     setIsScanCorrupting(false);
     setShowCleanEncoded(false);
-    const history = operationHistory.current;
-    if (history) updateHistory(history.resetToOriginal());
+    const history = editorSession.current.history;
+    if (history) updateHistory(editorSession.current.reset());
     resetCanvasInteraction();
     if (!isMaskEffect) {
       dispatchWorkspace({
@@ -1284,149 +1271,136 @@ function App() {
       setIsEncoding(false);
       setIsScanCorrupting(false);
       scanCorruptionController.current = null;
-      const history = operationHistory.current;
+      const history = editorSession.current.history;
       setHistoryAvailability({
         canUndo:
-          (history?.canUndo ?? false) || scanCorruptionHistory.current.canUndo,
+          (history?.canUndo ?? false) ||
+          editorSession.current.scanHistory.canUndo,
         canRedo:
-          (history?.canRedo ?? false) || scanCorruptionHistory.current.canRedo,
+          (history?.canRedo ?? false) ||
+          editorSession.current.scanHistory.canRedo,
       });
     },
     [],
   );
 
-  const replayScanStages = useCallback(
-    async (
-      stages: readonly ScanCorruptionParameters[],
-      commitHistory: () => boolean,
-    ) => {
-      if (!document) {
-        setErrorMessage("Open a JPEG before using Scan Corrupt.");
+  async function replayScanStages(
+    stages: readonly ScanCorruptionParameters[],
+    commitHistory: () => boolean,
+  ) {
+    if (!document) {
+      setErrorMessage("Open a JPEG before using Scan Corrupt.");
+      return;
+    }
+    let cleanBytes = cleanEncodedBytes.current;
+    if (!cleanBytes && jpegOperations.length > 0) {
+      setErrorMessage(
+        "Wait for the clean JPEG encoding before using Scan Corrupt.",
+      );
+      return;
+    }
+    if (stages.length === 0) {
+      if (!cleanBytes) {
+        setErrorMessage("The clean encoded JPEG is unavailable for undo.");
         return;
       }
-      let cleanBytes = cleanEncodedBytes.current;
-      if (!cleanBytes && jpegOperations.length > 0) {
-        setErrorMessage(
-          "Wait for the clean JPEG encoding before using Scan Corrupt.",
-        );
+      if (!commitHistory()) {
+        setErrorMessage("The Scan Corrupt history could not be updated.");
         return;
       }
-      if (stages.length === 0) {
-        if (!cleanBytes) {
-          setErrorMessage("The clean encoded JPEG is unavailable for undo.");
-          return;
-        }
-        if (!commitHistory()) {
-          setErrorMessage("The Scan Corrupt history could not be updated.");
-          return;
-        }
-        const restoredBytes = cleanBytes.slice();
-        setEditedBytes(restoredBytes);
-        setScanCorruptionReports([]);
-        setScanDecodeDiagnostic(null);
-        setEditedPreviewError(cleanEncodedPreviewErrorRef.current);
-        if (cleanEncodedPreviewErrorRef.current) {
-          setEditedPreviewUrl(null);
-        } else {
-          try {
-            setEditedPreviewUrl(createJpegPreviewUrl(restoredBytes));
-          } catch {
-            setEditedPreviewUrl(null);
-            setEditedPreviewError(
-              "The clean encoded JPEG remains available to export, but its preview could not be created.",
-            );
-          }
-        }
-        setShowOriginal(false);
-        setShowCleanEncoded(false);
-        setErrorMessage("");
-        setIsEncoding(false);
-        setIsScanCorrupting(false);
-        const history = operationHistory.current;
-        setHistoryAvailability({
-          canUndo:
-            (history?.canUndo ?? false) ||
-            scanCorruptionHistory.current.canUndo,
-          canRedo:
-            (history?.canRedo ?? false) ||
-            scanCorruptionHistory.current.canRedo,
-        });
-        return;
-      }
-
-      const controller = new AbortController();
-      scanCorruptionController.current?.abort();
-      scanCorruptionController.current = controller;
-      setIsEncoding(true);
-      setIsScanCorrupting(true);
-      setErrorMessage("");
+      setEditedBytes(cleanBytes);
+      setScanCorruptionReports([]);
+      setScanDecodeDiagnostic(null);
+      setEditedPreviewError(cleanEncodedPreviewErrorRef.current);
+      setEditedPreviewUrl(cleanEncodedPreviewUrl);
       setShowOriginal(false);
       setShowCleanEncoded(false);
-      if (!cleanBytes) {
-        const encoded = await encodeJpegFrame(
-          document,
-          orientation,
-          [],
-          controller.signal,
-        );
-        if (controller.signal.aborted) return;
-        if (!encoded.ok) {
-          setErrorMessage(encoded.error.message);
-          setIsEncoding(false);
-          setIsScanCorrupting(false);
-          scanCorruptionController.current = null;
-          return;
-        }
-        cleanBytes = encoded.value.bytes;
-        cleanEncodedBytes.current = cleanBytes;
-        cleanEncodedPreviewErrorRef.current = encoded.value.displayError;
-        setCleanEncodedPreviewUrl(encoded.value.url);
-        setCleanEncodedPreviewError(encoded.value.displayError);
-      }
-      const scanController = getScanCorruptionEffect()?.controller;
-      if (!scanController) {
-        setErrorMessage("The Scan Corrupt controller is unavailable.");
-        setIsEncoding(false);
-        setIsScanCorrupting(false);
-        scanCorruptionController.current = null;
-        return;
-      }
-      const corrupted = await scanController.execute_corrupt(
-        cleanBytes,
-        stages,
+      setErrorMessage("");
+      setIsEncoding(false);
+      setIsScanCorrupting(false);
+      const history = editorSession.current.history;
+      setHistoryAvailability({
+        canUndo:
+          (history?.canUndo ?? false) ||
+          editorSession.current.scanHistory.canUndo,
+        canRedo:
+          (history?.canRedo ?? false) ||
+          editorSession.current.scanHistory.canRedo,
+      });
+      return;
+    }
+
+    const controller = new AbortController();
+    scanCorruptionController.current?.abort();
+    scanCorruptionController.current = controller;
+    setIsEncoding(true);
+    setIsScanCorrupting(true);
+    setErrorMessage("");
+    setShowOriginal(false);
+    setShowCleanEncoded(false);
+    if (!cleanBytes) {
+      const encoded = await encodeJpegFrame(
+        document,
+        orientation,
+        [],
         controller.signal,
       );
       if (controller.signal.aborted) return;
-      if (!corrupted.ok) {
-        setErrorMessage(corrupted.error.message);
+      if (!encoded.ok) {
+        setErrorMessage(encoded.error.message);
         setIsEncoding(false);
         setIsScanCorrupting(false);
         scanCorruptionController.current = null;
         return;
       }
-      const frame = await decodeJpegFrame(
-        document,
-        orientation,
-        corrupted.value.bytes,
-        controller.signal,
-      );
-      if (!frame) return;
-      if (!commitHistory()) {
-        if (frame.url) URL.revokeObjectURL(frame.url);
-        setErrorMessage("The JPEG Damage history could not be updated.");
-        setIsEncoding(false);
-        setIsScanCorrupting(false);
-        scanCorruptionController.current = null;
-        return;
-      }
-      publishDamageFrame(
-        frame,
-        corrupted.value.reports,
-        corrupted.value.diagnostic,
-      );
-    },
-    [document, jpegOperations.length, orientation, publishDamageFrame],
-  );
+      cleanBytes = encoded.value.bytes;
+      cleanEncodedBytes.current = cleanBytes;
+      cleanEncodedPreviewErrorRef.current = encoded.value.displayError;
+      setCleanEncodedPreviewUrl(encoded.value.url);
+      setCleanEncodedPreviewError(encoded.value.displayError);
+    }
+    const scanController = getScanCorruptionEffect()?.controller;
+    if (!scanController) {
+      setErrorMessage("The Scan Corrupt controller is unavailable.");
+      setIsEncoding(false);
+      setIsScanCorrupting(false);
+      scanCorruptionController.current = null;
+      return;
+    }
+    const corrupted = await scanController.execute_corrupt(
+      cleanBytes,
+      stages,
+      controller.signal,
+    );
+    if (controller.signal.aborted) return;
+    if (!corrupted.ok) {
+      setErrorMessage(corrupted.error.message);
+      setIsEncoding(false);
+      setIsScanCorrupting(false);
+      scanCorruptionController.current = null;
+      return;
+    }
+    const frame = await decodeJpegFrame(
+      document,
+      orientation,
+      corrupted.value.bytes,
+      controller.signal,
+    );
+    if (!frame) return;
+    if (!commitHistory()) {
+      if (frame.url) URL.revokeObjectURL(frame.url);
+      setErrorMessage("The JPEG Damage history could not be updated.");
+      setIsEncoding(false);
+      setIsScanCorrupting(false);
+      scanCorruptionController.current = null;
+      return;
+    }
+    publishDamageFrame(
+      frame,
+      corrupted.value.reports,
+      corrupted.value.diagnostic,
+    );
+  }
 
   function closeEffectDraft() {
     discardDraftPreview();
@@ -1434,7 +1408,7 @@ function App() {
     setEffectApplied(false);
   }
 
-  function applyScanCorruption(settings: object) {
+  function applyScanCorruption(settings: object, replaceLast = false) {
     if (
       isBusy ||
       isLoading ||
@@ -1444,50 +1418,20 @@ function App() {
       return;
     const scan = getScanCorruptionEffect();
     if (!scan) return;
-    const history = scanCorruptionHistory.current;
-    if (history.activeStages.length >= MAX_SCAN_CORRUPTION_STAGES) {
-      setErrorMessage(
-        `A maximum of ${MAX_SCAN_CORRUPTION_STAGES} entropy-corruption stages can be stacked.`,
-      );
+    const prepared = editorSession.current.prepareScan(
+      scan.controller.toParameters(settings),
+      replaceLast,
+    );
+    if (!prepared.ok) {
+      setErrorMessage(prepared.error.message);
       return;
     }
-    const parameters = scan.controller.toParameters(settings);
-    const stages = [...history.activeStages, parameters];
     closeEffectDraft();
-    void replayScanStages(stages, () => history.record(parameters).ok);
+    void replayScanStages(prepared.value.stages, prepared.value.commit);
   }
 
   function updateLastScanCorruption(settings: object) {
-    if (
-      isBusy ||
-      isLoading ||
-      applyController.current ||
-      scanCorruptionController.current
-    )
-      return;
-    const scan = getScanCorruptionEffect();
-    const history = scanCorruptionHistory.current;
-    if (!scan || history.activeStages.length === 0) return;
-    const parameters = scan.controller.toParameters(settings);
-    const stages = [...history.activeStages.slice(0, -1), parameters];
-    closeEffectDraft();
-    void replayScanStages(stages, () => history.replaceLast(parameters).ok);
-  }
-
-  function undoScanCorruption() {
-    const history = scanCorruptionHistory.current;
-    if (!history.canUndo) return false;
-    closeEffectDraft();
-    void replayScanStages(history.undoTarget, () => history.commitUndo());
-    return true;
-  }
-
-  function redoScanCorruption() {
-    const history = scanCorruptionHistory.current;
-    if (!history.canRedo) return false;
-    closeEffectDraft();
-    void replayScanStages(history.redoTarget, () => history.commitRedo());
-    return true;
+    applyScanCorruption(settings, true);
   }
 
   function cancelScanCorruption() {
@@ -1500,19 +1444,21 @@ function App() {
     setErrorMessage("Damage cancelled. Showing the previous result.");
   }
 
-  function handleUndo() {
+  function travelHistory(direction: "undo" | "redo") {
     if (isBusy || isLoading || applyController.current) return;
-    if (undoScanCorruption()) return;
-    const history = operationHistory.current;
-    if (history) updateHistory(history.undo());
+    const action = editorSession.current[direction]();
+    if (!action) return;
+    closeEffectDraft();
+    if (action.kind === "scan")
+      void replayScanStages(action.transition.stages, action.transition.commit);
+    else updateHistory(action.result);
   }
 
+  function handleUndo() {
+    travelHistory("undo");
+  }
   function handleRedo() {
-    if (isBusy || isLoading || applyController.current) return;
-    if (redoScanCorruption()) return;
-    if (scanCorruptionHistory.current.activeStages.length > 0) return;
-    const history = operationHistory.current;
-    if (history) updateHistory(history.redo());
+    travelHistory("redo");
   }
 
   async function downloadJpeg(
@@ -1521,6 +1467,9 @@ function App() {
     bytes: Uint8Array,
     mode: JpegOutputMode,
   ) {
+    if (exportController.current) return;
+    const controller = new AbortController();
+    exportController.current = controller;
     setIsExporting(true);
     setErrorMessage("");
     try {
@@ -1530,15 +1479,17 @@ function App() {
           source.originalAsset.readBytes(),
           jpegGeometry(source),
           operations,
-          undefined,
+          controller.signal,
           { mode },
         );
+        if (controller.signal.aborted) return;
         if (!encoded.ok) {
           setErrorMessage(encoded.error.message);
           return;
         }
         output = encoded.value;
       }
+      if (controller.signal.aborted) return;
       const name = source.originalAsset.fileName.replace(/\.[^.]+$/, "");
       downloadFileUrl(
         createJpegPreviewUrl(output),
@@ -1551,7 +1502,10 @@ function App() {
           : "The JPG could not be downloaded.",
       );
     } finally {
-      setIsExporting(false);
+      if (exportController.current === controller) {
+        exportController.current = null;
+        setIsExporting(false);
+      }
     }
   }
 
@@ -1574,21 +1528,18 @@ function App() {
   }
 
   function projectEdits() {
-    return {
-      operations: operationHistory.current?.snapshot.operations ?? [],
-      draftMask: globalSelectionMask,
-      scanCorruptionStages: scanCorruptionHistory.current.activeStages,
-    };
+    return editorSession.current.snapshotEdits(globalSelectionMask);
   }
 
   async function downloadProjectFile(): Promise<boolean> {
     if (!document || !historyDocument || savingProject.current) return false;
-    const history = operationHistory.current;
+    const history = editorSession.current.history;
     const edits = projectEdits();
     const snapshot: JgeProjectSaveData = {
       source: {
         fileName: document.originalAsset.fileName,
         sha256: document.originalAsset.sha256,
+        inspection: document.inspection,
         bytes: document.originalAsset.readBytes(),
       },
       ...edits,
@@ -1615,7 +1566,8 @@ function App() {
         URL.createObjectURL(result.value),
         `${baseName}.jpglitch`,
       );
-      if (history === operationHistory.current) lastSavedProject.current = key;
+      if (history === editorSession.current.history)
+        lastSavedProject.current = key;
       return true;
     } catch (error) {
       setErrorMessage(
@@ -1726,9 +1678,7 @@ function App() {
   const showAreaOutline = overlayVisibility.mask && toolMode !== "all";
   const activeMaskForOverlay = showAreaOutline ? activeMask : null;
   const visibleSelection = showAreaOutline
-    ? maskDraft?.kind === "rectangle"
-      ? maskDraft.selection
-      : getRectangleSelection(activeMaskForOverlay)
+    ? getRectangleSelection(activeMaskForOverlay)
     : null;
   const canvasImageContext: MaskToolContext | null = document
     ? {
@@ -1742,7 +1692,9 @@ function App() {
     ? {
         ...canvasImageContext,
         orientation,
-        keyboardCursor,
+        get keyboardCursor() {
+          return canvasVisualState.getSnapshot().keyboardCursor;
+        },
         wholeImageMask: wholeImageMask ?? undefined,
         publish: publishCanvasFeedback,
         cancelGesture: () => canvasPointer.cancel(),
@@ -1775,9 +1727,7 @@ function App() {
   const canvasInteraction = resolveCanvasInteraction();
   const visibleKeyboardCursor =
     canvasHasKeyboardFocus && canvasImageContext
-      ? (keyboardCursor ??
-        canvasInteraction?.getInitialCursor?.(canvasImageContext) ??
-        null)
+      ? (canvasInteraction?.getInitialCursor?.(canvasImageContext) ?? null)
       : null;
   const gestureOverlay =
     canvasImageContext && canvasInteraction?.getOverlay?.(canvasImageContext);
@@ -2536,22 +2486,17 @@ function App() {
                         alt={`${showsOriginalFrame ? "Original" : beforeVisible ? (hasScanCorruption ? "Before damage" : "Before the current effect") : previewUrlToDisplay === draftPreviewUrl ? "Effect preview" : hasScanCorruption && previewUrlToDisplay === editedPreviewUrl ? "Damaged" : "Applied"} JPEG of ${document.originalAsset.fileName}`}
                       />
                     ) : null}
-                    <ImageOverlays
+                    <CanvasOverlays
                       inspection={document.inspection}
                       orientation={orientation}
                       showBlocks={showBlocks}
                       showMcus={showMcus}
                       selection={visibleSelection}
                       mask={activeMaskForOverlay}
-                      brushDraft={
-                        maskDraft?.kind === "brush" ? maskDraft.strokes : []
-                      }
-                      brushCursorPoint={brushCursorPoint}
-                      brushRadius={
-                        maskDraft?.kind === "brush"
-                          ? maskDraft.radius
-                          : brushSize / 2
-                      }
+                      visualState={canvasVisualState}
+                      showAreaOutline={showAreaOutline}
+                      keyboardFocused={canvasHasKeyboardFocus}
+                      brushRadius={brushSize / 2}
                       componentId={
                         document.inspection.components[componentIndex]?.id ?? -1
                       }

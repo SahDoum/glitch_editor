@@ -1,4 +1,5 @@
-import { failure, success, type Result } from "../shared/result";
+import { isWorkerResult } from "./worker-response";
+import { failure, success, type AppError, type Result } from "../shared/result";
 import {
   isJpegBlockGeometry,
   isOperationList,
@@ -24,7 +25,7 @@ type CoefficientWorkerRequestPayload =
     };
 
 export interface JpegCoefficientReader {
-  open(bytes: Uint8Array): Promise<Result<undefined>>;
+  open(): Promise<Result<undefined>>;
   readBlock(
     componentIndex: number,
     blockX: number,
@@ -84,6 +85,9 @@ export async function encodeJpegCoefficients(
       if (settled) return;
       settled = true;
       signal?.removeEventListener("abort", onAbort);
+      worker.onmessage = null;
+      worker.onerror = null;
+      worker.onmessageerror = null;
       worker.terminate();
       resolve(result);
     };
@@ -102,7 +106,19 @@ export async function encodeJpegCoefficients(
 
     signal?.addEventListener("abort", onAbort, { once: true });
     worker.onmessage = (event: MessageEvent<CoefficientWorkerResponse>) => {
-      const { result } = event.data;
+      const result: unknown =
+        typeof event.data === "object" && event.data !== null
+          ? Reflect.get(event.data, "result")
+          : undefined;
+      if (!isWorkerResult(result, isCoefficientValue) || event.data.id !== 0) {
+        finish(
+          failure({
+            code: "PROCESSING_FAILED",
+            message: "The JPEG encoder returned an invalid response.",
+          }),
+        );
+        return;
+      }
       if (!result.ok) {
         finish(result);
         return;
@@ -174,14 +190,38 @@ class WorkerJpegCoefficientReader implements JpegCoefficientReader {
   private nextRequestId = 0;
   private readonly pending = new Map<number, PendingRequest>();
   private openRequest: Promise<Result<undefined>> | null = null;
+  private terminalError: AppError | null = null;
+  private source: Uint8Array | null;
 
-  constructor(worker: Worker) {
+  constructor(worker: Worker, bytes: Uint8Array) {
+    this.source = bytes;
     this.worker = worker;
-    worker.onmessage = (event: MessageEvent<CoefficientWorkerResponse>) => {
-      const pending = this.pending.get(event.data.id);
+    worker.onmessage = (event: MessageEvent<unknown>) => {
+      const data = event.data;
+      if (
+        typeof data !== "object" ||
+        data === null ||
+        !Number.isInteger(Reflect.get(data, "id"))
+      ) {
+        this.failPending({
+          code: "PROCESSING_FAILED",
+          message: "The coefficient reader returned an invalid response.",
+        });
+        return;
+      }
+      const id: number = Reflect.get(data, "id");
+      const pending = this.pending.get(id);
       if (!pending) return;
-      this.pending.delete(event.data.id);
-      pending.resolve(event.data.result);
+      const result: unknown = Reflect.get(data, "result");
+      if (!isWorkerResult(result, isCoefficientValue)) {
+        this.failPending({
+          code: "PROCESSING_FAILED",
+          message: "The coefficient reader returned an invalid response.",
+        });
+        return;
+      }
+      this.pending.delete(id);
+      pending.resolve(result);
     };
     worker.onerror = (event) => {
       event.preventDefault();
@@ -198,25 +238,33 @@ class WorkerJpegCoefficientReader implements JpegCoefficientReader {
     };
   }
 
-  async open(bytes: Uint8Array): Promise<Result<undefined>> {
+  async open(): Promise<Result<undefined>> {
+    if (this.terminalError) return failure(this.terminalError);
     if (this.openRequest) return this.openRequest;
-    const copy = bytes.slice();
-    const buffer = new ArrayBuffer(copy.byteLength);
-    new Uint8Array(buffer).set(copy);
+    const source = this.source;
+    if (!source)
+      return failure({
+        code: "PROCESSING_FAILED",
+        message: "The coefficient reader has no source.",
+      });
+    // This is the one owned snapshot taken when the reader was created.
+    const buffer = source.buffer as ArrayBuffer;
+    this.source = null;
     const request = this.send({
       type: "open",
       bytes: buffer,
     }).then((result) => {
       if (!result.ok) {
-        this.openRequest = null;
+        this.failPending(result.error);
         return result;
       }
       if (result.value.type !== "opened") {
-        this.openRequest = null;
-        return failure({
+        const error: AppError = {
           code: "PROCESSING_FAILED",
           message: "The coefficient reader returned an invalid response.",
-        });
+        };
+        this.failPending(error);
+        return failure(error);
       }
       return success(undefined);
     });
@@ -229,6 +277,8 @@ class WorkerJpegCoefficientReader implements JpegCoefficientReader {
     blockX: number,
     blockY: number,
   ): Promise<Result<number[]>> {
+    const opened = await this.open();
+    if (!opened.ok) return opened;
     const result = await this.send({
       type: "read-block",
       componentIndex,
@@ -241,16 +291,17 @@ class WorkerJpegCoefficientReader implements JpegCoefficientReader {
       result.value.values.length !== 64 ||
       !result.value.values.every(Number.isInteger)
     ) {
-      return failure({
+      const error: AppError = {
         code: "PROCESSING_FAILED",
         message: "The coefficient reader returned an invalid DCT block.",
-      });
+      };
+      this.failPending(error);
+      return failure(error);
     }
     return { ok: true, value: result.value.values };
   }
 
   close(): void {
-    this.worker.terminate();
     this.failPending({
       code: "CANCELLED",
       message: "JPEG coefficient inspection was cancelled.",
@@ -260,6 +311,7 @@ class WorkerJpegCoefficientReader implements JpegCoefficientReader {
   private send(
     request: CoefficientWorkerRequestPayload,
   ): Promise<Result<CoefficientWorkerValue>> {
+    if (this.terminalError) return Promise.resolve(failure(this.terminalError));
     const id = this.nextRequestId++;
     const message =
       request.type === "open"
@@ -280,29 +332,35 @@ class WorkerJpegCoefficientReader implements JpegCoefficientReader {
           this.worker.postMessage(message);
         }
       } catch {
-        this.pending.delete(id);
-        resolve(
-          failure({
-            code: "PROCESSING_FAILED",
-            message: "JPEG data could not be sent to the coefficient reader.",
-          }),
-        );
+        this.failPending({
+          code: "PROCESSING_FAILED",
+          message: "JPEG data could not be sent to the coefficient reader.",
+        });
       }
     });
   }
 
-  private failPending(error: {
-    code: "CANCELLED" | "PROCESSING_FAILED";
-    message: string;
-  }) {
-    for (const { resolve } of this.pending.values()) {
-      resolve(failure(error));
-    }
+  private failPending(error: AppError) {
+    if (this.terminalError) return;
+    this.terminalError = error;
+    this.source = null;
+    this.worker.onmessage = null;
+    this.worker.onerror = null;
+    this.worker.onmessageerror = null;
+    this.worker.terminate();
+    for (const { resolve } of this.pending.values()) resolve(failure(error));
     this.pending.clear();
   }
 }
 
-export function createJpegCoefficientReader(): Result<JpegCoefficientReader> {
+export function createJpegCoefficientReader(
+  bytes: Uint8Array,
+): Result<JpegCoefficientReader> {
+  if (bytes.byteLength === 0 || bytes.byteLength > 50 * 1024 * 1024)
+    return failure({
+      code: "INVALID_INPUT",
+      message: "The JPEG coefficient source size is invalid.",
+    });
   if (typeof Worker === "undefined") {
     return failure({
       code: "PROCESSING_FAILED",
@@ -312,18 +370,39 @@ export function createJpegCoefficientReader(): Result<JpegCoefficientReader> {
   }
 
   try {
+    const source = bytes.slice();
     const worker = new Worker(
       new URL("../jpeg/coefficient.worker.ts", import.meta.url),
       { type: "module" },
     );
     return {
       ok: true,
-      value: new WorkerJpegCoefficientReader(worker),
+      value: new WorkerJpegCoefficientReader(worker, source),
     };
   } catch {
     return failure({
       code: "PROCESSING_FAILED",
       message: "The JPEG coefficient reader could not be started.",
     });
+  }
+}
+
+function isCoefficientValue(value: unknown): value is CoefficientWorkerValue {
+  if (typeof value !== "object" || value === null) return false;
+  switch (Reflect.get(value, "type")) {
+    case "opened":
+      return true;
+    case "encoded":
+      return Reflect.get(value, "bytes") instanceof ArrayBuffer;
+    case "block": {
+      const values: unknown = Reflect.get(value, "values");
+      return (
+        Array.isArray(values) &&
+        values.length === 64 &&
+        values.every(Number.isInteger)
+      );
+    }
+    default:
+      return false;
   }
 }

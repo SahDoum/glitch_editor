@@ -2,70 +2,9 @@ import { readFileSync } from "node:fs";
 import { inspectJpeg } from "../../src/jpeg/inspect";
 import type { JpegOutputMode } from "../../src/jpeg/encode-options";
 
-interface CodecModule {
-  HEAPU8: Uint8Array;
-  _malloc(size: number): number;
-  _free(pointer: number): void;
-  _coefficient_open(pointer: number, size: number): number;
-  _coefficient_read_block(
-    component: number,
-    x: number,
-    y: number,
-    output: number,
-  ): number;
-  _coefficient_apply(
-    component: number,
-    mode: number,
-    domain: number,
-    band: number,
-    mask: number,
-    maskSize: number,
-    strength: number,
-    seed: number,
-  ): number;
-  _coefficient_repeat_block(
-    component: number,
-    x: number,
-    y: number,
-    offsetX: number,
-    offsetY: number,
-    repetitions: number,
-  ): number;
-  _coefficient_permute_blocks(
-    component: number,
-    mask: number,
-    maskSize: number,
-    seed: number,
-  ): number;
-  _coefficient_shift_blocks(
-    component: number,
-    mask: number,
-    maskSize: number,
-    offsetX: number,
-    offsetY: number,
-  ): number;
-  _coefficient_transfer_blocks(
-    component: number,
-    sourceX: number,
-    sourceY: number,
-    width: number,
-    height: number,
-    destinationX: number,
-    destinationY: number,
-    mode: number,
-    action: number,
-  ): number;
-  _coefficient_set_quantization(
-    tableId: number,
-    semantics: number,
-    values: number,
-    size: number,
-  ): number;
-  _coefficient_encode(progressive: number): number;
-  _coefficient_output_pointer(): number;
-  _coefficient_output_size(): number;
-  _coefficient_close(): void;
-}
+import type createLibjpegCoefficients from "../../src/jpeg/codec/libjpeg-coefficients.js";
+
+type CodecModule = Awaited<ReturnType<typeof createLibjpegCoefficients>>;
 
 const CODEC_DIRECTORY = new URL("../../public/codec/", import.meta.url);
 let codecPromise: Promise<CodecModule> | null = null;

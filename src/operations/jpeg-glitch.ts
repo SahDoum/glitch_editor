@@ -232,19 +232,11 @@ export function isBlockRepeatParameters(
   ) {
     return false;
   }
-  for (let repetition = 1; repetition <= repetitions; repetition += 1) {
-    const targetX = sourceX + offsetX * repetition;
-    const targetY = sourceY + offsetY * repetition;
-    if (
-      targetX < 0 ||
-      targetY < 0 ||
-      targetX >= grid.columns ||
-      targetY >= grid.rows
-    ) {
-      return false;
-    }
-  }
-  return true;
+  // Every destination lies on the line between the source and this endpoint.
+  // With a constant integer step, bounds on both ends cover every repeat.
+  const lastX = sourceX + offsetX * repetitions;
+  const lastY = sourceY + offsetY * repetitions;
+  return lastX >= 0 && lastY >= 0 && lastX < grid.columns && lastY < grid.rows;
 }
 
 export function isBlockPermutationParameters(
@@ -365,7 +357,7 @@ export function isBlockTransferParameters(
 export function isQuantizationParameters(
   value: unknown,
   inspection: {
-    readonly quantizationTables: readonly { readonly id: number }[];
+    readonly components: readonly { readonly quantizationTable: number }[];
   },
 ): value is QuantizationOperation {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -380,7 +372,9 @@ export function isQuantizationParameters(
   return (
     typeof tableId === "number" &&
     Number.isInteger(tableId) &&
-    inspection.quantizationTables.some((table) => table.id === tableId) &&
+    inspection.components.some(
+      (component) => component.quantizationTable === tableId,
+    ) &&
     Array.isArray(values) &&
     values.length === 64 &&
     Array.from(values).every(

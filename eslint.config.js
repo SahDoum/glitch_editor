@@ -5,7 +5,13 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["dist/**", "coverage/**", "node_modules/**", "public/codec/**"],
+    ignores: [
+      "dist/**",
+      "coverage/**",
+      "node_modules/**",
+      "public/codec/**",
+      "work/**",
+    ],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
@@ -22,7 +28,13 @@ export default tseslint.config(
     },
   },
   {
-    files: ["eslint.config.js", "vite.config.ts", "scripts/**/*.mjs"],
+    files: [
+      "eslint.config.js",
+      "vite.config.ts",
+      "scripts/**/*.mjs",
+      ".agent-tasks/**/*.mjs",
+      ".agent-tasks/**/*.cjs",
+    ],
     languageOptions: {
       globals: globals.node,
     },

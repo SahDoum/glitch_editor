@@ -5,13 +5,10 @@ import {
   applyCoefficientGlitchOperation,
   applyBlockTransferOperation,
   applyQuantizationOperation,
-  applyMaskToDocument,
   applyBlockRepeatOperation,
   applyBlockShiftOperation,
   createJpegDocumentSession,
-  applyCoefficientRecipeOperation,
 } from "../../src/application/jpeg-document";
-import { BUILT_IN_EXPERIMENT_RECIPES } from "../../src/application/experiment-recipes";
 import {
   createRectangleSelection,
   createSpatialMask,
@@ -189,77 +186,6 @@ describe("JPEG document operation session", () => {
     );
     expect(history.snapshot.originalAsset.readBytes()).toEqual(original);
   });
-  it("applies, disables, undoes, and redoes a spatial mask without changing source bytes", async () => {
-    const bytes = new Uint8Array(
-      await readFile(
-        new URL("../fixtures/synthetic-color-420.jpg", import.meta.url),
-      ),
-    );
-    const original = bytes.slice();
-    const inspection = inspectJpeg(bytes);
-    const asset = OriginalAsset.create({
-      fileName: "synthetic-color-420.jpg",
-      sha256: "d".repeat(64),
-      bytes,
-    });
-    expect(inspection.ok).toBe(true);
-    expect(asset.ok).toBe(true);
-    if (!inspection.ok || !asset.ok) return;
-
-    const imported = {
-      originalAsset: asset.value,
-      inspection: inspection.value,
-      previewUrl: "blob:local-test",
-    };
-    const created = createJpegDocumentSession(imported);
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
-    const history = created.value;
-
-    const selection = createRectangleSelection(1, 2, 9, 10, 16, 16);
-    expect(selection.ok).toBe(true);
-    if (!selection.ok || !selection.value) return;
-    expect(history.setSelection(selection.value)).toMatchObject({
-      ok: true,
-      value: { selection: selection.value },
-    });
-
-    const mask = createSpatialMask(selection.value, 16, 16);
-    expect(mask.ok).toBe(true);
-    if (!mask.ok) return;
-    const applied = applyMaskToDocument(history, mask.value, "Test mask");
-    expect(applied).toMatchObject({
-      ok: true,
-      value: {
-        currentState: {
-          masks: [{ name: "Test mask", mask: { id: mask.value.id } }],
-        },
-        operations: [{ type: "spatial/apply-mask", status: "applied" }],
-      },
-    });
-    if (!applied.ok) return;
-    const operationId = applied.value.operations[0]!.id;
-
-    expect(history.setEnabled(operationId, false)).toMatchObject({
-      ok: true,
-      value: { currentState: { masks: [] } },
-    });
-    expect(history.undo()).toMatchObject({
-      ok: true,
-      value: {
-        currentState: {
-          masks: [{ name: "Test mask", mask: mask.value }],
-        },
-      },
-    });
-    expect(history.redo()).toMatchObject({
-      ok: true,
-      value: { currentState: { masks: [] } },
-    });
-    expect(Array.from(history.snapshot.originalAsset.readBytes())).toEqual(
-      Array.from(original),
-    );
-  });
 
   it("replays coefficient glitches and restores them through undo and redo", async () => {
     const bytes = new Uint8Array(
@@ -338,7 +264,7 @@ describe("JPEG document operation session", () => {
     );
   });
 
-  it("restores a saved mask and seeded JPEG operation against the same source", async () => {
+  it("restores a seeded JPEG operation and its immutable mask against the same source", async () => {
     const bytes = new Uint8Array(
       await readFile(
         new URL("../fixtures/synthetic-color-420.jpg", import.meta.url),
@@ -375,9 +301,6 @@ describe("JPEG document operation session", () => {
     );
     if (!mask.ok) throw new Error(mask.error.message);
     expect(
-      applyMaskToDocument(originalSession.value, mask.value, "Saved area").ok,
-    ).toBe(true);
-    expect(
       applyCoefficientGlitchOperation(originalSession.value, {
         kind: "coefficients",
         mask: mask.value,
@@ -399,7 +322,6 @@ describe("JPEG document operation session", () => {
       ok: true,
       value: {
         currentState: {
-          masks: [{ name: "Saved area", mask: { id: mask.value.id } }],
           jpegOperations: [
             {
               mode: "randomize",
@@ -409,7 +331,6 @@ describe("JPEG document operation session", () => {
           ],
         },
         operations: [
-          { type: "spatial/apply-mask", status: "applied" },
           {
             type: "coefficients",
             status: "applied",
@@ -598,65 +519,7 @@ describe("JPEG document operation session", () => {
     );
   });
 
-  it("applies a multi-step saved recipe as one undoable history operation", async () => {
-    const bytes = new Uint8Array(
-      await readFile(
-        new URL("../fixtures/synthetic-color-420.jpg", import.meta.url),
-      ),
-    );
-    const inspection = inspectJpeg(bytes);
-    const asset = OriginalAsset.create({
-      fileName: "synthetic-color-420.jpg",
-      sha256: "f".repeat(64),
-      bytes,
-    });
-    if (!inspection.ok || !asset.ok) throw new Error("Invalid JPEG fixture.");
-    const created = createJpegDocumentSession({
-      originalAsset: asset.value,
-      inspection: inspection.value,
-      previewUrl: "blob:local-test",
-    });
-    if (!created.ok) throw new Error(created.error.message);
-    const selection = createRectangleSelection(0, 0, 16, 16, 16, 16);
-    if (!selection.ok || !selection.value)
-      throw new Error("Invalid selection.");
-    const mask = createSpatialMask(selection.value, 16, 16);
-    if (!mask.ok) throw new Error(mask.error.message);
-
-    const applied = applyCoefficientRecipeOperation(created.value, {
-      recipe: BUILT_IN_EXPERIMENT_RECIPES[1]!,
-      mask: mask.value,
-      componentIndex: 0,
-    });
-    expect(applied).toMatchObject({
-      ok: true,
-      value: {
-        currentState: {
-          jpegOperations: [
-            { kind: "coefficients", mode: "offset", domain: "dc" },
-            { kind: "coefficients", mode: "invert", domain: "ac" },
-          ],
-        },
-        operations: [
-          { type: "jpeg/glitch/coefficient-recipe", status: "applied" },
-        ],
-      },
-    });
-    expect(created.value.undo()).toMatchObject({
-      ok: true,
-      value: { currentState: { jpegOperations: [] }, operations: [] },
-    });
-    expect(created.value.redo()).toMatchObject({
-      ok: true,
-      value: {
-        currentState: {
-          jpegOperations: [{ mode: "offset" }, { mode: "invert" }],
-        },
-      },
-    });
-  });
-
-  it("recovers independent masks from saved, coefficient, recipe, and disabled shuffle entries", async () => {
+  it("recovers independent masks from coefficient and disabled shuffle entries", async () => {
     const bytes = new Uint8Array(
       await readFile(
         new URL("../fixtures/synthetic-color-420.jpg", import.meta.url),
@@ -678,7 +541,6 @@ describe("JPEG document operation session", () => {
     const history = created.value;
     const mask = createBrushMask([{ x: 4, y: 4 }], 4, 16, 16);
     if (!mask.ok) throw new Error(mask.error.message);
-    const saved = applyMaskToDocument(history, mask.value, "Original");
     const coefficient = applyCoefficientGlitchOperation(history, {
       kind: "coefficients",
       mask: mask.value,
@@ -689,31 +551,24 @@ describe("JPEG document operation session", () => {
       strength: 0,
       seed: 1,
     });
-    const recipe = applyCoefficientRecipeOperation(history, {
-      recipe: BUILT_IN_EXPERIMENT_RECIPES[0]!,
-      mask: mask.value,
-      componentIndex: 0,
-    });
     const shuffle = applyBlockPermutationOperation(history, {
       kind: "block-permutation",
       mask: mask.value,
       componentIndex: 0,
       seed: 1,
     });
-    for (const result of [saved, coefficient, recipe, shuffle]) {
+    for (const result of [coefficient, shuffle]) {
       if (!result.ok) throw new Error(result.error.message);
     }
-    const shuffleId = history.snapshot.operations[3]!.id;
+    const shuffleId = history.snapshot.operations[1]!.id;
     const disabled = history.setEnabled(shuffleId, false);
     if (!disabled.ok) throw new Error(disabled.error.message);
     const before = history.snapshot;
     expect(before.operations.map((operation) => operation.type)).toEqual([
-      "spatial/apply-mask",
       "coefficients",
-      "jpeg/glitch/coefficient-recipe",
       "block-permutation",
     ]);
-    expect(before.operations[3]!.enabled).toBe(false);
+    expect(before.operations[1]!.enabled).toBe(false);
     for (const operation of before.operations) {
       const snapshot = getMaskFromParameters(operation.parameters);
       if (!snapshot) throw new Error("Expected mask snapshot");
@@ -729,12 +584,9 @@ describe("JPEG document operation session", () => {
     if (!originalSnapshot) throw new Error("Expected mask snapshot");
     const copy = copySpatialMask(originalSnapshot);
     if (!copy.ok) throw new Error(copy.error.message);
-    expect(applyMaskToDocument(history, copy.value, "Restored")).toMatchObject({
-      ok: true,
-      value: {
-        currentState: { masks: [{ name: "Original" }, { name: "Restored" }] },
-      },
-    });
+    expect(copy.value.id).not.toBe(originalSnapshot.id);
+    expect(copy.value.shapes).toEqual(originalSnapshot.shapes);
+    expect(history.snapshot).toBe(before);
   });
 
   it("adds validated DQT edits as undoable JPEG operations", async () => {
@@ -786,5 +638,114 @@ describe("JPEG document operation session", () => {
       ok: true,
       value: { currentState: { jpegOperations: [] } },
     });
+  });
+  it("checks the final active plan before enabling or restoring, without mutating history", async () => {
+    const bytes = new Uint8Array(
+      await readFile(
+        new URL("../fixtures/synthetic-grayscale.jpg", import.meta.url),
+      ),
+    );
+    const inspection = inspectJpeg(bytes);
+    const asset = OriginalAsset.create({
+      fileName: "source.jpg",
+      sha256: "a".repeat(64),
+      bytes,
+    });
+    if (!inspection.ok || !asset.ok) throw new Error("fixture");
+    const created = createJpegDocumentSession({
+      originalAsset: asset.value,
+      inspection: inspection.value,
+    });
+    if (!created.ok) throw new Error("session");
+    const mask = createBrushMask(
+      [{ x: 2, y: 2 }],
+      1,
+      inspection.value.width,
+      inspection.value.height,
+    );
+    if (!mask.ok) throw new Error("mask");
+    const applied = applyCoefficientGlitchOperation(created.value, {
+      kind: "coefficients",
+      mask: mask.value,
+      componentIndex: 0,
+      domain: "ac",
+      mode: "zero",
+      frequencyBand: "all",
+      strength: 0,
+      seed: 1,
+    });
+    if (!applied.ok) throw new Error(applied.error.message);
+    const record = applied.value.operations[0]!;
+    const records = Array.from({ length: 257 }, (_, index) => ({
+      ...record,
+      id: `operation-${index}`,
+      enabled: index < 256,
+    }));
+    expect(created.value.restoreOperations(records).ok).toBe(true);
+    expect(created.value.snapshot.currentState.jpegOperations).toHaveLength(
+      256,
+    );
+    const before = created.value.snapshot;
+    expect(created.value.setEnabled("operation-256", true)).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_INPUT" },
+    });
+    expect(created.value.snapshot).toBe(before);
+    expect(created.value.canUndo).toBe(false);
+    expect(
+      created.value.restoreOperations(
+        records.map((record) => ({ ...record, enabled: true })),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "INVALID_INPUT" } });
+    expect(created.value.snapshot).toBe(before);
+    expect(Object.isFrozen(before.operations[0])).toBe(true);
+    expect(Object.isFrozen(before.operations[0]!.parameters)).toBe(true);
+  });
+
+  it("keeps existing record metadata and identity stable when the plan changes", async () => {
+    const bytes = new Uint8Array(
+      await readFile(
+        new URL("../fixtures/synthetic-grayscale.jpg", import.meta.url),
+      ),
+    );
+    const inspection = inspectJpeg(bytes);
+    const asset = OriginalAsset.create({
+      fileName: "source.jpg",
+      sha256: "a".repeat(64),
+      bytes,
+    });
+    if (!inspection.ok || !asset.ok) throw new Error("fixture");
+    const created = createJpegDocumentSession({
+      originalAsset: asset.value,
+      inspection: inspection.value,
+    });
+    if (!created.ok) throw new Error("session");
+    const mask = createBrushMask(
+      [{ x: 2, y: 2 }],
+      1,
+      inspection.value.width,
+      inspection.value.height,
+    );
+    if (!mask.ok) throw new Error("mask");
+    const input = {
+      kind: "coefficients" as const,
+      mask: mask.value,
+      componentIndex: 0,
+      domain: "ac" as const,
+      mode: "zero" as const,
+      frequencyBand: "all" as const,
+      strength: 0,
+      seed: 1,
+    };
+    expect(applyCoefficientGlitchOperation(created.value, input).ok).toBe(true);
+    const record = created.value.snapshot.operations[0]!;
+    expect(applyCoefficientGlitchOperation(created.value, input).ok).toBe(true);
+    expect(created.value.snapshot.operations[0]).toBe(record);
+    expect(record.inputRevision).toBe(0);
+    expect(created.value.undo().ok).toBe(true);
+    expect(created.value.snapshot.operations[0]).toBe(record);
+    expect(created.value.snapshot.revision).toBeGreaterThan(1);
+    expect(created.value.redo().ok).toBe(true);
+    expect(created.value.snapshot.operations[0]).toBe(record);
   });
 });

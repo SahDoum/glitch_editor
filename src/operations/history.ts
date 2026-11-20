@@ -1,6 +1,7 @@
 import { failure, success, type Result } from "../shared/result";
 import {
   createOperationRandom,
+  parseOperationRecord,
   cloneAndFreezeJson,
   isJsonValue,
   OperationRegistry,
@@ -9,7 +10,6 @@ import {
   type OperationRecord,
 } from "./schema";
 import type { ProjectDocument } from "../document/model";
-import { isSpatialSelection, type SpatialSelection } from "../document/masks";
 
 interface DocumentFrame<State> {
   readonly currentState: State;
@@ -18,16 +18,21 @@ interface DocumentFrame<State> {
 
 export class OperationHistory<State> {
   private readonly baseState: State;
-  private readonly registry: OperationRegistry<State>;
+  private readonly registry: OperationRegistry<State> | undefined;
   private readonly past: DocumentFrame<State>[] = [];
   private readonly future: DocumentFrame<State>[] = [];
   private document: ProjectDocument<State>;
   private revision: number;
+  private readonly plan?: (
+    operations: readonly OperationRecord[],
+  ) => Result<State>;
 
   constructor(
     document: ProjectDocument<State>,
-    registry: OperationRegistry<State>,
+    registry: OperationRegistry<State> | undefined,
+    plan?: (operations: readonly OperationRecord[]) => Result<State>,
   ) {
+    this.plan = plan;
     this.baseState = document.currentState;
     this.registry = registry;
     this.document = document;
@@ -57,107 +62,32 @@ export class OperationHistory<State> {
     }
 
     const seenIds = new Set<string>();
+    const validated: OperationRecord[] = [];
     for (const operation of operations) {
-      if (
-        typeof operation !== "object" ||
-        operation === null ||
-        typeof operation.id !== "string" ||
-        operation.id.trim().length === 0 ||
-        seenIds.has(operation.id) ||
-        typeof operation.type !== "string" ||
-        operation.type.trim().length === 0 ||
-        !Number.isSafeInteger(operation.version) ||
-        operation.version < 1 ||
-        typeof operation.enabled !== "boolean" ||
-        !Number.isSafeInteger(operation.inputRevision) ||
-        operation.inputRevision < 0 ||
-        !["queued", "previewing", "applied", "failed"].includes(
-          operation.status,
-        ) ||
-        !isJsonValue(operation.parameters)
-      ) {
+      const parsed = parseOperationRecord(operation, this.registry);
+      if (!parsed.ok) return parsed;
+      if (seenIds.has(parsed.value.id)) {
         return failure({
           code: "INVALID_INPUT",
-          message: "The saved operation stack contains an invalid operation.",
+          message: "The saved operation stack contains duplicate IDs.",
         });
       }
-      if (
-        (operation.seed !== undefined &&
-          (!Number.isInteger(operation.seed) ||
-            operation.seed < 0 ||
-            operation.seed > 0xffff_ffff)) ||
-        (operation.maskId !== undefined &&
-          (typeof operation.maskId !== "string" ||
-            operation.maskId.length === 0)) ||
-        (operation.targetComponents !== undefined &&
-          (!Array.isArray(operation.targetComponents) ||
-            !operation.targetComponents.every(
-              (component: unknown) =>
-                typeof component === "number" &&
-                Number.isSafeInteger(component) &&
-                component >= 0,
-            ))) ||
-        (operation.diagnostics !== undefined &&
-          (!Array.isArray(operation.diagnostics) ||
-            !operation.diagnostics.every(
-              (diagnostic: unknown) => typeof diagnostic === "string",
-            )))
-      ) {
-        return failure({
-          code: "INVALID_INPUT",
-          message: "The saved operation stack contains invalid metadata.",
-        });
-      }
-      seenIds.add(operation.id);
-      const definition = this.registry.resolve(
-        operation.type,
-        operation.version,
-      );
-      if (!definition.ok) return definition;
-      if (!definition.value.validateParameters(operation.parameters)) {
-        return failure({
-          code: "INVALID_INPUT",
-          message: `Parameters for operation ${operation.type} are invalid.`,
-        });
-      }
+      seenIds.add(parsed.value.id);
+      validated.push(parsed.value);
     }
 
     const restored = this.replay(
-      operations.map((operation) => ({
-        ...operation,
-        parameters: cloneAndFreezeJson(operation.parameters),
-      })),
+      validated.map((operation) =>
+        Object.freeze({
+          ...operation,
+          parameters: cloneAndFreezeJson(operation.parameters),
+        }),
+      ),
     );
     if (!restored.ok) return restored;
     this.past.length = 0;
     this.future.length = 0;
     return restored;
-  }
-
-  setSelection(
-    selection: SpatialSelection | null,
-  ): Result<ProjectDocument<State>> {
-    if (
-      selection !== null &&
-      !isSpatialSelection(
-        selection,
-        this.document.inspection.width,
-        this.document.inspection.height,
-      )
-    ) {
-      return failure({
-        code: "INVALID_INPUT",
-        message: "The image-pixel selection is invalid.",
-      });
-    }
-    if (this.document.selection === selection) return success(this.document);
-    this.revision += 1;
-    this.document = Object.freeze({
-      ...this.document,
-      revision: this.revision,
-      selection,
-    });
-    return success(this.document);
   }
 
   add(
@@ -172,13 +102,15 @@ export class OperationHistory<State> {
         message: "Operation parameters must be finite JSON data.",
       });
     }
-    const definition = this.registry.resolve(type, version);
-    if (!definition.ok) return definition;
-    if (!definition.value.validateParameters(parameters)) {
-      return failure({
-        code: "INVALID_INPUT",
-        message: `Parameters for operation ${type} are invalid.`,
-      });
+    if (this.registry) {
+      const definition = this.registry.resolve(type, version);
+      if (!definition.ok) return definition;
+      if (!definition.value.validateParameters(parameters)) {
+        return failure({
+          code: "INVALID_INPUT",
+          message: `Parameters for operation ${type} are invalid.`,
+        });
+      }
     }
     if (
       options.seed !== undefined &&
@@ -207,7 +139,7 @@ export class OperationHistory<State> {
       ...(options.seed === undefined ? {} : { seed: options.seed }),
       ...(options.maskId === undefined ? {} : { maskId: options.maskId }),
       inputRevision: this.document.revision,
-      status: "queued",
+      status: this.plan ? "applied" : "queued",
     });
     return this.replay([...this.document.operations, operation]);
   }
@@ -262,34 +194,6 @@ export class OperationHistory<State> {
     return this.replay(operations);
   }
 
-  editParameters(
-    id: string,
-    parameters: JsonValue,
-  ): Result<ProjectDocument<State>> {
-    if (!isJsonValue(parameters)) {
-      return failure({
-        code: "INVALID_INPUT",
-        message: "Operation parameters must be finite JSON data.",
-      });
-    }
-    const operations = this.document.operations.map((operation) =>
-      operation.id === id
-        ? Object.freeze({
-            ...operation,
-            parameters: cloneAndFreezeJson(parameters),
-          })
-        : operation,
-    );
-    if (
-      operations.every(
-        (operation, index) => operation === this.document.operations[index],
-      )
-    ) {
-      return this.missingOperation();
-    }
-    return this.replay(operations);
-  }
-
   resetToOriginal(): Result<ProjectDocument<State>> {
     if (this.document.operations.length === 0) return success(this.document);
     return this.replay([]);
@@ -336,14 +240,31 @@ export class OperationHistory<State> {
   private replay(
     operations: readonly OperationRecord[],
   ): Result<ProjectDocument<State>> {
+    if (this.plan) {
+      const planned = this.plan(operations);
+      if (!planned.ok) return planned;
+      this.past.push(this.capture());
+      this.future.length = 0;
+      this.revision += 1;
+      this.document = Object.freeze({
+        ...this.document,
+        revision: this.revision,
+        currentState: planned.value,
+        operations: Object.freeze([...operations]),
+      });
+      return success(this.document);
+    }
+    const registry = this.registry;
+    if (!registry)
+      return failure({
+        code: "INTERNAL",
+        message: "The operation planner is unavailable.",
+      });
     let state = this.baseState;
     const replayed: OperationRecord[] = [];
 
     for (const operation of operations) {
-      const definition = this.registry.resolve(
-        operation.type,
-        operation.version,
-      );
+      const definition = registry.resolve(operation.type, operation.version);
       if (!definition.ok) return definition;
       if (!definition.value.validateParameters(operation.parameters)) {
         return failure({

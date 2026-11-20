@@ -59,6 +59,16 @@ export function writeCoefficientEffectSettings(
   storage: Pick<Storage, "setItem">,
   settings: CoefficientEffectSettings,
 ): Result<undefined> {
+  if (
+    !Object.entries(settings).every(
+      ([id, step]) => id.length > 0 && isCoefficientRecipeStep(step),
+    )
+  ) {
+    return failure({
+      code: "INVALID_INPUT",
+      message: "Coefficient effect settings are invalid.",
+    });
+  }
   const serialized = JSON.stringify(settings);
   if (serialized.length > MAX_SETTINGS_SIZE) {
     return failure({

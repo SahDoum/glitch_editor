@@ -4,6 +4,7 @@ import type { JpegGlitchOperation } from "../operations/jpeg-glitch";
 import { failure, success, type Result } from "../shared/result";
 import { encodeJpegCoefficients } from "./coefficient-reader";
 import type { ImportedJpeg } from "./import-jpeg";
+import { EncodingPlanCache, encodingPlanKey } from "./encoding-plan";
 import { previewDimensions } from "./preview-orientation";
 
 export interface EncodedJpegFrame {
@@ -21,9 +22,12 @@ export function jpegGeometry({ inspection }: ImportedJpeg): JpegBlockGeometry {
 }
 
 export function createJpegPreviewUrl(bytes: Uint8Array): string {
-  const buffer = new ArrayBuffer(bytes.byteLength);
-  new Uint8Array(buffer).set(bytes);
-  return URL.createObjectURL(new Blob([buffer], { type: "image/jpeg" }));
+  // Blob snapshots the view synchronously; no extra staging copy is needed.
+  const view =
+    bytes.buffer instanceof ArrayBuffer
+      ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+      : new Uint8Array(bytes);
+  return URL.createObjectURL(new Blob([view], { type: "image/jpeg" }));
 }
 
 export async function encodeJpegFrame(
@@ -31,13 +35,18 @@ export async function encodeJpegFrame(
   orientation: JpegOrientation,
   operations: readonly JpegGlitchOperation[],
   signal: AbortSignal,
+  cache?: EncodingPlanCache,
 ): Promise<Result<EncodedJpegFrame>> {
-  const encoded = await encodeJpegCoefficients(
-    source.originalAsset.readBytes(),
-    jpegGeometry(source),
-    operations,
-    signal,
-  );
+  const compute = (encodingSignal: AbortSignal) =>
+    encodeJpegCoefficients(
+      source.originalAsset.readBytes(),
+      jpegGeometry(source),
+      operations,
+      encodingSignal,
+    );
+  const encoded = await (cache
+    ? cache.run(source, encodingPlanKey(operations), signal, compute)
+    : compute(signal));
   if (!encoded.ok) return encoded;
 
   const frame = await decodeJpegFrame(

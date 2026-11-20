@@ -74,7 +74,7 @@ class CoefficientsController extends OperationController {
       geometry,
       operation.componentIndex,
       operation.mask,
-      false,
+      "any-intersection",
       (pointer, size) =>
         codec._coefficient_apply(
           operation.componentIndex,
@@ -148,7 +148,7 @@ class PermutationController extends OperationController {
       geometry,
       operation.componentIndex,
       operation.mask,
-      true,
+      "at-least-half",
       (pointer, size) =>
         codec._coefficient_permute_blocks(
           operation.componentIndex,
@@ -190,7 +190,7 @@ class ShiftController extends OperationController {
       geometry,
       operation.componentIndex,
       operation.mask,
-      true,
+      "at-least-half",
       (pointer, size) =>
         codec._coefficient_shift_blocks(
           operation.componentIndex,
@@ -242,11 +242,7 @@ class QuantizationController extends OperationController {
     value: unknown,
     geometry: JpegBlockGeometry,
   ): value is Extract<JpegGlitchOperation, { kind: "quantization" }> {
-    return isQuantizationParameters(value, {
-      quantizationTables: geometry.components.map((component) => ({
-        id: component.quantizationTable,
-      })),
-    });
+    return isQuantizationParameters(value, geometry);
   }
   getWorkSize(
     geometry: JpegBlockGeometry,

@@ -52,6 +52,35 @@ describe("terminal scan corruption history", () => {
     });
   });
 
+  it("commits the immutable executed list as one undoable action", () => {
+    const history = new ScanCorruptionHistory();
+    expect(history.record(first).ok).toBe(true);
+    const executed = [{ ...first }, { ...second }];
+    expect(history.commitStages(executed).ok).toBe(true);
+    executed[0]!.seed = 777;
+    executed.length = 0;
+    expect(history.activeStages).toEqual([first, second]);
+    expect(Object.isFrozen(history.activeStages)).toBe(true);
+    expect(history.activeStages.every(Object.isFrozen)).toBe(true);
+    expect(history.commitUndo()).toBe(true);
+    expect(history.activeStages).toEqual([first]);
+    expect(history.commitRedo()).toBe(true);
+    expect(history.activeStages).toEqual([first, second]);
+  });
+
+  it("rejects a failed stage snapshot without changing current or redo state", () => {
+    const history = new ScanCorruptionHistory();
+    history.record(first);
+    history.record(second);
+    history.commitUndo();
+    expect(history.commitStages([first, { ...second, count: 0 }]).ok).toBe(
+      false,
+    );
+    expect(history.commitStages([]).ok).toBe(false);
+    expect(history.activeStages).toEqual([first]);
+    expect(history.redoTarget).toEqual([first, second]);
+  });
+
   it("replays parameter edits as an undoable replacement of the last stage", () => {
     const history = new ScanCorruptionHistory();
     expect(history.record(first).ok).toBe(true);

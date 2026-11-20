@@ -6,8 +6,10 @@ import {
   isBlockShiftParameters,
   isBlockTransferParameters,
   isCoefficientGlitchParameters,
+  isQuantizationParameters,
   MAX_BLOCK_TRANSFER_BLOCKS,
 } from "../../src/operations/jpeg-glitch";
+import { quantizationOperation } from "../../src/jpeg/codec-controllers/operations";
 import type { JpegInspection } from "../../src/jpeg/inspect";
 import {
   createRectangleSelection,
@@ -301,6 +303,82 @@ describe("JPEG glitch operation validation", () => {
         inspection,
       ),
     ).toBe(false);
+  });
+
+  it("matches exhaustive Repeat bounds checks for signed steps and odd component grids", () => {
+    const geometry = { ...inspection, width: 41, height: 27 };
+    for (const componentIndex of [0, 1, 2]) {
+      const columns = componentIndex === 0 ? 6 : 3;
+      const rows = componentIndex === 0 ? 4 : 2;
+      for (const sourceX of [-1, 0, 1, columns - 1, columns]) {
+        for (const sourceY of [-1, 0, rows - 1, rows]) {
+          for (const offsetX of [-2, -1, 0, 1, 2]) {
+            for (const offsetY of [-2, -1, 0, 1, 2]) {
+              for (const repetitions of [1, 2, 3, 256]) {
+                const inBounds = (x: number, y: number) =>
+                  x >= 0 && y >= 0 && x < columns && y < rows;
+                let expected =
+                  (offsetX !== 0 || offsetY !== 0) &&
+                  inBounds(sourceX, sourceY);
+                for (let step = 1; step <= repetitions; step += 1) {
+                  expected &&= inBounds(
+                    sourceX + offsetX * step,
+                    sourceY + offsetY * step,
+                  );
+                }
+                expect(
+                  isBlockRepeatParameters(
+                    {
+                      kind: "block-repeat",
+                      componentIndex,
+                      sourceX,
+                      sourceY,
+                      offsetX,
+                      offsetY,
+                      repetitions,
+                    },
+                    geometry,
+                  ),
+                ).toBe(expected);
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it("rejects an unused DQT consistently in application and Worker validation", () => {
+    const withUnusedTable = {
+      ...inspection,
+      quantizationTables: [
+        ...inspection.quantizationTables,
+        { id: 2, values: Array(64).fill(10) },
+      ],
+    };
+    const operation = {
+      kind: "quantization",
+      tableId: 2,
+      values: Array(64).fill(10),
+      semantics: "reinterpret",
+      pattern: "manual",
+      seed: 0,
+    };
+    expect(isQuantizationParameters(operation, withUnusedTable)).toBe(false);
+    expect(quantizationOperation.isOperation(operation, withUnusedTable)).toBe(
+      false,
+    );
+    for (const tableId of [0, 1]) {
+      expect(
+        isQuantizationParameters({ ...operation, tableId }, withUnusedTable),
+      ).toBe(true);
+      expect(
+        quantizationOperation.isOperation(
+          { ...operation, tableId },
+          withUnusedTable,
+        ),
+      ).toBe(true);
+    }
   });
 
   it("accepts AC inversion and frequency isolation only with AC parameters", () => {

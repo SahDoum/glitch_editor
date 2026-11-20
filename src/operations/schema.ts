@@ -160,15 +160,6 @@ export class OperationRegistry<State> {
     return success(definition);
   }
 
-  validateParameters(
-    type: string,
-    version: number,
-    parameters: unknown,
-  ): boolean {
-    const definition = this.definitions.get(this.key(type, version));
-    return definition?.validateParameters(parameters) ?? false;
-  }
-
   private key(type: string, version: number): string {
     return `${type}@${version}`;
   }
@@ -186,20 +177,16 @@ export function serializeOperationStack(
       message: "The operation stack exceeds the supported size.",
     });
   }
-  if (
-    !operations.every(
-      (operation) =>
-        isJsonValue(operation.parameters) &&
-        Number.isSafeInteger(operation.version) &&
-        operation.version > 0 &&
-        Number.isSafeInteger(operation.inputRevision) &&
-        operation.inputRevision >= 0,
-    )
-  ) {
-    return failure({
-      code: "INVALID_INPUT",
-      message: "The operation stack contains data that cannot be serialized.",
-    });
+  const seenIds = new Set<string>();
+  for (const operation of operations) {
+    const parsed = parseOperationRecord(operation);
+    if (!parsed.ok) return parsed;
+    if (seenIds.has(parsed.value.id))
+      return failure({
+        code: "INVALID_INPUT",
+        message: "The operation stack contains duplicate IDs.",
+      });
+    seenIds.add(parsed.value.id);
   }
 
   try {
@@ -245,9 +232,9 @@ function isStringArray(value: unknown): value is string[] {
   );
 }
 
-function parseOperationRecord<State>(
+export function parseOperationRecord<State = never>(
   value: unknown,
-  registry: OperationRegistry<State>,
+  registry?: OperationRegistry<State>,
 ): Result<OperationRecord> {
   if (
     !isRecord(value) ||
@@ -325,6 +312,7 @@ function parseOperationRecord<State>(
       ? { diagnostics: Object.freeze([...value.diagnostics]) }
       : {}),
   };
+  if (!registry) return success(operation);
   const definition = registry.resolve(operation.type, operation.version);
   if (!definition.ok) return definition;
   if (!definition.value.validateParameters(operation.parameters)) {

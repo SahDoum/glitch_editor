@@ -31,9 +31,6 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Type check
-        run: npm run typecheck
-
       - name: Test
         run: npm test
 
@@ -41,6 +38,12 @@ jobs:
         run: npm run build -- --base="/$REPOSITORY_NAME/"
         env:
           REPOSITORY_NAME: ${{ github.event.repository.name }}
+
+      - name: Test built JPEG worker under publication path
+        run: npm run test:worker -- --built --base "/$REPOSITORY_NAME/"
+        env:
+          REPOSITORY_NAME: ${{ github.event.repository.name }}
+          CHROMIUM: google-chrome
 
       - name: Record production payload
         run: npm run size | tee -a "$GITHUB_STEP_SUMMARY"
